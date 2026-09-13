@@ -1,0 +1,4 @@
+[submodule "vendor/orcaslicer"]
+	path = vendor/orcaslicer
+	url = https://github.com/mugenoesis/OrcaSlicer.git
+	branch = headless-cli

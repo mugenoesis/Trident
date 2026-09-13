@@ -5,10 +5,9 @@
 # FastAPI wrapper. See docs/ARCHITECTURE.md for the full design and
 # docs/AGPL-COMPLIANCE.md for why the fork commit SHA is baked in below.
 #
-# PREREQUISITE (not yet done as of this scaffold): `vendor/orcaslicer`
-# must be a git submodule pointing at a public patched fork before this
-# builds. Until then, `docker build` will fail at the COPY step — that's
-# expected, not a bug in this Dockerfile.
+# `vendor/orcaslicer` is a git submodule pointing at the headless-cli
+# branch of https://github.com/mugenoesis/OrcaSlicer — run
+# `git submodule update --init` before building.
 
 ARG UBUNTU_VERSION=24.04
 
