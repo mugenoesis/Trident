@@ -2,7 +2,18 @@
 
 A Docker container that runs [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer)'s slicing engine headlessly (no display), with source patches to harden its existing CLI mode, fronted by a FastAPI service that exposes slicing over HTTP.
 
-Status: early scaffolding, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the implementation plan and milestones.
+Status: FastAPI service + Docker/entrypoint/smoke-test scaffolding is in place and unit-tested against a stubbed CLI (see `api/tests/`). **Not yet buildable end-to-end**: `vendor/orcaslicer` isn't wired up yet — that needs a public fork of `OrcaSlicer/OrcaSlicer` under a GitHub account plus a `headless-cli` branch (see M1/M2 in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)), after which it's added here as a git submodule and `docker/Dockerfile` will actually compile. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full implementation plan and milestones.
+
+## Running the API locally (without OrcaSlicer)
+
+```bash
+cd api
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest                       # 24 tests, all mocked/stubbed — no OrcaSlicer binary needed
+.venv/bin/uvicorn app.main:app --reload  # http://localhost:8000/docs
+```
+
+Every slicing-related endpoint degrades gracefully without a real `orca-slicer` binary on `PATH` (`GET /profiles` returns empty, `GET /settings/schema` falls back, `POST /jobs` fails the job with a clear error) — useful for iterating on the API surface before M1's build is done.
 
 ## License / AGPL-3.0 notice
 

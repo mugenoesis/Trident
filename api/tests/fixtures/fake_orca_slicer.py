@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Stand-in for the real OrcaSlicer CLI, used by test_cli_runner.py.
+
+Mimics just enough of the --pipe / result.json protocol
+(docs/ARCHITECTURE.md) to exercise cli_runner.run_slice's FIFO handling
+without needing a real, built binary.
+"""
+import argparse
+import json
+import pathlib
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--slice")
+parser.add_argument("--datadir")
+parser.add_argument("--outputdir", required=True)
+parser.add_argument("--pipe", required=True)
+parser.add_argument("--load-settings")
+parser.add_argument("--load-filaments")
+parser.add_argument("model", nargs="?")
+args, _unknown = parser.parse_known_args()
+
+with open(args.pipe, "w") as f:
+    f.write(json.dumps(
+        {"plate_index": 1, "plate_count": 1, "plate_percent": 50.0,
+         "total_percent": 50.0, "message": "slicing"}
+    ) + "\n")
+    f.write(json.dumps(
+        {"plate_index": 1, "plate_count": 1, "plate_percent": 100.0,
+         "total_percent": 100.0, "message": "done"}
+    ) + "\n")
+
+outputdir = pathlib.Path(args.outputdir)
+outputdir.mkdir(parents=True, exist_ok=True)
+(outputdir / "result.json").write_text(json.dumps({"return_code": 0, "error_string": ""}))
+(outputdir / "out.gcode").write_text("; fake gcode\n")
+
+sys.exit(0)

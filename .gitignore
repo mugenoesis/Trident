@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Runtime data volumes (see docker/Dockerfile VOLUME + api/app/config.py)
+data/
+/data/models/
+/data/output/
+/data/orcaslicer-datadir/
+
+# Local scratch
+*.sqlite3
+*.log
