@@ -135,6 +135,13 @@ export function switchToSingle(): Promise<AuthStatus> {
   return postJson('/auth/switch-to-single', {})
 }
 
+export function updateLastSelection(
+  printerId: string | null,
+  materialId: string | null,
+): Promise<AuthStatus> {
+  return putJson('/auth/last-selection', { printer_id: printerId, material_id: materialId })
+}
+
 export function listPrinters(): Promise<PrinterRecord[]> {
   return request('/printers')
 }

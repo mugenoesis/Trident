@@ -19,6 +19,43 @@ def test_userstore_secret_key_persists(tmp_path):
     assert key1 == key2
 
 
+def test_userstore_set_last_selection_roundtrip(tmp_path):
+    store = UserStore(tmp_path / "users.sqlite3")
+    user = store.get_or_create_local_user()
+    assert user.last_printer_id is None
+
+    store.set_last_selection(user.id, printer_id="p1", material_id="m1")
+    fetched = store.get_user(user.id)
+    assert fetched is not None
+    assert fetched.last_printer_id == "p1"
+    assert fetched.last_material_id == "m1"
+
+
+def test_userstore_migrates_db_missing_last_selection_columns(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "users.sqlite3"
+    # Simulate a DB created before last_printer_id/last_material_id existed.
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE, "
+        "password_hash TEXT, created_at TEXT NOT NULL)"
+    )
+    conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES ('local', NULL, NULL, 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = UserStore(db_path)  # should migrate in __init__, not crash
+    user = store.get_user("local")
+    assert user is not None
+    assert user.last_printer_id is None
+    store.set_last_selection("local", printer_id="p1", material_id=None)
+    assert store.get_user("local").last_printer_id == "p1"  # type: ignore[union-attr]
+
+
 def test_default_mode_behaves_like_single_user(client):
     # Fresh test DB: auth_mode is "unset" until /auth/setup runs. Uploading
     # and slicing should still work with zero auth friction -- unset behaves
@@ -36,7 +73,13 @@ def test_default_mode_behaves_like_single_user(client):
 def test_setup_single_mode(client):
     resp = client.post("/auth/setup", json={"mode": "single"})
     assert resp.status_code == 200
-    assert resp.json() == {"mode": "single", "logged_in": True, "username": None}
+    assert resp.json() == {
+        "mode": "single",
+        "logged_in": True,
+        "username": None,
+        "last_printer_id": None,
+        "last_material_id": None,
+    }
 
     # Can't set up twice.
     again = client.post("/auth/setup", json={"mode": "single"})
@@ -49,7 +92,13 @@ def test_setup_multi_mode_and_login_roundtrip(client):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"mode": "multi", "logged_in": True, "username": "alice"}
+    assert body == {
+        "mode": "multi",
+        "logged_in": True,
+        "username": "alice",
+        "last_printer_id": None,
+        "last_material_id": None,
+    }
     # The setup response sets a session cookie -- confirm status reflects it.
     assert client.get("/auth/status").json()["logged_in"] is True
 
@@ -174,14 +223,76 @@ def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, mon
 
     switched = client.post("/auth/switch-to-single")
     assert switched.status_code == 200
-    assert switched.json() == {"mode": "single", "logged_in": True, "username": None}
+    assert switched.json() == {
+        "mode": "single",
+        "logged_in": True,
+        "username": None,
+        "last_printer_id": None,
+        "last_material_id": None,
+    }
 
     # No login prompt of any kind afterward, and both accounts' jobs survive
     # merged under the one implicit user.
-    assert client.get("/auth/status").json() == {"mode": "single", "logged_in": True, "username": None}
+    assert client.get("/auth/status").json() == {
+        "mode": "single",
+        "logged_in": True,
+        "username": None,
+        "last_printer_id": None,
+        "last_material_id": None,
+    }
     job_ids = {j["id"] for j in client.get("/jobs").json()}
     assert job_ids == {alice_job, bob_job}
 
     # The old accounts are gone -- logging in as either no longer means
     # anything (mode isn't multi anymore).
     assert client.post("/auth/login", json={"username": "alice", "password": "pw12345"}).status_code == 400
+
+
+def test_last_selection_persists_across_status_checks(client):
+    client.post("/auth/setup", json={"mode": "single"})
+
+    updated = client.put(
+        "/auth/last-selection", json={"printer_id": "printer-abc", "material_id": "material-xyz"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["last_printer_id"] == "printer-abc"
+    assert updated.json()["last_material_id"] == "material-xyz"
+
+    # Reflected on a later status check, not just the update response --
+    # this is what App.tsx actually reads on page load.
+    status = client.get("/auth/status").json()
+    assert status["last_printer_id"] == "printer-abc"
+    assert status["last_material_id"] == "material-xyz"
+
+
+def test_last_selection_can_be_cleared(client):
+    client.post("/auth/setup", json={"mode": "single"})
+    client.put("/auth/last-selection", json={"printer_id": "printer-abc", "material_id": "material-xyz"})
+
+    cleared = client.put("/auth/last-selection", json={"printer_id": None, "material_id": None})
+    assert cleared.json()["last_printer_id"] is None
+    assert cleared.json()["last_material_id"] is None
+
+
+def test_last_selection_carries_over_switch_to_multi(client):
+    client.post("/auth/setup", json={"mode": "single"})
+    client.put("/auth/last-selection", json={"printer_id": "printer-abc", "material_id": None})
+
+    switched = client.post("/auth/switch-to-multi", json={"username": "alice", "password": "hunter22"})
+    assert switched.json()["last_printer_id"] == "printer-abc"
+
+    # And on a fresh login later (e.g. from a different device).
+    client.post("/auth/logout")
+    logged_in = client.post("/auth/login", json={"username": "alice", "password": "hunter22"})
+    assert logged_in.json()["last_printer_id"] == "printer-abc"
+
+
+def test_last_selection_is_per_user(client):
+    client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
+    client.put("/auth/last-selection", json={"printer_id": "alices-printer", "material_id": None})
+
+    client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
+    client.post("/auth/logout")
+    client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
+
+    assert client.get("/auth/status").json()["last_printer_id"] is None

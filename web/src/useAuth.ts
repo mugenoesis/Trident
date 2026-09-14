@@ -7,6 +7,7 @@ import {
   setupAuth,
   switchToMulti as apiSwitchToMulti,
   switchToSingle as apiSwitchToSingle,
+  updateLastSelection as apiUpdateLastSelection,
 } from './api'
 import type { AuthStatus } from './types'
 
@@ -41,6 +42,20 @@ export function useAuth() {
     [],
   )
   const switchToSingle = useCallback(() => apiSwitchToSingle().then(setStatus), [])
+  const updateLastSelection = useCallback(
+    (printerId: string | null, materialId: string | null) =>
+      apiUpdateLastSelection(printerId, materialId).then(setStatus),
+    [],
+  )
 
-  return { status, setup, login, logout, switchToMulti, switchToSingle, createUser }
+  return {
+    status,
+    setup,
+    login,
+    logout,
+    switchToMulti,
+    switchToSingle,
+    createUser,
+    updateLastSelection,
+  }
 }

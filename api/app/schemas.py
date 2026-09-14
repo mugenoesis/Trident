@@ -80,6 +80,16 @@ class AuthStatus(BaseModel):
     mode: str  # "unset" | "single" | "multi"
     logged_in: bool
     username: str | None = None
+    # The printer/material profile last selected -- restored as the default
+    # next time this account opens the site (App.tsx applies these once the
+    # matching printers/materials list has loaded).
+    last_printer_id: str | None = None
+    last_material_id: str | None = None
+
+
+class LastSelectionRequest(BaseModel):
+    printer_id: str | None = None
+    material_id: str | None = None
 
 
 class AuthSetupRequest(BaseModel):

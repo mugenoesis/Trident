@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE,
     password_hash TEXT,
+    last_printer_id TEXT,
+    last_material_id TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS app_config (
@@ -38,6 +40,12 @@ CREATE TABLE IF NOT EXISTS app_config (
     value TEXT NOT NULL
 );
 """
+
+# Columns added after the initial release -- CREATE TABLE IF NOT EXISTS is a
+# no-op against an already-existing table, so these need an explicit
+# migration for DBs created before they existed (same pattern as
+# jobstore.py's user_id column).
+_MIGRATED_COLUMNS = ("last_printer_id", "last_material_id")
 
 
 def _now() -> str:
@@ -48,6 +56,8 @@ def _now() -> str:
 class User:
     id: str
     username: str | None
+    last_printer_id: str | None = None
+    last_material_id: str | None = None
 
 
 class UserStore:
@@ -57,6 +67,10 @@ class UserStore:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+            for column in _MIGRATED_COLUMNS:
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -127,8 +141,32 @@ class UserStore:
 
     def get_user(self, user_id: str) -> User | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
-        return User(id=row["id"], username=row["username"]) if row else None
+            row = conn.execute(
+                "SELECT id, username, last_printer_id, last_material_id FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def set_last_selection(self, user_id: str, *, printer_id: str | None, material_id: str | None) -> None:
+        """Remembers the printer/material profile last selected, so they
+        come back as the default next time this user opens the site --
+        always set together (a full replace), since the frontend re-sends
+        both fields together on every selection change, and material_id
+        without its owning printer_id would be meaningless to restore."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET last_printer_id = ?, last_material_id = ? WHERE id = ?",
+                (printer_id, material_id, user_id),
+            )
+
+    @staticmethod
+    def _row_to_user(row: sqlite3.Row) -> User:
+        return User(
+            id=row["id"],
+            username=row["username"],
+            last_printer_id=row["last_printer_id"],
+            last_material_id=row["last_material_id"],
+        )
 
     def collapse_to_single_user(self) -> None:
         """Deletes every account and returns to the implicit local user.
@@ -159,11 +197,13 @@ class UserStore:
         username doesn't exist or has no password set yet."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = ?", (username,)
+                "SELECT id, username, password_hash, last_printer_id, last_material_id "
+                "FROM users WHERE username = ?",
+                (username,),
             ).fetchone()
         if not row or not row["password_hash"]:
             return None
-        return User(id=row["id"], username=row["username"]), row["password_hash"]
+        return self._row_to_user(row), row["password_hash"]
 
 
 store = UserStore(settings.users_db_path)

@@ -74,6 +74,10 @@ export interface AuthStatus {
   mode: AuthMode
   logged_in: boolean
   username: string | null
+  // The printer/material profile last selected -- App.tsx restores these
+  // as the default once the matching printers/materials list has loaded.
+  last_printer_id: string | null
+  last_material_id: string | null
 }
 
 // The only two host_type values the backend's printhost client actually

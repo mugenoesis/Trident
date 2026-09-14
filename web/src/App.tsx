@@ -114,6 +114,7 @@ export default function App() {
       onSwitchToSingle={auth.switchToSingle}
       onCreateUser={auth.createUser}
       onLogout={auth.logout}
+      onUpdateLastSelection={auth.updateLastSelection}
     />
   )
 }
@@ -124,9 +125,17 @@ interface MainAppProps {
   onSwitchToSingle: () => Promise<unknown>
   onCreateUser: (username: string, password: string) => Promise<unknown>
   onLogout: () => Promise<unknown>
+  onUpdateLastSelection: (printerId: string | null, materialId: string | null) => Promise<unknown>
 }
 
-function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, onLogout }: MainAppProps) {
+function MainApp({
+  authStatus,
+  onSwitchToMulti,
+  onSwitchToSingle,
+  onCreateUser,
+  onLogout,
+  onUpdateLastSelection,
+}: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -149,6 +158,19 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null)
   const [materials, setMaterials] = useState<MaterialProfileRecord[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null)
+
+  // Restoring the account's last-selected printer/material (see the mount
+  // and material-list effects below) is an async, two-step process --
+  // printers load first, then (if a printer was restored) its materials.
+  // `restorationDone` gates the persist-on-change effect further down so it
+  // can't fire with a half-restored state (printer set, material still
+  // null) and overwrite the correct persisted material_id with null before
+  // the second step finishes. `pendingLastMaterialId` is consumed exactly
+  // once -- it's only meaningful for that first, restored materials fetch,
+  // not any later manual printer switch.
+  const [restorationDone, setRestorationDone] = useState(false)
+  const [printersLoaded, setPrintersLoaded] = useState(false)
+  const pendingLastMaterialId = useRef(authStatus.last_material_id)
 
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
@@ -233,10 +255,20 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       })
 
     listPrinters()
-      .then(setPrinters)
-      .catch(() => {
-        /* saved printers are a nice-to-have; ignore failures */
+      .then((list) => {
+        setPrinters(list)
+        setPrintersLoaded(true)
       })
+      .catch(() => setPrintersLoaded(true))
+  }, [])
+
+  const applyMaterialProfile = useCallback((material: MaterialProfileRecord) => {
+    setSelectedMaterialId(material.id)
+    setQuickSettings((prev) => ({ ...prev, ...material.quick_settings }))
+    setAdvancedOverrides(material.advanced_overrides)
+    if (material.process_profile) setProcessName(material.process_profile)
+    if (material.filament_profile) setFilamentName(material.filament_profile)
+    setViewMode('model')
   }, [])
 
   // A saved printer's material profiles only matter while that printer is
@@ -247,11 +279,21 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       setSelectedMaterialId(null)
       return
     }
-    listMaterialProfiles(selectedPrinterId)
-      .then(setMaterials)
-      .catch(() => setMaterials([]))
     setSelectedMaterialId(null)
-  }, [selectedPrinterId])
+    listMaterialProfiles(selectedPrinterId)
+      .then((list) => {
+        setMaterials(list)
+        // Only ever meaningful for the one materials fetch that follows a
+        // restored printer selection (below) -- consumed once so a later,
+        // manual printer switch doesn't try to reapply a stale id.
+        const pendingId = pendingLastMaterialId.current
+        pendingLastMaterialId.current = null
+        const match = pendingId ? list.find((m) => m.id === pendingId) : undefined
+        if (match) applyMaterialProfile(match)
+      })
+      .catch(() => setMaterials([]))
+      .finally(() => setRestorationDone(true))
+  }, [selectedPrinterId, applyMaterialProfile])
 
   const handleFileSelected = useCallback((selected: File) => {
     setFile(selected)
@@ -443,14 +485,36 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       .catch((err: Error) => alert(`Failed to delete printer: ${err.message}`))
   }, [])
 
-  const applyMaterialProfile = useCallback((material: MaterialProfileRecord) => {
-    setSelectedMaterialId(material.id)
-    setQuickSettings((prev) => ({ ...prev, ...material.quick_settings }))
-    setAdvancedOverrides(material.advanced_overrides)
-    if (material.process_profile) setProcessName(material.process_profile)
-    if (material.filament_profile) setFilamentName(material.filament_profile)
-    setViewMode('model')
-  }, [])
+  // Restores the account's last-selected printer, exactly once, right after
+  // the printers list first loads (not on every later change to it, e.g.
+  // after saving a new printer -- hence keying solely off `printersLoaded`
+  // flipping true rather than the `printers` array itself).
+  useEffect(() => {
+    if (!printersLoaded) return
+    const match = authStatus.last_printer_id
+      ? printers.find((p) => p.id === authStatus.last_printer_id)
+      : undefined
+    if (match) {
+      applySavedPrinter(match)
+      // Restoring a material (if any) happens once this printer's
+      // materials list loads -- see the effect above, which also marks
+      // restorationDone when it settles.
+    } else {
+      setRestorationDone(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printersLoaded])
+
+  // Persists the current printer/material selection as the account's
+  // default for next time -- but not until the initial restoration (above)
+  // has fully settled, or this would race it: e.g. save (printerId, null)
+  // right after the printer restores but before its material does, then
+  // lose to a slower-finishing restore, permanently wiping the persisted
+  // material_id.
+  useEffect(() => {
+    if (!restorationDone) return
+    onUpdateLastSelection(selectedPrinterId, selectedMaterialId).catch(() => {})
+  }, [selectedPrinterId, selectedMaterialId, restorationDone, onUpdateLastSelection])
 
   const handleSaveMaterial = useCallback(
     (name: string) => {
