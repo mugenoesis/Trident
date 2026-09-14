@@ -90,7 +90,14 @@ def get_job_gcode(job_id: str) -> FileResponse:
     matches = list(_job_output_dir(job_id).glob("*.gcode"))
     if not matches:
         raise HTTPException(status_code=404, detail="No gcode produced (yet) for this job")
-    return FileResponse(matches[0], media_type="text/plain", filename=matches[0].name)
+    # Not text/plain: .gcode isn't a MIME-registered extension, and browsers
+    # (confirmed: Chrome on Android) "correct" the download filename to match
+    # the Content-Type they were given, appending .txt over the intended
+    # .gcode. application/octet-stream is the standard fix -- it doesn't map
+    # to any particular extension, so the filename's own .gcode is left alone.
+    return FileResponse(
+        matches[0], media_type="application/octet-stream", filename=matches[0].name
+    )
 
 
 @router.get("/{job_id}/thumbnail")
