@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   createJob,
+  createMaterialProfile,
+  createPrinter,
   deleteJob,
+  deleteMaterialProfile,
+  deletePrinter,
   getJob,
   getProfileDetail,
   getSettingsSchema,
   listJobs,
+  listMaterialProfiles,
+  listPrinters,
   listProfiles,
   uploadModel,
 } from './api'
@@ -27,12 +33,20 @@ import QuickSettings, {
   defaultQuickSettings,
   type QuickSettingsValues,
 } from './components/QuickSettings'
+import SavedPrinters from './components/SavedPrinters'
 import ScaleControls from './components/ScaleControls'
 import SettingsMenu from './components/SettingsMenu'
 import SetupGate from './components/SetupGate'
 import Uploader from './components/Uploader'
 import Viewer from './components/Viewer'
-import type { JobRecord, ProfileSummary, SettingDef } from './types'
+import type {
+  JobRecord,
+  MaterialProfileRecord,
+  PrinterConnection,
+  PrinterRecord,
+  ProfileSummary,
+  SettingDef,
+} from './types'
 import { useAuth } from './useAuth'
 
 const ACTIVE_STATUSES: JobRecord['status'][] = ['queued', 'running']
@@ -124,6 +138,11 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
   const [scaleToastDismissed, setScaleToastDismissed] = useState(false)
   const [scaling, setScaling] = useState(false)
 
+  const [printers, setPrinters] = useState<PrinterRecord[]>([])
+  const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null)
+  const [materials, setMaterials] = useState<MaterialProfileRecord[]>([])
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null)
+
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
 
@@ -184,7 +203,27 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       .catch(() => {
         /* history is a nice-to-have; ignore failures */
       })
+
+    listPrinters()
+      .then(setPrinters)
+      .catch(() => {
+        /* saved printers are a nice-to-have; ignore failures */
+      })
   }, [])
+
+  // A saved printer's material profiles only matter while that printer is
+  // selected -- reload (and drop any stale selection) whenever it changes.
+  useEffect(() => {
+    if (!selectedPrinterId) {
+      setMaterials([])
+      setSelectedMaterialId(null)
+      return
+    }
+    listMaterialProfiles(selectedPrinterId)
+      .then(setMaterials)
+      .catch(() => setMaterials([]))
+    setSelectedMaterialId(null)
+  }, [selectedPrinterId])
 
   const handleFileSelected = useCallback((selected: File) => {
     setFile(selected)
@@ -238,6 +277,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       setFilamentName('')
       setBedSize(null)
       setScaleToastDismissed(false)
+      setSelectedPrinterId(null)
       setViewMode('model')
       if (!vendor || !name) return
 
@@ -287,6 +327,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
     setProcessName('')
     setFilamentName('')
     setBedSize(null)
+    setSelectedPrinterId(null)
     setViewMode('model')
   }, [])
 
@@ -305,13 +346,102 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 
   const handleQuickSettingsChange = useCallback((values: QuickSettingsValues) => {
     setQuickSettings(values)
+    setSelectedMaterialId(null)
     setViewMode('model')
   }, [])
 
   const handleAdvancedOverridesChange = useCallback((overrides: Record<string, string>) => {
     setAdvancedOverrides(overrides)
+    setSelectedMaterialId(null)
     setViewMode('model')
   }, [])
+
+  // Restores a saved printer's vendor/printer/process/filament/bed-size
+  // synchronously (App.tsx already has every piece of state a saved
+  // printer snapshots), no network round-trip needed unlike picking a
+  // printer fresh via PrinterSelect (handlePrinterChange, above).
+  const applySavedPrinter = useCallback((printer: PrinterRecord) => {
+    setSelectedPrinterId(printer.id)
+    setVendor(printer.vendor)
+    setPrinterName(printer.machine_profile)
+    setProcessName(printer.process_profile)
+    setFilamentName(printer.filament_profile)
+    setBedSize(
+      printer.bed_width != null && printer.bed_depth != null && printer.bed_height != null
+        ? { width: printer.bed_width, depth: printer.bed_depth, height: printer.bed_height }
+        : null,
+    )
+    setScaleToastDismissed(false)
+    setViewMode('model')
+  }, [])
+
+  const handleSavePrinter = useCallback(
+    (name: string, connection: PrinterConnection) => {
+      return createPrinter({
+        name,
+        vendor,
+        machine_profile: printerName,
+        process_profile: processName,
+        filament_profile: filamentName,
+        bed_width: bedSize?.width ?? null,
+        bed_depth: bedSize?.depth ?? null,
+        bed_height: bedSize?.height ?? null,
+        ...connection,
+      }).then((printer) => {
+        setPrinters((prev) => [...prev, printer])
+        setSelectedPrinterId(printer.id)
+      })
+    },
+    [vendor, printerName, processName, filamentName, bedSize],
+  )
+
+  const handleDeletePrinter = useCallback((id: string) => {
+    deletePrinter(id)
+      .then(() => {
+        setPrinters((prev) => prev.filter((p) => p.id !== id))
+        setSelectedPrinterId((prev) => (prev === id ? null : prev))
+      })
+      .catch((err: Error) => alert(`Failed to delete printer: ${err.message}`))
+  }, [])
+
+  const applyMaterialProfile = useCallback((material: MaterialProfileRecord) => {
+    setSelectedMaterialId(material.id)
+    setQuickSettings((prev) => ({ ...prev, ...material.quick_settings }))
+    setAdvancedOverrides(material.advanced_overrides)
+    if (material.process_profile) setProcessName(material.process_profile)
+    if (material.filament_profile) setFilamentName(material.filament_profile)
+    setViewMode('model')
+  }, [])
+
+  const handleSaveMaterial = useCallback(
+    (name: string) => {
+      if (!selectedPrinterId) return Promise.reject(new Error('Select a saved printer first'))
+      return createMaterialProfile(selectedPrinterId, {
+        name,
+        quick_settings: quickSettings as unknown as Record<string, string>,
+        advanced_overrides: advancedOverrides,
+        process_profile: processName || null,
+        filament_profile: filamentName || null,
+      }).then((material) => {
+        setMaterials((prev) => [...prev, material])
+        setSelectedMaterialId(material.id)
+      })
+    },
+    [selectedPrinterId, quickSettings, advancedOverrides, processName, filamentName],
+  )
+
+  const handleDeleteMaterial = useCallback(
+    (id: string) => {
+      if (!selectedPrinterId) return
+      deleteMaterialProfile(selectedPrinterId, id)
+        .then(() => {
+          setMaterials((prev) => prev.filter((m) => m.id !== id))
+          setSelectedMaterialId((prev) => (prev === id ? null : prev))
+        })
+        .catch((err: Error) => alert(`Failed to delete material profile: ${err.message}`))
+    },
+    [selectedPrinterId],
+  )
 
   // Poll the active job until it leaves queued/running.
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -425,6 +555,19 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 
         <section className="panel panel-settings">
           <h2>Printer &amp; material</h2>
+          <SavedPrinters
+            printers={printers}
+            selectedPrinterId={selectedPrinterId}
+            onSelectPrinter={applySavedPrinter}
+            canSaveCurrent={Boolean(vendor && printerName && processName && filamentName)}
+            onSavePrinter={handleSavePrinter}
+            onDeletePrinter={handleDeletePrinter}
+            materials={materials}
+            selectedMaterialId={selectedMaterialId}
+            onSelectMaterial={applyMaterialProfile}
+            onSaveMaterial={handleSaveMaterial}
+            onDeleteMaterial={handleDeleteMaterial}
+          />
           <PrinterSelect
             profiles={profiles}
             vendor={vendor}

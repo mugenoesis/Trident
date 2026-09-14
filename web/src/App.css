@@ -349,6 +349,16 @@
   color: var(--danger);
 }
 
+.saved-printers,
+.material-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
 .dimensions-readout {
   text-align: center;
   font-size: 0.85rem;

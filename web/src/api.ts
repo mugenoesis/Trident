@@ -2,7 +2,11 @@ import type {
   AuthStatus,
   JobCreateRequest,
   JobRecord,
+  MaterialProfileCreateRequest,
+  MaterialProfileRecord,
   ModelUploadResponse,
+  PrinterCreateRequest,
+  PrinterRecord,
   ProfileDetail,
   ProfileSummary,
   SettingsSchema,
@@ -118,6 +122,41 @@ export function switchToMulti(username: string, password: string): Promise<AuthS
 
 export function switchToSingle(): Promise<AuthStatus> {
   return postJson('/auth/switch-to-single', {})
+}
+
+export function listPrinters(): Promise<PrinterRecord[]> {
+  return request('/printers')
+}
+
+export function createPrinter(req: PrinterCreateRequest): Promise<PrinterRecord> {
+  return postJson('/printers', req)
+}
+
+export function deletePrinter(id: string): Promise<{ ok: boolean }> {
+  return request(`/printers/${id}`, { method: 'DELETE' })
+}
+
+export function listMaterialProfiles(printerId: string): Promise<MaterialProfileRecord[]> {
+  return request(`/printers/${printerId}/materials`)
+}
+
+export function createMaterialProfile(
+  printerId: string,
+  req: MaterialProfileCreateRequest,
+): Promise<MaterialProfileRecord> {
+  return postJson(`/printers/${printerId}/materials`, req)
+}
+
+export function deleteMaterialProfile(printerId: string, materialId: string): Promise<{ ok: boolean }> {
+  return request(`/printers/${printerId}/materials/${materialId}`, { method: 'DELETE' })
+}
+
+export function sendToPrinter(
+  printerId: string,
+  jobId: string,
+  startPrint: boolean,
+): Promise<{ ok: boolean }> {
+  return postJson(`/printers/${printerId}/send/${jobId}`, { start_print: startPrint })
 }
 
 export function createUser(username: string, password: string): Promise<AuthStatus> {
