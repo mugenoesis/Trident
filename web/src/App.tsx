@@ -248,7 +248,7 @@ export default function App() {
       <main className="app-main">
         <section className="panel panel-viewer">
           <Uploader onFileSelected={handleFileSelected} fileName={file?.name ?? null} uploadStatus={uploadStatus} />
-          <Viewer file={file} onDimensions={handleDimensions} />
+          <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} />
           {dimensions && (
             <>
               <div className="dimensions-readout">
