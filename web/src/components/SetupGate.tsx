@@ -51,8 +51,10 @@ export default function SetupGate({ onChooseSingle, onChooseMulti }: SetupGatePr
               </button>
             </div>
             <p className="auth-hint">
-              You can switch from single- to multi-user later from the settings menu. There&rsquo;s
-              no way back once you do.
+              You can switch between single- and multi-user later from the settings menu.
+              Switching back to single-user merges everyone&rsquo;s printers and job history into
+              one shared, login-free setup &mdash; nothing is lost, but accounts can&rsquo;t be
+              split apart again afterward.
             </p>
           </>
         )}
