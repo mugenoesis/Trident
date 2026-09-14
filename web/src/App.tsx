@@ -17,6 +17,7 @@ import {
   scaleStlFile,
 } from './dimensions'
 import AdvancedSettings from './components/AdvancedSettings'
+import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
@@ -57,6 +58,7 @@ export default function App() {
   const [slicing, setSlicing] = useState(false)
   const [currentJob, setCurrentJob] = useState<JobRecord | null>(null)
   const [history, setHistory] = useState<JobRecord[]>([])
+  const [previewJobId, setPreviewJobId] = useState<string | null>(null)
 
   // Initial catalog load.
   useEffect(() => {
@@ -289,6 +291,7 @@ export default function App() {
             slicing={slicing}
             currentJob={currentJob}
             history={history}
+            onPreview={setPreviewJobId}
           />
         </section>
       </main>
@@ -315,6 +318,10 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {previewJobId && (
+        <GcodeViewer jobId={previewJobId} onClose={() => setPreviewJobId(null)} />
       )}
     </div>
   )

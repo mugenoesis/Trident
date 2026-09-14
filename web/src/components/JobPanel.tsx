@@ -7,6 +7,7 @@ interface JobPanelProps {
   slicing: boolean
   currentJob: JobRecord | null
   history: JobRecord[]
+  onPreview: (jobId: string) => void
 }
 
 function StatusBadge({ status }: { status: JobRecord['status'] }) {
@@ -23,7 +24,14 @@ function JobProgressBar({ job }: { job: JobRecord }) {
   )
 }
 
-export default function JobPanel({ canSlice, onSlice, slicing, currentJob, history }: JobPanelProps) {
+export default function JobPanel({
+  canSlice,
+  onSlice,
+  slicing,
+  currentJob,
+  history,
+  onPreview,
+}: JobPanelProps) {
   return (
     <div className="job-panel">
       <button className="slice-button" type="button" disabled={!canSlice || slicing} onClick={onSlice}>
@@ -38,6 +46,13 @@ export default function JobPanel({ canSlice, onSlice, slicing, currentJob, histo
           )}
           {currentJob.status === 'succeeded' && (
             <div className="job-result">
+              <button
+                type="button"
+                className="preview-button"
+                onClick={() => onPreview(currentJob.id)}
+              >
+                Preview G-code
+              </button>
               <a className="download-button" href={gcodeDownloadUrl(currentJob.id)} download>
                 Download G-code
               </a>
@@ -66,9 +81,14 @@ export default function JobPanel({ canSlice, onSlice, slicing, currentJob, histo
                 <StatusBadge status={job.status} />
                 <span className="job-history-time">{new Date(job.created_at).toLocaleString()}</span>
                 {job.status === 'succeeded' && (
-                  <a href={gcodeDownloadUrl(job.id)} download>
-                    G-code
-                  </a>
+                  <>
+                    <button type="button" className="link-button" onClick={() => onPreview(job.id)}>
+                      Preview
+                    </button>
+                    <a href={gcodeDownloadUrl(job.id)} download>
+                      G-code
+                    </a>
+                  </>
                 )}
               </li>
             ))}

@@ -399,3 +399,88 @@
 .toast-dismiss:hover:not(:disabled) {
   background: #363c46;
 }
+
+.preview-button {
+  background: #2c313a;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+}
+
+.preview-button:hover:not(:disabled) {
+  background: #363c46;
+}
+
+.link-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent-hover);
+  font-weight: normal;
+  text-decoration: underline;
+}
+
+.gcode-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 1rem;
+}
+
+.gcode-modal {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1rem;
+  width: min(900px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.gcode-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gcode-modal-header h2 {
+  font-size: 1.1rem;
+}
+
+.gcode-viewer-wrap {
+  position: relative;
+  height: min(60vh, 500px);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gcode-viewer {
+  position: absolute;
+  inset: 0;
+}
+
+.gcode-viewer canvas {
+  display: block;
+}
+
+.gcode-layer-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.gcode-layer-slider input[type='range'] {
+  flex: 1;
+}
+
+.gcode-layer-slider span {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
