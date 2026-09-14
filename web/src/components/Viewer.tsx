@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import type { Dimensions } from '../dimensions'
 
 interface ViewerProps {
   file: File | null
+  onDimensions?: (dims: Dimensions | null) => void
 }
 
 // Basic model preview: not meant to be a full slicer viewport (no layer
@@ -12,12 +14,16 @@ interface ViewerProps {
 // object I uploaded" before slicing. Drag-to-rotate/zoom via OrbitControls
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
-export default function Viewer({ file }: ViewerProps) {
+export default function Viewer({ file, onDimensions }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+
+    // Cleared immediately on a new/removed file so stale dimensions from a
+    // previous model don't linger in the UI while the new one loads.
+    onDimensions?.(null)
 
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x2a2e35)
@@ -123,6 +129,7 @@ export default function Viewer({ file }: ViewerProps) {
           plate.position.z = -size.z / 2
           scene.add(plate)
 
+          onDimensions?.({ x: size.x, y: size.y, z: size.z })
           URL.revokeObjectURL(url)
         },
         undefined,
@@ -172,7 +179,7 @@ export default function Viewer({ file }: ViewerProps) {
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
-  }, [file])
+  }, [file, onDimensions])
 
   return (
     <div className="viewer-wrap">

@@ -9,6 +9,13 @@ import {
   listProfiles,
   uploadModel,
 } from './api'
+import {
+  type BedSize,
+  type Dimensions,
+  computeFitScale,
+  parseBedSize,
+  scaleStlFile,
+} from './dimensions'
 import AdvancedSettings from './components/AdvancedSettings'
 import JobPanel from './components/JobPanel'
 import PrinterSelect from './components/PrinterSelect'
@@ -32,11 +39,16 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle')
+  const [dimensions, setDimensions] = useState<Dimensions | null>(null)
 
   const [vendor, setVendor] = useState('')
   const [printerName, setPrinterName] = useState('')
   const [processName, setProcessName] = useState('')
   const [filamentName, setFilamentName] = useState('')
+  const [bedSize, setBedSize] = useState<BedSize | null>(null)
+
+  const [scaleToastDismissed, setScaleToastDismissed] = useState(false)
+  const [scaling, setScaling] = useState(false)
 
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
@@ -66,6 +78,7 @@ export default function App() {
     setFile(selected)
     setModelId(null)
     setUploadStatus('uploading')
+    setScaleToastDismissed(false)
     uploadModel(selected)
       .then((res) => {
         setModelId(res.model_id)
@@ -73,6 +86,24 @@ export default function App() {
       })
       .catch(() => setUploadStatus('error'))
   }, [])
+
+  // Stable reference: Viewer's effect depends on this, and an inline arrow
+  // function would make it re-run (tearing down/rebuilding the three.js
+  // scene) on every unrelated App re-render.
+  const handleDimensions = useCallback((dims: Dimensions | null) => setDimensions(dims), [])
+
+  const fitScale =
+    dimensions && bedSize && printerName ? computeFitScale(dimensions, bedSize) : null
+  const showScaleToast = fitScale !== null && !scaleToastDismissed
+
+  const handleAcceptScale = useCallback(() => {
+    if (!file || fitScale === null) return
+    setScaling(true)
+    scaleStlFile(file, fitScale)
+      .then((scaled) => handleFileSelected(scaled))
+      .catch((err: Error) => alert(`Failed to scale model: ${err.message}`))
+      .finally(() => setScaling(false))
+  }, [file, fitScale, handleFileSelected])
 
   // Picking a printer resets process/material to that machine's own
   // defaults (default_print_profile / default_filament_profile) --
@@ -82,6 +113,8 @@ export default function App() {
       setPrinterName(name)
       setProcessName('')
       setFilamentName('')
+      setBedSize(null)
+      setScaleToastDismissed(false)
       if (!vendor || !name) return
 
       // Not every vendor's machine profile sets these (confirmed empirically:
@@ -114,6 +147,7 @@ export default function App() {
                 : firstOfKind('filament')
           setProcessName(process)
           setFilamentName(filament)
+          setBedSize(parseBedSize(detail.data))
         })
         .catch(() => {
           setProcessName(firstOfKind('process'))
@@ -128,6 +162,7 @@ export default function App() {
     setPrinterName('')
     setProcessName('')
     setFilamentName('')
+    setBedSize(null)
   }, [])
 
   // Poll the active job until it leaves queued/running.
@@ -202,7 +237,12 @@ export default function App() {
       <main className="app-main">
         <section className="panel panel-viewer">
           <Uploader onFileSelected={handleFileSelected} fileName={file?.name ?? null} uploadStatus={uploadStatus} />
-          <Viewer file={file} />
+          <Viewer file={file} onDimensions={handleDimensions} />
+          {dimensions && (
+            <div className="dimensions-readout">
+              {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
+            </div>
+          )}
         </section>
 
         <section className="panel panel-settings">
@@ -238,6 +278,30 @@ export default function App() {
           />
         </section>
       </main>
+
+      {showScaleToast && dimensions && bedSize && fitScale !== null && (
+        <div className="toast">
+          <div className="toast-message">
+            This model ({dimensions.x.toFixed(0)} × {dimensions.y.toFixed(0)} ×{' '}
+            {dimensions.z.toFixed(0)} mm) is larger than {printerName}&rsquo;s build volume (
+            {bedSize.width.toFixed(0)} × {bedSize.depth.toFixed(0)} × {bedSize.height.toFixed(0)}{' '}
+            mm). Scale it down to {Math.round(fitScale * 100)}% to fit?
+          </div>
+          <div className="toast-actions">
+            <button type="button" onClick={handleAcceptScale} disabled={scaling}>
+              {scaling ? 'Scaling…' : 'Scale to fit'}
+            </button>
+            <button
+              type="button"
+              className="toast-dismiss"
+              onClick={() => setScaleToastDismissed(true)}
+              disabled={scaling}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
