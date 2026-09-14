@@ -57,11 +57,18 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
       100000,
     )
     camera.up.set(0, 0, 1)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setPixelRatio(window.devicePixelRatio)
+    // Solid mode's shadow-mapped, per-fragment-lit InstancedMesh is the
+    // heaviest thing this app renders, and its cost scales with actual
+    // pixel count -- a high-DPR phone screen (Galaxy Fold-class devices
+    // report 2.6-3x) asks the GPU to shade several times as many fragments
+    // as a capped ratio would. Capping this is the single biggest lever
+    // for keeping it usable on mobile; MSAA (antialias) is the other
+    // meaningful cost on mobile tile-based GPUs, so it's off too.
+    const renderer = new THREE.WebGLRenderer({ antialias: false })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(container.clientWidth, container.clientHeight)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.PCFShadowMap
     container.appendChild(renderer.domElement)
 
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -73,7 +80,7 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
     // sees are the ones getting lit, instead of being side- or back-lit.
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
     keyLight.castShadow = true
-    keyLight.shadow.mapSize.set(1024, 1024)
+    keyLight.shadow.mapSize.set(512, 512)
     keyLight.shadow.bias = -0.0005
     scene.add(keyLight)
     scene.add(keyLight.target)
