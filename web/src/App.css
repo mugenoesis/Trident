@@ -436,6 +436,31 @@
   display: block;
 }
 
+.gcode-mode-toggle {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  gap: 0.3rem;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 0.25rem;
+}
+
+.gcode-mode-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+}
+
+.gcode-mode-toggle button.active {
+  background: var(--accent);
+  color: white;
+}
+
 .gcode-layer-slider {
   display: flex;
   align-items: center;

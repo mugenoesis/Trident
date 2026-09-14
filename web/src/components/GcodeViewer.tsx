@@ -2,18 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { gcodeDownloadUrl } from '../api'
-import { parseGcode } from '../gcodeParser'
+import { parseGcode, type GcodeLayer } from '../gcodeParser'
 
 interface GcodeViewerProps {
   jobId: string
   onBackToModel: () => void
 }
 
+type RenderMode = 'solid' | 'lines'
+
+// Approximate extrusion width used to give toolpath segments real thickness
+// in "solid" mode. The parser doesn't know the actual line width (that's
+// derived from flow, not present in the G-code moves themselves), so this is
+// a visual stand-in, not a dimensionally exact value.
+const EXTRUSION_WIDTH_MM = 0.42
+
 // Real toolpath preview, not just "here's the file": fetches the sliced
 // G-code, parses out the extruding moves (gcodeParser.ts), and renders them
-// as colored line segments layer by layer, with a slider to scrub through
-// how much of the print has been "drawn" -- the same idea as a slicer's own
-// preview tab, just without per-feature (wall/infill/support) coloring.
+// two ways, toggleable:
+//  - "lines": every move as a thin colored line, hued by layer -- cheap and
+//    shows the raw path/order, but hard to read as an actual object.
+//  - "solid": every move as a small lit, shadowed box (oriented + scaled to
+//    the segment), giving something that reads like the printed part itself.
+// Both share a layer slider (drawRange for lines, instance count for solid)
+// so scrubbing works identically in either mode.
 // Rendered inline in place of the 3D model Viewer (App.tsx), not a modal --
 // swapped in automatically once a slice succeeds.
 export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) {
@@ -21,10 +33,15 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
   const [visibleLayers, setVisibleLayers] = useState(0)
-  // Set by the render effect once geometry exists, read by the slider effect
-  // -- avoids re-parsing/rebuilding the whole scene on every slider tick.
-  const layerEndVertexRef = useRef<number[]>([])
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null)
+  const [renderMode, setRenderMode] = useState<RenderMode>('solid')
+
+  const layersRef = useRef<GcodeLayer[]>([])
+  const renderModeRef = useRef<RenderMode>(renderMode)
+  // Set by the main effect once the scene exists; called by the mode-toggle
+  // and visible-layers effects so they can act on the live scene without
+  // re-fetching/re-parsing or re-framing the camera.
+  const rebuildRef = useRef<((mode: RenderMode, visible: number) => void) | null>(null)
+  const applyVisibleRef = useRef<((visible: number) => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -43,10 +60,30 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(window.devicePixelRatio)
     renderer.setSize(container.clientWidth, container.clientHeight)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     container.appendChild(renderer.domElement)
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.1)
+    keyLight.castShadow = true
+    keyLight.shadow.mapSize.set(1024, 1024)
+    keyLight.shadow.bias = -0.0005
+    scene.add(keyLight)
+    scene.add(keyLight.target)
+
+    // Only shown/lit in "solid" mode -- catches shadows to make layer/wall
+    // detail readable, but would just clutter the raw path view.
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 1 }),
+    )
+    ground.receiveShadow = true
+    ground.visible = false
+    scene.add(ground)
 
     let animationId = 0
     const animate = () => {
@@ -64,6 +101,124 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
     const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(container)
 
+    let activeObject: THREE.LineSegments | THREE.InstancedMesh | null = null
+    let layerEnds: number[] = []
+    const center = new THREE.Vector3()
+    let groundZ = 0
+
+    const disposeActive = () => {
+      if (!activeObject) return
+      scene.remove(activeObject)
+      activeObject.geometry.dispose()
+      ;(activeObject.material as THREE.Material).dispose()
+      activeObject = null
+    }
+
+    const buildLines = (layers: GcodeLayer[]) => {
+      const positions: number[] = []
+      const colors: number[] = []
+      const ends: number[] = []
+      layers.forEach((layer, layerIndex) => {
+        const color = new THREE.Color().setHSL(
+          0.72 - 0.72 * (layerIndex / Math.max(1, layers.length - 1)),
+          0.7,
+          0.55,
+        )
+        for (const seg of layer.segments) {
+          positions.push(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
+          colors.push(color.r, color.g, color.b, color.r, color.g, color.b)
+        }
+        ends.push(positions.length / 3)
+      })
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      const object = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ vertexColors: true }))
+      return { object, layerEnds: ends }
+    }
+
+    // Orients+positions `dummy` for a segment, picking the "width" axis as
+    // perpendicular to both the travel direction and world-up: this keeps
+    // the box's height axis pointing as close to true vertical as possible
+    // for the (near-universal) case of horizontal-ish extrusion moves,
+    // instead of the arbitrary/discontinuous roll you get from a plain
+    // quaternion-between-two-vectors rotation. Returns segment length, or 0
+    // for a degenerate (zero-length) move.
+    const worldUp = new THREE.Vector3(0, 0, 1)
+    const dummy = new THREE.Object3D()
+    const dirVec = new THREE.Vector3()
+    const widthAxis = new THREE.Vector3()
+    const heightAxis = new THREE.Vector3()
+    const basis = new THREE.Matrix4()
+    const orientDummy = (x1: number, y1: number, z1: number, x2: number, y2: number, z2: number) => {
+      dirVec.set(x2 - x1, y2 - y1, z2 - z1)
+      const length = dirVec.length()
+      if (length < 1e-6) return 0
+      dirVec.normalize()
+      widthAxis.crossVectors(worldUp, dirVec)
+      if (widthAxis.lengthSq() < 1e-8) {
+        widthAxis.set(1, 0, 0).cross(dirVec)
+        if (widthAxis.lengthSq() < 1e-8) widthAxis.set(0, 1, 0)
+      }
+      widthAxis.normalize()
+      heightAxis.crossVectors(dirVec, widthAxis).normalize()
+      basis.makeBasis(dirVec, widthAxis, heightAxis)
+      dummy.quaternion.setFromRotationMatrix(basis)
+      dummy.position.set((x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2)
+      return length
+    }
+
+    const buildSolid = (layers: GcodeLayer[]) => {
+      const total = layers.reduce((n, layer) => n + layer.segments.length, 0)
+      const geometry = new THREE.BoxGeometry(1, 1, 1)
+      const material = new THREE.MeshStandardMaterial({ color: 0xff6f2c, roughness: 0.65, metalness: 0.05 })
+      const object = new THREE.InstancedMesh(geometry, material, Math.max(total, 1))
+      object.castShadow = true
+      object.receiveShadow = true
+      let index = 0
+      const ends: number[] = []
+      layers.forEach((layer, layerIndex) => {
+        const layerHeight =
+          layerIndex === 0
+            ? Math.max(0.05, layer.z)
+            : Math.max(0.05, layer.z - layers[layerIndex - 1].z)
+        for (const seg of layer.segments) {
+          const length = orientDummy(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
+          if (length <= 0) continue
+          dummy.scale.set(length, EXTRUSION_WIDTH_MM, layerHeight)
+          dummy.updateMatrix()
+          object.setMatrixAt(index++, dummy.matrix)
+        }
+        ends.push(index)
+      })
+      object.count = index
+      object.instanceMatrix.needsUpdate = true
+      return { object, layerEnds: ends }
+    }
+
+    const applyVisible = (visible: number) => {
+      if (!activeObject) return
+      const end = visible > 0 && layerEnds.length > 0 ? layerEnds[Math.min(visible, layerEnds.length) - 1] : 0
+      if (activeObject instanceof THREE.LineSegments) {
+        activeObject.geometry.setDrawRange(0, end)
+      } else {
+        activeObject.count = end
+      }
+    }
+    applyVisibleRef.current = applyVisible
+
+    const rebuild = (mode: RenderMode, visible: number) => {
+      disposeActive()
+      const built = mode === 'lines' ? buildLines(layersRef.current) : buildSolid(layersRef.current)
+      activeObject = built.object
+      layerEnds = built.layerEnds
+      activeObject.position.set(-center.x, -center.y, -center.z)
+      scene.add(activeObject)
+      ground.visible = mode === 'solid'
+      applyVisible(visible)
+    }
+    rebuildRef.current = rebuild
+
     fetch(gcodeDownloadUrl(jobId))
       .then((res) => {
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
@@ -73,46 +228,36 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
         if (disposed) return
         const { layers } = parseGcode(text)
         if (layers.length === 0) throw new Error('No extrusion moves found in this G-code')
+        layersRef.current = layers
 
-        const positions: number[] = []
-        const colors: number[] = []
-        const layerEndVertex: number[] = []
         const bounds = new THREE.Box3()
         const point = new THREE.Vector3()
-
-        layers.forEach((layer, layerIndex) => {
-          const color = new THREE.Color().setHSL(
-            0.72 - 0.72 * (layerIndex / Math.max(1, layers.length - 1)),
-            0.7,
-            0.55,
-          )
+        for (const layer of layers) {
           for (const seg of layer.segments) {
-            positions.push(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
-            colors.push(color.r, color.g, color.b, color.r, color.g, color.b)
             bounds.expandByPoint(point.set(seg.x1, seg.y1, seg.z1))
             bounds.expandByPoint(point.set(seg.x2, seg.y2, seg.z2))
           }
-          layerEndVertex.push(positions.length / 3)
-        })
-
-        const geometry = new THREE.BufferGeometry()
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-        const lines = new THREE.LineSegments(
-          geometry,
-          new THREE.LineBasicMaterial({ vertexColors: true }),
-        )
-        scene.add(lines)
-        geometryRef.current = geometry
-        layerEndVertexRef.current = layerEndVertex
-
-        const center = new THREE.Vector3()
+        }
         bounds.getCenter(center)
-        lines.position.sub(center)
-
         const size = new THREE.Vector3()
         bounds.getSize(size)
+        groundZ = bounds.min.z - center.z
+
+        const planeSize = Math.max(size.x, size.y) * 2.5 || 100
+        ground.geometry.dispose()
+        ground.geometry = new THREE.PlaneGeometry(planeSize, planeSize)
+        ground.position.set(0, 0, groundZ)
+
         const radius = size.length() / 2 || 1
+        keyLight.position.set(radius * 1.4, -radius * 1.1, radius * 2.4)
+        keyLight.shadow.camera.left = -radius * 1.5
+        keyLight.shadow.camera.right = radius * 1.5
+        keyLight.shadow.camera.top = radius * 1.5
+        keyLight.shadow.camera.bottom = -radius * 1.5
+        keyLight.shadow.camera.near = 0.1
+        keyLight.shadow.camera.far = radius * 6
+        keyLight.shadow.camera.updateProjectionMatrix()
+
         const distance = radius / Math.sin((Math.PI * camera.fov) / 360)
         camera.position.set(distance, distance, distance * 0.6)
         camera.near = distance / 1000
@@ -123,6 +268,7 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
 
         setLayerCount(layers.length)
         setVisibleLayers(layers.length)
+        rebuild(renderModeRef.current, layers.length)
         setStatus('ready')
       })
       .catch((err: Error) => {
@@ -137,23 +283,33 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
       cancelAnimationFrame(animationId)
       resizeObserver.disconnect()
       controls.dispose()
-      geometryRef.current?.dispose()
+      disposeActive()
+      ground.geometry.dispose()
+      ;(ground.material as THREE.Material).dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
     // jobId only: this scene is built once per preview open, not re-run on
-    // the slider's own state changes (that's handled imperatively below).
+    // the slider/mode toggle's own state changes (handled imperatively via
+    // the refs above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId])
 
-  // Cheap layer scrubbing: adjust the existing geometry's drawRange instead
-  // of re-parsing/rebuilding the scene on every slider tick.
+  // Rebuild the displayed object when the render mode is toggled, once a
+  // scene actually exists to rebuild into.
   useEffect(() => {
-    const geometry = geometryRef.current
-    const layerEndVertex = layerEndVertexRef.current
-    if (!geometry || layerEndVertex.length === 0) return
-    const vertexCount = visibleLayers > 0 ? layerEndVertex[visibleLayers - 1] : 0
-    geometry.setDrawRange(0, vertexCount)
+    renderModeRef.current = renderMode
+    if (status === 'ready') rebuildRef.current?.(renderMode, visibleLayers)
+    // visibleLayers intentionally omitted: this effect should only fire on
+    // a mode toggle, using whatever visibleLayers currently is, not re-run
+    // every time the slider moves (that's the effect below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderMode, status])
+
+  // Cheap layer scrubbing: adjust the existing object's visible range
+  // instead of re-parsing/rebuilding the scene on every slider tick.
+  useEffect(() => {
+    applyVisibleRef.current?.(visibleLayers)
   }, [visibleLayers])
 
   return (
@@ -163,6 +319,24 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
         {status === 'loading' && <div className="viewer-placeholder">Loading G-code…</div>}
         {status === 'error' && (
           <div className="viewer-placeholder">Couldn&rsquo;t load a preview for this file.</div>
+        )}
+        {status === 'ready' && (
+          <div className="gcode-mode-toggle">
+            <button
+              type="button"
+              className={renderMode === 'solid' ? 'active' : ''}
+              onClick={() => setRenderMode('solid')}
+            >
+              Solid
+            </button>
+            <button
+              type="button"
+              className={renderMode === 'lines' ? 'active' : ''}
+              onClick={() => setRenderMode('lines')}
+            >
+              Lines
+            </button>
+          </div>
         )}
       </div>
 
