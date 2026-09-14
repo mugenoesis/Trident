@@ -6,6 +6,7 @@ import {
   logout as apiLogout,
   setupAuth,
   switchToMulti as apiSwitchToMulti,
+  switchToSingle as apiSwitchToSingle,
 } from './api'
 import type { AuthStatus } from './types'
 
@@ -39,6 +40,7 @@ export function useAuth() {
     (username: string, password: string) => apiCreateUser(username, password).then(setStatus),
     [],
   )
+  const switchToSingle = useCallback(() => apiSwitchToSingle().then(setStatus), [])
 
-  return { status, setup, login, logout, switchToMulti, createUser }
+  return { status, setup, login, logout, switchToMulti, switchToSingle, createUser }
 }

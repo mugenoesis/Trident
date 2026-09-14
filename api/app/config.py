@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # SQLite user/account + auth-mode store.
     users_db_path: Path = Path("/data/output/users.sqlite3")
 
+    # SQLite saved-printers + material-profiles store.
+    printers_db_path: Path = Path("/data/output/printers.sqlite3")
+
     # How long a terminal (succeeded/failed) job's output, and an uploaded
     # model with no remaining job referencing it, survive before the
     # background cleanup sweep deletes them. Active (queued/running) jobs

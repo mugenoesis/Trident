@@ -116,6 +116,10 @@ export function switchToMulti(username: string, password: string): Promise<AuthS
   return postJson('/auth/switch-to-multi', { username, password })
 }
 
+export function switchToSingle(): Promise<AuthStatus> {
+  return postJson('/auth/switch-to-single', {})
+}
+
 export function createUser(username: string, password: string): Promise<AuthStatus> {
   return postJson('/auth/users', { username, password })
 }

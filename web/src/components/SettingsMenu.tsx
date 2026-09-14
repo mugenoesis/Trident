@@ -4,16 +4,23 @@ import type { AuthStatus } from '../types'
 interface SettingsMenuProps {
   status: AuthStatus
   onSwitchToMulti: (username: string, password: string) => Promise<unknown>
+  onSwitchToSingle: () => Promise<unknown>
   onCreateUser: (username: string, password: string) => Promise<unknown>
   onLogout: () => Promise<unknown>
 }
 
 // Small header gear -> dropdown panel. The only place mode/account
-// management lives outside the first-run gate: switching single -> multi,
-// adding a household account, and logging out.
-export default function SettingsMenu({ status, onSwitchToMulti, onCreateUser, onLogout }: SettingsMenuProps) {
+// management lives outside the first-run gate: switching single -> multi
+// (or back), adding a household account, and logging out.
+export default function SettingsMenu({
+  status,
+  onSwitchToMulti,
+  onSwitchToSingle,
+  onCreateUser,
+  onLogout,
+}: SettingsMenuProps) {
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState<'none' | 'switch' | 'add'>('none')
+  const [form, setForm] = useState<'none' | 'switch' | 'add' | 'downgrade'>('none')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +38,15 @@ export default function SettingsMenu({ status, onSwitchToMulti, onCreateUser, on
     setBusy(true)
     setError(null)
     action(username, password)
+      .then(() => resetForm())
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  const confirmDowngrade = () => {
+    setBusy(true)
+    setError(null)
+    onSwitchToSingle()
       .then(() => resetForm())
       .catch((err: Error) => setError(err.message))
       .finally(() => setBusy(false))
@@ -68,7 +84,28 @@ export default function SettingsMenu({ status, onSwitchToMulti, onCreateUser, on
               <button type="button" className="link-button" onClick={() => onLogout()}>
                 Log out
               </button>
+              <button type="button" className="link-button danger-text" onClick={() => setForm('downgrade')}>
+                Switch back to single-user…
+              </button>
             </>
+          )}
+          {form === 'downgrade' && (
+            <div className="auth-form">
+              <p className="auth-hint">
+                This deletes every account (usernames and passwords) and merges everyone&rsquo;s
+                printers and job history into one shared, login-free setup. Nothing is lost, but
+                accounts and who-owned-what can&rsquo;t be split apart again afterward.
+              </p>
+              <div className="auth-form-actions">
+                <button type="button" className="danger-button" disabled={busy} onClick={confirmDowngrade}>
+                  {busy ? 'Merging…' : 'Yes, switch back to single-user'}
+                </button>
+                <button type="button" className="link-button" disabled={busy} onClick={resetForm}>
+                  Cancel
+                </button>
+              </div>
+              {error && <div className="job-error">{error}</div>}
+            </div>
           )}
           {(form === 'switch' || form === 'add') && (
             <form

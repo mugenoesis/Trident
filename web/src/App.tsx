@@ -90,6 +90,7 @@ export default function App() {
     <MainApp
       authStatus={auth.status}
       onSwitchToMulti={auth.switchToMulti}
+      onSwitchToSingle={auth.switchToSingle}
       onCreateUser={auth.createUser}
       onLogout={auth.logout}
     />
@@ -99,11 +100,12 @@ export default function App() {
 interface MainAppProps {
   authStatus: NonNullable<ReturnType<typeof useAuth>['status']>
   onSwitchToMulti: (username: string, password: string) => Promise<unknown>
+  onSwitchToSingle: () => Promise<unknown>
   onCreateUser: (username: string, password: string) => Promise<unknown>
   onLogout: () => Promise<unknown>
 }
 
-function MainApp({ authStatus, onSwitchToMulti, onCreateUser, onLogout }: MainAppProps) {
+function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, onLogout }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -387,6 +389,7 @@ function MainApp({ authStatus, onSwitchToMulti, onCreateUser, onLogout }: MainAp
         <SettingsMenu
           status={authStatus}
           onSwitchToMulti={onSwitchToMulti}
+          onSwitchToSingle={onSwitchToSingle}
           onCreateUser={onCreateUser}
           onLogout={onLogout}
         />

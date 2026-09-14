@@ -130,6 +130,18 @@ class UserStore:
             row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
         return User(id=row["id"], username=row["username"]) if row else None
 
+    def collapse_to_single_user(self) -> None:
+        """Deletes every account and returns to the implicit local user.
+
+        Used by switch-to-single (auth.py) -- reassigning jobs/models/
+        printers back to LOCAL_USER_ID is the caller's job, since this
+        store only knows about accounts, not the data they own.
+        """
+        with self._connect() as conn:
+            conn.execute("DELETE FROM users")
+        self.get_or_create_local_user()
+        self.set_auth_mode("single")
+
     def reset_for_tests(self) -> None:
         """Wipe accounts and auth mode back to a fresh-install state.
 

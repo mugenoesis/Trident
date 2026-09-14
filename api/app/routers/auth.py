@@ -11,6 +11,8 @@ from ..auth import (
     verify_password,
     verify_session_cookie,
 )
+from ..jobstore import store as job_store
+from ..printerstore import store as printer_store
 from ..schemas import (
     AuthSetupRequest,
     AuthStatus,
@@ -18,7 +20,8 @@ from ..schemas import (
     SwitchToMultiRequest,
     UserCreateRequest,
 )
-from ..userstore import User, store as user_store
+from ..userstore import LOCAL_USER_ID, User, store as user_store
+from .models import reassign_all_models_to_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,6 +99,27 @@ def login(body: LoginRequest, response: Response) -> AuthStatus:
     user, _password_hash = found
     _set_session(response, user.id)
     return AuthStatus(mode="multi", logged_in=True, username=user.username)
+
+
+@router.post("/switch-to-single", response_model=AuthStatus)
+def switch_to_single(response: Response, current: User = Depends(require_user)) -> AuthStatus:
+    """The reverse of switch-to-multi: destructive in that every account's
+    identity (and password) is gone afterward, but no data is lost -- every
+    job/model/printer/material-profile, regardless of which account owned
+    it, is merged onto the single implicit local user (which is exactly
+    what single-user mode already looks like, since it never filters by
+    owner). Any logged-in user can trigger this -- there's no admin role
+    in multi-user mode, everyone's equal."""
+    if user_store.get_auth_mode() != "multi":
+        raise HTTPException(status_code=409, detail="Not in multi-user mode")
+
+    job_store.reassign_all_to_user(LOCAL_USER_ID)
+    printer_store.reassign_all_to_user(LOCAL_USER_ID)
+    reassign_all_models_to_user(LOCAL_USER_ID)
+    user_store.collapse_to_single_user()
+
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return AuthStatus(mode="single", logged_in=True, username=None)
 
 
 @router.post("/logout")

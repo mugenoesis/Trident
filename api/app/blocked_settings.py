@@ -22,6 +22,7 @@ PRINTHOST_KEYS = frozenset(
         "printhost_password",
         "printhost_ssl_ignore_revoke",
         "printhost_authorization_type",
+        "host_type",
     }
 )
 

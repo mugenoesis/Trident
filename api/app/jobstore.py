@@ -123,6 +123,19 @@ class JobStore:
         with self._connect() as conn:
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
+    def reassign_all_to_user(self, user_id: str) -> None:
+        """Used by switch-to-single: merges every job, regardless of
+        current owner, onto one account."""
+        with self._connect() as conn:
+            conn.execute("UPDATE jobs SET user_id = ?", (user_id,))
+
+    def reset_for_tests(self) -> None:
+        """Wipe all jobs -- see UserStore.reset_for_tests() for why this is
+        needed (a process-wide singleton would otherwise leak jobs between
+        tests in the same pytest session)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jobs")
+
     def set_status(self, job_id: str, status: JobStatus) -> None:
         with self._connect() as conn:
             conn.execute(

@@ -105,6 +105,21 @@ def resolve_model_owner(model_id: str) -> str | None:
     return (meta or {}).get("owner_user_id") or None
 
 
+def reassign_all_models_to_user(user_id: str) -> None:
+    """Used by switch-to-single: merges every uploaded model, regardless of
+    current owner, onto one account."""
+    meta_dir = settings.models_dir / _META_DIRNAME
+    if not meta_dir.is_dir():
+        return
+    for meta_file in meta_dir.glob("*.json"):
+        try:
+            data = json.loads(meta_file.read_text())
+        except (OSError, ValueError):
+            continue
+        data["owner_user_id"] = user_id
+        meta_file.write_text(json.dumps(data))
+
+
 def delete_model(model_id: str) -> None:
     """Removes the uploaded model file(s) and its metadata sidecar.
 

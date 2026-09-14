@@ -138,3 +138,50 @@ def test_second_user_cannot_see_or_slice_first_users_model(client, monkeypatch):
         json={"model_id": model_id, "printer_profile": "Generic Printer", "process_profile": "0.20mm Standard"},
     )
     assert slice_as_bob.status_code == 404
+
+
+def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, monkeypatch):
+    from app import cli_runner
+    from app.cli_runner import SliceResult
+
+    monkeypatch.setattr(
+        cli_runner,
+        "run_slice",
+        lambda **kwargs: SliceResult(
+            return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True
+        ),
+    )
+
+    client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
+    alice_model = client.post(
+        "/models", files={"file": ("alice.stl", io.BytesIO(b"fake"), "model/stl")}
+    ).json()["model_id"]
+    alice_job = client.post(
+        "/jobs",
+        json={"model_id": alice_model, "printer_profile": "Generic Printer", "process_profile": "0.20mm Standard"},
+    ).json()["id"]
+
+    client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
+    client.post("/auth/logout")
+    client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
+    bob_model = client.post(
+        "/models", files={"file": ("bob.stl", io.BytesIO(b"fake"), "model/stl")}
+    ).json()["model_id"]
+    bob_job = client.post(
+        "/jobs",
+        json={"model_id": bob_model, "printer_profile": "Generic Printer", "process_profile": "0.20mm Standard"},
+    ).json()["id"]
+
+    switched = client.post("/auth/switch-to-single")
+    assert switched.status_code == 200
+    assert switched.json() == {"mode": "single", "logged_in": True, "username": None}
+
+    # No login prompt of any kind afterward, and both accounts' jobs survive
+    # merged under the one implicit user.
+    assert client.get("/auth/status").json() == {"mode": "single", "logged_in": True, "username": None}
+    job_ids = {j["id"] for j in client.get("/jobs").json()}
+    assert job_ids == {alice_job, bob_job}
+
+    # The old accounts are gone -- logging in as either no longer means
+    # anything (mode isn't multi anymore).
+    assert client.post("/auth/login", json={"username": "alice", "password": "pw12345"}).status_code == 400

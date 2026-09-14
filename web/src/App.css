@@ -592,3 +592,17 @@
   font-size: 0.85rem;
   color: var(--text-dim);
 }
+
+.danger-text {
+  color: var(--danger) !important;
+}
+
+.danger-button {
+  background: var(--danger);
+  color: white;
+  border: none;
+}
+
+.danger-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}

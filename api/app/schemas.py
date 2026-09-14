@@ -103,6 +103,62 @@ class UserCreateRequest(BaseModel):
     password: str
 
 
+class MaterialProfileCreateRequest(BaseModel):
+    name: str
+    quick_settings: dict[str, str] = Field(default_factory=dict)
+    advanced_overrides: dict[str, str] = Field(default_factory=dict)
+    process_profile: str | None = None
+    filament_profile: str | None = None
+
+
+class MaterialProfileRecord(BaseModel):
+    id: str
+    printer_id: str
+    name: str
+    quick_settings: dict[str, str]
+    advanced_overrides: dict[str, str]
+    process_profile: str | None = None
+    filament_profile: str | None = None
+    created_at: str
+
+
+class PrinterCreateRequest(BaseModel):
+    name: str
+    vendor: str
+    machine_profile: str
+    process_profile: str
+    filament_profile: str
+    bed_width: float | None = None
+    bed_depth: float | None = None
+    bed_height: float | None = None
+    # host_type is limited to "octoprint"/"moonraker" by the frontend (the
+    # only two send-to-printer actually knows how to talk to), but nothing
+    # here stops a wider OrcaSlicer host_type value from being stored.
+    host_type: str | None = None
+    print_host: str | None = None
+    printhost_apikey: str | None = None
+    printhost_user: str | None = None
+    printhost_password: str | None = None
+
+
+class PrinterRecord(BaseModel):
+    id: str
+    name: str
+    vendor: str
+    machine_profile: str
+    process_profile: str
+    filament_profile: str
+    bed_width: float | None = None
+    bed_depth: float | None = None
+    bed_height: float | None = None
+    host_type: str | None = None
+    print_host: str | None = None
+    # Write-only: the raw apikey/user/password are never sent back to the
+    # browser once saved -- just whether *something* is configured.
+    has_credentials: bool
+    created_at: str
+
+
 class SourceInfo(BaseModel):
     license: str = "AGPL-3.0"
     notice: str = (
