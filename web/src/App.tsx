@@ -58,7 +58,23 @@ export default function App() {
   const [slicing, setSlicing] = useState(false)
   const [currentJob, setCurrentJob] = useState<JobRecord | null>(null)
   const [history, setHistory] = useState<JobRecord[]>([])
-  const [previewJobId, setPreviewJobId] = useState<string | null>(null)
+
+  // Which job's G-code the viewer panel shows, and whether it's showing
+  // that at all right now (vs. the 3D model). Separate from currentJob:
+  // a history item can be previewed independently of whatever's currently
+  // slicing.
+  const [viewedJobId, setViewedJobId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'model' | 'gcode'>('model')
+
+  const showGcode = viewMode === 'gcode' && viewedJobId !== null
+
+  const viewJobGcode = useCallback((jobId: string) => {
+    setViewedJobId(jobId)
+    setViewMode('gcode')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const backToModelView = useCallback(() => setViewMode('model'), [])
 
   // Initial catalog load.
   useEffect(() => {
@@ -82,6 +98,7 @@ export default function App() {
     setModelId(null)
     setUploadStatus('uploading')
     setScaleToastDismissed(false)
+    setViewMode('model')
     uploadModel(selected)
       .then((res) => {
         setModelId(res.model_id)
@@ -128,6 +145,7 @@ export default function App() {
       setFilamentName('')
       setBedSize(null)
       setScaleToastDismissed(false)
+      setViewMode('model')
       if (!vendor || !name) return
 
       // Not every vendor's machine profile sets these (confirmed empirically:
@@ -176,6 +194,30 @@ export default function App() {
     setProcessName('')
     setFilamentName('')
     setBedSize(null)
+    setViewMode('model')
+  }, [])
+
+  // Any change to a slicing-relevant selection invalidates whatever G-code
+  // preview might be showing -- it no longer reflects what a new slice
+  // would produce, so drop back to the model view automatically.
+  const handleProcessChange = useCallback((name: string) => {
+    setProcessName(name)
+    setViewMode('model')
+  }, [])
+
+  const handleFilamentChange = useCallback((name: string) => {
+    setFilamentName(name)
+    setViewMode('model')
+  }, [])
+
+  const handleQuickSettingsChange = useCallback((values: QuickSettingsValues) => {
+    setQuickSettings(values)
+    setViewMode('model')
+  }, [])
+
+  const handleAdvancedOverridesChange = useCallback((overrides: Record<string, string>) => {
+    setAdvancedOverrides(overrides)
+    setViewMode('model')
   }, [])
 
   // Poll the active job until it leaves queued/running.
@@ -192,6 +234,7 @@ export default function App() {
           if (!ACTIVE_STATUSES.includes(job.status)) {
             setSlicing(false)
             listJobs().then(setHistory).catch(() => {})
+            if (job.status === 'succeeded') viewJobGcode(job.id)
           }
         })
         .catch(() => {
@@ -209,6 +252,7 @@ export default function App() {
   const handleSlice = useCallback(() => {
     if (!modelId || !printerName || !processName || !filamentName) return
     setSlicing(true)
+    setViewMode('model')
     const overrides: Record<string, string> = {
       ...advancedOverrides,
       layer_height: quickSettings.layer_height,
@@ -249,14 +293,24 @@ export default function App() {
 
       <main className="app-main">
         <section className="panel panel-viewer">
-          <Uploader onFileSelected={handleFileSelected} fileName={file?.name ?? null} uploadStatus={uploadStatus} />
-          <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} />
-          {dimensions && (
+          {showGcode && viewedJobId ? (
+            <GcodeViewer jobId={viewedJobId} onBackToModel={backToModelView} />
+          ) : (
             <>
-              <div className="dimensions-readout">
-                {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
-              </div>
-              <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
+              <Uploader
+                onFileSelected={handleFileSelected}
+                fileName={file?.name ?? null}
+                uploadStatus={uploadStatus}
+              />
+              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} />
+              {dimensions && (
+                <>
+                  <div className="dimensions-readout">
+                    {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
+                  </div>
+                  <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
+                </>
+              )}
             </>
           )}
         </section>
@@ -271,17 +325,17 @@ export default function App() {
             filamentName={filamentName}
             onVendorChange={handleVendorChange}
             onPrinterChange={handlePrinterChange}
-            onProcessChange={setProcessName}
-            onFilamentChange={setFilamentName}
+            onProcessChange={handleProcessChange}
+            onFilamentChange={handleFilamentChange}
           />
 
           <h2>Quick settings</h2>
-          <QuickSettings schema={schema} values={quickSettings} onChange={setQuickSettings} />
+          <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
 
           <AdvancedSettings
             schema={schema}
             overrides={advancedOverrides}
-            onChange={setAdvancedOverrides}
+            onChange={handleAdvancedOverridesChange}
             excludeKeys={QUICK_SETTING_KEYS}
           />
 
@@ -291,7 +345,7 @@ export default function App() {
             slicing={slicing}
             currentJob={currentJob}
             history={history}
-            onPreview={setPreviewJobId}
+            onPreview={viewJobGcode}
           />
         </section>
       </main>
@@ -318,10 +372,6 @@ export default function App() {
             </button>
           </div>
         </div>
-      )}
-
-      {previewJobId && (
-        <GcodeViewer jobId={previewJobId} onClose={() => setPreviewJobId(null)} />
       )}
     </div>
   )

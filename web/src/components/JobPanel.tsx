@@ -46,13 +46,6 @@ export default function JobPanel({
           )}
           {currentJob.status === 'succeeded' && (
             <div className="job-result">
-              <button
-                type="button"
-                className="preview-button"
-                onClick={() => onPreview(currentJob.id)}
-              >
-                Preview G-code
-              </button>
               <a className="download-button" href={gcodeDownloadUrl(currentJob.id)} download>
                 Download G-code
               </a>

@@ -6,7 +6,7 @@ import { parseGcode } from '../gcodeParser'
 
 interface GcodeViewerProps {
   jobId: string
-  onClose: () => void
+  onBackToModel: () => void
 }
 
 // Real toolpath preview, not just "here's the file": fetches the sliced
@@ -14,7 +14,9 @@ interface GcodeViewerProps {
 // as colored line segments layer by layer, with a slider to scrub through
 // how much of the print has been "drawn" -- the same idea as a slicer's own
 // preview tab, just without per-feature (wall/infill/support) coloring.
-export default function GcodeViewer({ jobId, onClose }: GcodeViewerProps) {
+// Rendered inline in place of the 3D model Viewer (App.tsx), not a modal --
+// swapped in automatically once a slice succeeds.
+export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
@@ -155,42 +157,38 @@ export default function GcodeViewer({ jobId, onClose }: GcodeViewerProps) {
   }, [visibleLayers])
 
   return (
-    <div className="gcode-modal-backdrop" onClick={onClose}>
-      <div className="gcode-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="gcode-modal-header">
-          <h2>G-code preview</h2>
-          <button type="button" className="toast-dismiss" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="gcode-viewer-wrap">
-          <div ref={containerRef} className="gcode-viewer" />
-          {status === 'loading' && <div className="viewer-placeholder">Loading G-code…</div>}
-          {status === 'error' && (
-            <div className="viewer-placeholder">Couldn&rsquo;t load a preview for this file.</div>
-          )}
-        </div>
-
-        {status === 'ready' && (
-          <div className="gcode-layer-slider">
-            <input
-              type="range"
-              min={1}
-              max={layerCount}
-              value={visibleLayers}
-              onChange={(e) => setVisibleLayers(Number(e.target.value))}
-            />
-            <span>
-              Layer {visibleLayers} / {layerCount}
-            </span>
-          </div>
+    <>
+      <div className="gcode-viewer-wrap">
+        <div ref={containerRef} className="gcode-viewer" />
+        {status === 'loading' && <div className="viewer-placeholder">Loading G-code…</div>}
+        {status === 'error' && (
+          <div className="viewer-placeholder">Couldn&rsquo;t load a preview for this file.</div>
         )}
+      </div>
 
+      {status === 'ready' && (
+        <div className="gcode-layer-slider">
+          <input
+            type="range"
+            min={1}
+            max={layerCount}
+            value={visibleLayers}
+            onChange={(e) => setVisibleLayers(Number(e.target.value))}
+          />
+          <span>
+            Layer {visibleLayers} / {layerCount}
+          </span>
+        </div>
+      )}
+
+      <div className="gcode-actions">
         <a className="download-button" href={gcodeDownloadUrl(jobId)} download>
           Download G-code
         </a>
+        <button type="button" className="preview-button" onClick={onBackToModel}>
+          Back to 3D view
+        </button>
       </div>
-    </div>
+    </>
   )
 }
