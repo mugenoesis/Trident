@@ -168,6 +168,12 @@ export default function App() {
       wall_loops: quickSettings.wall_loops,
       sparse_infill_pattern: quickSettings.sparse_infill_pattern,
       curr_bed_type: quickSettings.curr_bed_type,
+      enable_support: quickSettings.enable_support,
+    }
+    // Only meaningful (and only worth sending) when support is actually on.
+    if (quickSettings.enable_support === '1') {
+      overrides.support_type = quickSettings.support_type
+      overrides.support_buildplate_only = quickSettings.support_buildplate_only
     }
     createJob({
       model_id: modelId,

@@ -144,7 +144,18 @@ def run_slice(
         # handle, but covers the vast majority of settings (confirmed against a
         # real build: --layer_height is rejected as "Invalid option", --layer-height
         # works).
-        cmd += [f"--{key.replace('_', '-')}", str(value)]
+        #
+        # Single `--key=value` token, not `["--key", "value"]`: ConfigBase::
+        # read_cli_args() only auto-consumes the *next* argv token as a value
+        # for non-bool options (coBool/coBools are allowed an empty value,
+        # meaning "true", so it never looks ahead for them). A separate
+        # "--enable-support" "1" pair left "1" unconsumed, which then got
+        # parsed as a positional arg -- i.e. an extra (nonexistent) input
+        # model file, surfacing as a confusing "input files not found" error.
+        # The `--key=value` form is parsed generically up front regardless of
+        # type, so it's correct (and safe with spaces, e.g. enum values like
+        # "Textured PEI Plate") for every option, not just bools.
+        cmd.append(f"--{key.replace('_', '-')}={value}")
     cmd.append(str(model_path))
 
     try:

@@ -6,6 +6,9 @@ export interface QuickSettingsValues {
   wall_loops: string
   sparse_infill_pattern: string
   curr_bed_type: string
+  enable_support: string
+  support_type: string
+  support_buildplate_only: string
 }
 
 interface QuickSettingsProps {
@@ -20,6 +23,9 @@ const KEYS: (keyof QuickSettingsValues)[] = [
   'wall_loops',
   'sparse_infill_pattern',
   'curr_bed_type',
+  'enable_support',
+  'support_type',
+  'support_buildplate_only',
 ]
 
 function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
@@ -34,6 +40,8 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
 
   const patternDef = findDef(schema, 'sparse_infill_pattern')
   const bedTypeDef = findDef(schema, 'curr_bed_type')
+  const supportTypeDef = findDef(schema, 'support_type')
+  const supportEnabled = values.enable_support === '1'
 
   return (
     <div className="field-group">
@@ -100,6 +108,40 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
           ))}
         </select>
       </label>
+
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={supportEnabled}
+          onChange={(e) => set('enable_support', e.target.checked ? '1' : '0')}
+        />
+        Enable support
+      </label>
+
+      <label>
+        Support type
+        <select
+          value={values.support_type}
+          disabled={!supportEnabled}
+          onChange={(e) => set('support_type', e.target.value)}
+        >
+          {(supportTypeDef?.enum_values ?? [values.support_type]).map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={values.support_buildplate_only === '1'}
+          disabled={!supportEnabled}
+          onChange={(e) => set('support_buildplate_only', e.target.checked ? '1' : '0')}
+        />
+        Support on build plate only
+      </label>
     </div>
   )
 }
@@ -115,6 +157,9 @@ export function defaultQuickSettings(schema: SettingDef[]): QuickSettingsValues 
     wall_loops: def('wall_loops', '2'),
     sparse_infill_pattern: def('sparse_infill_pattern', 'grid'),
     curr_bed_type: def('curr_bed_type', 'Cool Plate'),
+    enable_support: def('enable_support', '0'),
+    support_type: def('support_type', 'normal(auto)'),
+    support_buildplate_only: def('support_buildplate_only', '0'),
   }
 }
 
