@@ -120,6 +120,26 @@ class PrinterStore:
             row = conn.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
         return self._row_to_printer(row) if row else None
 
+    # Columns a settings edit is allowed to touch -- deliberately excludes
+    # vendor/machine_profile/process_profile/filament_profile/bed_* (a
+    # printer's slicing identity): fixing one of those is delete-and-recreate,
+    # same reasoning as skipping edit entirely in the first pass. This is
+    # just for the connection details (+ name) added after the fact.
+    _UPDATABLE_COLUMNS = frozenset(
+        {"name", "host_type", "print_host", "printhost_apikey", "printhost_user", "printhost_password"}
+    )
+
+    def update_printer(self, printer_id: str, **fields: Any) -> PrinterRecord | None:
+        updates = {k: v for k, v in fields.items() if k in self._UPDATABLE_COLUMNS}
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE printers SET {set_clause} WHERE id = ?",  # noqa: S608 - keys are our own frozenset, not user input
+                    (*updates.values(), printer_id),
+                )
+        return self.get_printer(printer_id)
+
     def get_printer_row(self, printer_id: str) -> sqlite3.Row | None:
         """Raw row, secrets included -- for printhost.py's actual upload,
         which needs the real apikey/password, not the masked PrinterRecord

@@ -357,6 +357,38 @@
   color: var(--danger);
 }
 
+.printer-manage-row {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0.4rem !important;
+}
+
+.printer-manage-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.printer-manage-header span {
+  flex: 1;
+}
+
+.printer-settings-form {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.test-connection {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 0.5rem;
+  margin-top: 0.2rem;
+}
+
 .saved-printers,
 .material-profiles {
   display: flex;

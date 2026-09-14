@@ -11,6 +11,7 @@ from ..schemas import (
     MaterialProfileRecord,
     PrinterCreateRequest,
     PrinterRecord,
+    PrinterUpdateRequest,
     SendToPrinterRequest,
 )
 from ..userstore import User
@@ -34,6 +35,19 @@ def list_printers(current: User = Depends(require_user)) -> list[PrinterRecord]:
 @router.post("", response_model=PrinterRecord)
 def create_printer(body: PrinterCreateRequest, current: User = Depends(require_user)) -> PrinterRecord:
     return store.create_printer(user_id=current.id, **body.model_dump())
+
+
+@router.put("/{printer_id}", response_model=PrinterRecord)
+def update_printer(
+    printer_id: str, body: PrinterUpdateRequest, current: User = Depends(require_user)
+) -> PrinterRecord:
+    _get_owned_printer(printer_id, current)
+    # exclude_unset, not exclude_none: an empty string ("clear this field")
+    # is a real, intentional value here, distinct from the field being left
+    # out of the request body entirely ("don't touch this field").
+    updated = store.update_printer(printer_id, **body.model_dump(exclude_unset=True))
+    assert updated is not None  # just confirmed the printer exists above
+    return updated
 
 
 @router.delete("/{printer_id}")
@@ -67,6 +81,23 @@ def delete_material(
         raise HTTPException(status_code=404, detail="Material profile not found")
     store.delete_material(material_id)
     return {"ok": True}
+
+
+@router.post("/{printer_id}/test-connection")
+async def test_printer_connection(
+    printer_id: str, current: User = Depends(require_user)
+) -> dict[str, str]:
+    """Cheap read-only ping against the printer's *stored* connection
+    details -- edit-and-save first if you want to test a credential you
+    just typed in."""
+    _get_owned_printer(printer_id, current)
+    row = store.get_printer_row(printer_id)
+    assert row is not None  # just confirmed ownership above
+    try:
+        message = await printhost.test_connection(row)
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"message": message}
 
 
 @router.post("/{printer_id}/send/{job_id}")

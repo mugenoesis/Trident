@@ -90,6 +90,76 @@ def test_cannot_delete_or_view_another_users_printer(client):
     assert client.delete(f"/printers/{printer_id}").status_code == 404
 
 
+def test_update_printer_connection_fields(client):
+    printer_id = client.post(
+        "/printers", json=_printer_body(host_type="octoprint", print_host="http://old.local")
+    ).json()["id"]
+
+    resp = client.put(f"/printers/{printer_id}", json={"print_host": "http://new.local"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["print_host"] == "http://new.local"
+    assert body["host_type"] == "octoprint"  # left alone
+    assert body["name"] == "Living room A1"  # left alone
+
+
+def test_update_printer_can_set_and_clear_credential(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+
+    with_key = client.put(f"/printers/{printer_id}", json={"printhost_apikey": "newkey"})
+    assert with_key.json()["has_credentials"] is True
+
+    cleared = client.put(f"/printers/{printer_id}", json={"printhost_apikey": ""})
+    assert cleared.json()["has_credentials"] is False
+
+
+def test_update_another_users_printer_404s(client):
+    client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+
+    client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
+    client.post("/auth/logout")
+    client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
+
+    resp = client.put(f"/printers/{printer_id}", json={"name": "Hijacked"})
+    assert resp.status_code == 404
+
+
+def test_test_connection_success(client, monkeypatch):
+    from app import printhost
+
+    printer_id = client.post(
+        "/printers", json=_printer_body(host_type="moonraker", print_host="http://printer.local")
+    ).json()["id"]
+
+    async def fake_test_connection(printer, **kwargs):
+        assert printer["print_host"] == "http://printer.local"
+        return "Connected (Klipper state: ready)"
+
+    monkeypatch.setattr(printhost, "test_connection", fake_test_connection)
+
+    resp = client.post(f"/printers/{printer_id}/test-connection")
+    assert resp.status_code == 200
+    assert resp.json() == {"message": "Connected (Klipper state: ready)"}
+
+
+def test_test_connection_surfaces_error(client, monkeypatch):
+    from app import printhost
+
+    printer_id = client.post(
+        "/printers", json=_printer_body(host_type="moonraker", print_host="http://printer.local")
+    ).json()["id"]
+
+    async def failing_test_connection(*args, **kwargs):
+        raise printhost.PrintHostError("connection refused")
+
+    monkeypatch.setattr(printhost, "test_connection", failing_test_connection)
+
+    resp = client.post(f"/printers/{printer_id}/test-connection")
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["detail"]
+
+
 def _sliced_job(client, monkeypatch) -> str:
     from app import cli_runner
     from app.cli_runner import SliceResult

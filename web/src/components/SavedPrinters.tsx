@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { MaterialProfileRecord, PrintHostType, PrinterRecord } from '../types'
+import { testPrinterConnection } from '../api'
+import type { MaterialProfileRecord, PrintHostType, PrinterRecord, PrinterUpdateRequest } from '../types'
 
 interface SavedPrintersProps {
   printers: PrinterRecord[]
@@ -16,6 +17,7 @@ interface SavedPrintersProps {
       printhost_password: string | null
     },
   ) => Promise<unknown>
+  onUpdatePrinter: (id: string, body: PrinterUpdateRequest) => Promise<unknown>
   onDeletePrinter: (id: string) => void
 
   materials: MaterialProfileRecord[]
@@ -23,6 +25,138 @@ interface SavedPrintersProps {
   onSelectMaterial: (material: MaterialProfileRecord) => void
   onSaveMaterial: (name: string) => Promise<unknown>
   onDeleteMaterial: (id: string) => void
+}
+
+// A connection-details editor for one already-saved printer. Host
+// type/address are shown pre-filled (PrinterRecord exposes both); the
+// apikey/user/password fields never are (write-only, per the backend never
+// returning them) -- left blank means "keep what's saved", typing something
+// replaces it, and "Clear saved credentials" wipes all three explicitly.
+function PrinterSettingsForm({
+  printer,
+  onUpdate,
+  onClose,
+}: {
+  printer: PrinterRecord
+  onUpdate: (id: string, body: PrinterUpdateRequest) => Promise<unknown>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(printer.name)
+  const [hostType, setHostType] = useState<'' | PrintHostType>(printer.host_type ?? '')
+  const [printHost, setPrintHost] = useState(printer.print_host ?? '')
+  const [apiKey, setApiKey] = useState('')
+  const [hostUser, setHostUser] = useState('')
+  const [hostPassword, setHostPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [testBusy, setTestBusy] = useState(false)
+  const [testResult, setTestResult] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    const body: PrinterUpdateRequest = {
+      name,
+      host_type: hostType || null,
+      print_host: printHost || null,
+    }
+    if (apiKey) body.printhost_apikey = apiKey
+    if (hostUser) body.printhost_user = hostUser
+    if (hostPassword) body.printhost_password = hostPassword
+    onUpdate(printer.id, body)
+      .then(() => onClose())
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  const clearCredentials = () => {
+    setBusy(true)
+    setError(null)
+    onUpdate(printer.id, { printhost_apikey: '', printhost_user: '', printhost_password: '' })
+      .then(() => {
+        setApiKey('')
+        setHostUser('')
+        setHostPassword('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  // Tests the *saved* connection, not whatever's mid-edit in this form --
+  // save first if you want to test a credential you just typed.
+  const testConnection = () => {
+    setTestBusy(true)
+    setTestResult(null)
+    setTestError(null)
+    testPrinterConnection(printer.id)
+      .then((res) => setTestResult(res.message))
+      .catch((err: Error) => setTestError(err.message))
+      .finally(() => setTestBusy(false))
+  }
+
+  return (
+    <form className="auth-form printer-settings-form" onSubmit={submit}>
+      <label>
+        Name
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label>
+        Connection
+        <select value={hostType} onChange={(e) => setHostType(e.target.value as '' | PrintHostType)}>
+          <option value="">None</option>
+          <option value="moonraker">Klipper (Moonraker)</option>
+          <option value="octoprint">OctoPrint</option>
+        </select>
+      </label>
+      {hostType && (
+        <>
+          <label>
+            Host (e.g. http://printer.local:7125)
+            <input value={printHost} onChange={(e) => setPrintHost(e.target.value)} />
+          </label>
+          <label>
+            API key {printer.has_credentials && '(leave blank to keep the saved one)'}
+            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          </label>
+          <label>
+            HTTP username {printer.has_credentials && '(leave blank to keep the saved one)'}
+            <input value={hostUser} onChange={(e) => setHostUser(e.target.value)} />
+          </label>
+          <label>
+            HTTP password {printer.has_credentials && '(leave blank to keep the saved one)'}
+            <input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
+          </label>
+          {printer.has_credentials && (
+            <button type="button" className="link-button danger-text" disabled={busy} onClick={clearCredentials}>
+              Clear saved credentials
+            </button>
+          )}
+        </>
+      )}
+      <div className="auth-form-actions">
+        <button type="submit" disabled={busy || !name}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        <button type="button" className="link-button" disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+      {error && <div className="job-error">{error}</div>}
+
+      {printer.print_host && (
+        <div className="test-connection">
+          <button type="button" className="preview-button" disabled={testBusy} onClick={testConnection}>
+            {testBusy ? 'Testing…' : 'Test connection'}
+          </button>
+          {testResult && <span className="job-hint">{testResult}</span>}
+          {testError && <span className="job-error">{testError}</span>}
+        </div>
+      )}
+    </form>
+  )
 }
 
 // Sits above PrinterSelect: pick a saved printer to instantly restore
@@ -36,6 +170,7 @@ export default function SavedPrinters({
   onSelectPrinter,
   canSaveCurrent,
   onSavePrinter,
+  onUpdatePrinter,
   onDeletePrinter,
   materials,
   selectedMaterialId,
@@ -52,6 +187,8 @@ export default function SavedPrinters({
   const [hostPassword, setHostPassword] = useState('')
   const [printerError, setPrinterError] = useState<string | null>(null)
   const [printerBusy, setPrinterBusy] = useState(false)
+
+  const [editingPrinterId, setEditingPrinterId] = useState<string | null>(null)
 
   const [savingMaterial, setSavingMaterial] = useState(false)
   const [materialName, setMaterialName] = useState('')
@@ -165,6 +302,7 @@ export default function SavedPrinters({
                   onChange={(e) => setHostPassword(e.target.value)}
                 />
               </label>
+              <p className="auth-hint">You can test the connection from "Manage saved printers" after saving.</p>
             </>
           )}
           <div className="auth-form-actions">
@@ -184,11 +322,31 @@ export default function SavedPrinters({
           <summary>Manage saved printers ({printers.length})</summary>
           <ul>
             {printers.map((p) => (
-              <li key={p.id}>
-                <span>{p.name}</span>
-                <button type="button" className="link-button job-delete" onClick={() => onDeletePrinter(p.id)}>
-                  Delete
-                </button>
+              <li key={p.id} className="printer-manage-row">
+                <div className="printer-manage-header">
+                  <span>{p.name}</span>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => setEditingPrinterId((prev) => (prev === p.id ? null : p.id))}
+                  >
+                    {editingPrinterId === p.id ? 'Close' : 'Settings'}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button job-delete"
+                    onClick={() => onDeletePrinter(p.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+                {editingPrinterId === p.id && (
+                  <PrinterSettingsForm
+                    printer={p}
+                    onUpdate={onUpdatePrinter}
+                    onClose={() => setEditingPrinterId(null)}
+                  />
+                )}
               </li>
             ))}
           </ul>

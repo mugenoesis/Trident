@@ -15,6 +15,7 @@ import {
   listPrinters,
   listProfiles,
   sendToPrinter,
+  updatePrinter,
   uploadModel,
 } from './api'
 import {
@@ -45,6 +46,7 @@ import type {
   MaterialProfileRecord,
   PrinterConnection,
   PrinterRecord,
+  PrinterUpdateRequest,
   ProfileSummary,
   SettingDef,
 } from './types'
@@ -406,6 +408,12 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
     [vendor, printerName, processName, filamentName, bedSize],
   )
 
+  const handleUpdatePrinter = useCallback((id: string, body: PrinterUpdateRequest) => {
+    return updatePrinter(id, body).then((printer) => {
+      setPrinters((prev) => prev.map((p) => (p.id === id ? printer : p)))
+    })
+  }, [])
+
   const handleDeletePrinter = useCallback((id: string) => {
     deletePrinter(id)
       .then(() => {
@@ -572,6 +580,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
             onSelectPrinter={applySavedPrinter}
             canSaveCurrent={Boolean(vendor && printerName && processName && filamentName)}
             onSavePrinter={handleSavePrinter}
+            onUpdatePrinter={handleUpdatePrinter}
             onDeletePrinter={handleDeletePrinter}
             materials={materials}
             selectedMaterialId={selectedMaterialId}

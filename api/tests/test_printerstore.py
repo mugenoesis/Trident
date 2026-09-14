@@ -44,6 +44,42 @@ def test_credentials_are_masked_but_flagged(tmp_path: Path):
     assert "secret123" not in printer.model_dump_json()
 
 
+def test_update_printer_only_touches_given_fields(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(
+        user_id="alice", **_printer_fields(host_type="octoprint", print_host="http://old.local")
+    )
+
+    updated = db.update_printer(printer.id, print_host="http://new.local")
+    assert updated is not None
+    assert updated.print_host == "http://new.local"
+    assert updated.host_type == "octoprint"  # untouched
+    assert updated.vendor == "BBL"  # untouched, not even an updatable column
+
+
+def test_update_printer_ignores_non_updatable_columns(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+
+    # vendor isn't in _UPDATABLE_COLUMNS -- silently dropped, not an error.
+    updated = db.update_printer(printer.id, vendor="Prusa", name="Renamed")
+    assert updated is not None
+    assert updated.name == "Renamed"
+    assert updated.vendor == "BBL"
+
+
+def test_update_printer_can_clear_a_credential(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(
+        user_id="alice", **_printer_fields(host_type="moonraker", print_host="http://x", printhost_apikey="k")
+    )
+    assert printer.has_credentials is True
+
+    updated = db.update_printer(printer.id, printhost_apikey="")
+    assert updated is not None
+    assert updated.has_credentials is False
+
+
 def test_list_printers_scoped_to_user(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     mine = db.create_printer(user_id="alice", **_printer_fields())

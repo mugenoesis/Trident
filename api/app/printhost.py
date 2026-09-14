@@ -10,32 +10,47 @@ to do with the nocli/blocked_settings machinery.
 """
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
+from typing import Any, Mapping
 
 import httpx
 
 SUPPORTED_HOST_TYPES = frozenset({"moonraker", "octoprint"})
+
+# printer is a Mapping (sqlite3.Row for a saved printer's stored credentials,
+# or a plain dict from a request body for validating an in-progress edit
+# before it's even saved) -- both support the [] access used here.
+Printer = Mapping[str, Any]
 
 
 class PrintHostError(Exception):
     """Message is safe to show the user directly."""
 
 
-def _auth_kwargs(printer: sqlite3.Row) -> dict[str, tuple[str, str]]:
+def _auth_kwargs(printer: Printer) -> dict[str, tuple[str, str]]:
     if printer["printhost_user"] and printer["printhost_password"]:
         return {"auth": (printer["printhost_user"], printer["printhost_password"])}
     return {}
 
 
-def _headers(printer: sqlite3.Row) -> dict[str, str]:
+def _headers(printer: Printer) -> dict[str, str]:
     if printer["printhost_apikey"]:
         return {"X-Api-Key": printer["printhost_apikey"]}
     return {}
 
 
+def _require_supported(printer: Printer) -> tuple[str, str]:
+    host_type = printer["host_type"]
+    print_host = printer["print_host"]
+    if not print_host:
+        raise PrintHostError("This printer has no host address configured")
+    if host_type not in SUPPORTED_HOST_TYPES:
+        raise PrintHostError(f"Sending to host type {host_type!r} isn't supported yet")
+    return host_type, print_host.rstrip("/")
+
+
 async def send_gcode(
-    printer: sqlite3.Row,
+    printer: Printer,
     gcode_path: Path,
     start_print: bool,
     *,
@@ -43,14 +58,8 @@ async def send_gcode(
 ) -> None:
     """`client` is only ever passed in tests (an httpx.MockTransport-backed
     one) -- production always builds its own, scoped to this one request."""
-    host_type = printer["host_type"]
-    print_host = printer["print_host"]
-    if not print_host:
-        raise PrintHostError("This printer has no host address configured")
-    if host_type not in SUPPORTED_HOST_TYPES:
-        raise PrintHostError(f"Sending to host type {host_type!r} isn't supported yet")
+    host_type, base = _require_supported(printer)
 
-    base = print_host.rstrip("/")
     if host_type == "moonraker":
         url = f"{base}/server/files/upload"
         data = {"root": "gcodes", **({"print": "true"} if start_print else {})}
@@ -83,3 +92,37 @@ async def send_gcode(
         raise PrintHostError(
             f"Printer host returned {response.status_code}: {response.text[:200]}"
         )
+
+
+async def test_connection(printer: Printer, *, client: httpx.AsyncClient | None = None) -> str:
+    """A cheap read-only ping (no upload) -- returns a short human-readable
+    status string on success, or raises PrintHostError."""
+    host_type, base = _require_supported(printer)
+    url = f"{base}/server/info" if host_type == "moonraker" else f"{base}/api/version"
+
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=10.0))
+    try:
+        try:
+            response = await client.get(url, headers=_headers(printer), **_auth_kwargs(printer))
+        except httpx.HTTPError as exc:
+            raise PrintHostError(f"Couldn't reach the printer: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+
+    if response.status_code >= 400:
+        raise PrintHostError(
+            f"Printer host returned {response.status_code}: {response.text[:200]}"
+        )
+
+    try:
+        data = response.json()
+    except ValueError:
+        return "Connected"
+
+    if host_type == "moonraker":
+        state = (data.get("result") or {}).get("klippy_state", "unknown")
+        return f"Connected (Klipper state: {state})"
+    return str(data.get("text") or data.get("server") or "Connected")

@@ -7,6 +7,7 @@ import type {
   ModelUploadResponse,
   PrinterCreateRequest,
   PrinterRecord,
+  PrinterUpdateRequest,
   ProfileDetail,
   ProfileSummary,
   SettingsSchema,
@@ -98,6 +99,14 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
   })
 }
 
+function putJson<T>(path: string, body: unknown): Promise<T> {
+  return request(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export function getAuthStatus(): Promise<AuthStatus> {
   return request('/auth/status')
 }
@@ -132,8 +141,16 @@ export function createPrinter(req: PrinterCreateRequest): Promise<PrinterRecord>
   return postJson('/printers', req)
 }
 
+export function updatePrinter(id: string, req: PrinterUpdateRequest): Promise<PrinterRecord> {
+  return putJson(`/printers/${id}`, req)
+}
+
 export function deletePrinter(id: string): Promise<{ ok: boolean }> {
   return request(`/printers/${id}`, { method: 'DELETE' })
+}
+
+export function testPrinterConnection(id: string): Promise<{ message: string }> {
+  return postJson(`/printers/${id}/test-connection`, {})
 }
 
 export function listMaterialProfiles(printerId: string): Promise<MaterialProfileRecord[]> {

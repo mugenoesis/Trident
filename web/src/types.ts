@@ -115,6 +115,19 @@ export interface PrinterCreateRequest extends PrinterConnection {
   bed_height: number | null
 }
 
+// A key left out entirely means "don't change" (see api/app/schemas.py's
+// PrinterUpdateRequest); an empty string for a secret field means "clear
+// it". Only name + connection fields are editable -- a printer's slicing
+// identity (vendor/machine/process/filament/bed size) is delete-and-recreate.
+export interface PrinterUpdateRequest {
+  name?: string
+  host_type?: PrintHostType | null
+  print_host?: string | null
+  printhost_apikey?: string
+  printhost_user?: string
+  printhost_password?: string
+}
+
 export interface MaterialProfileRecord {
   id: string
   printer_id: string

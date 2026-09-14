@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.printhost import PrintHostError, send_gcode
+from app.printhost import test_connection as ping_printer
 
 
 def _printer(**overrides):
@@ -111,3 +112,49 @@ def test_missing_print_host_raises_before_any_request(tmp_path):
 def test_unsupported_host_type_raises(tmp_path):
     with pytest.raises(PrintHostError, match="isn't supported"):
         asyncio.run(send_gcode(_printer(host_type="prusalink"), tmp_path / "part.gcode", False))
+
+
+def test_test_connection_moonraker_reports_klippy_state():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://printer.local:7125/server/info"
+        return httpx.Response(200, json={"result": {"klippy_state": "ready"}})
+
+    message = asyncio.run(ping_printer(_printer(), client=_client_for(handler)))
+    assert "ready" in message
+
+
+def test_test_connection_octoprint_reports_server_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://printer.local:7125/api/version"
+        return httpx.Response(200, json={"text": "OctoPrint 1.10.0"})
+
+    message = asyncio.run(
+        ping_printer(_printer(host_type="octoprint"), client=_client_for(handler))
+    )
+    assert message == "OctoPrint 1.10.0"
+
+
+def test_test_connection_sends_apikey():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["apikey"] = request.headers.get("x-api-key")
+        return httpx.Response(200, json={})
+
+    asyncio.run(
+        ping_printer(_printer(printhost_apikey="secret123"), client=_client_for(handler))
+    )
+    assert seen["apikey"] == "secret123"
+
+
+def test_test_connection_error_response_raises():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="unauthorized")
+
+    with pytest.raises(PrintHostError, match="401"):
+        asyncio.run(ping_printer(_printer(), client=_client_for(handler)))
+
+
+def test_test_connection_missing_host_raises():
+    with pytest.raises(PrintHostError, match="no host address"):
+        asyncio.run(ping_printer(_printer(print_host=None)))

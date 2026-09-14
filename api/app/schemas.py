@@ -141,6 +141,20 @@ class PrinterCreateRequest(BaseModel):
     printhost_password: str | None = None
 
 
+class PrinterUpdateRequest(BaseModel):
+    """A field left out of the request body entirely (vs. present as null or
+    an empty string) is left unchanged -- see routers/printers.py's
+    `model_dump(exclude_unset=True)`. Only name/connection fields are
+    editable; a printer's slicing identity is delete-and-recreate."""
+
+    name: str | None = None
+    host_type: str | None = None
+    print_host: str | None = None
+    printhost_apikey: str | None = None
+    printhost_user: str | None = None
+    printhost_password: str | None = None
+
+
 class PrinterRecord(BaseModel):
     id: str
     name: str
