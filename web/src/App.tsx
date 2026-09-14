@@ -24,6 +24,7 @@ import QuickSettings, {
   defaultQuickSettings,
   type QuickSettingsValues,
 } from './components/QuickSettings'
+import ScaleControls from './components/ScaleControls'
 import Uploader from './components/Uploader'
 import Viewer from './components/Viewer'
 import type { JobRecord, ProfileSummary, SettingDef } from './types'
@@ -96,14 +97,24 @@ export default function App() {
     dimensions && bedSize && printerName ? computeFitScale(dimensions, bedSize) : null
   const showScaleToast = fitScale !== null && !scaleToastDismissed
 
-  const handleAcceptScale = useCallback(() => {
-    if (!file || fitScale === null) return
-    setScaling(true)
-    scaleStlFile(file, fitScale)
-      .then((scaled) => handleFileSelected(scaled))
-      .catch((err: Error) => alert(`Failed to scale model: ${err.message}`))
-      .finally(() => setScaling(false))
-  }, [file, fitScale, handleFileSelected])
+  // Shared by the auto-fit toast (uniform factor on all three axes) and the
+  // manual ScaleControls panel (which can send different factors per axis).
+  const handleApplyScale = useCallback(
+    (factors: Dimensions) => {
+      if (!file) return
+      setScaling(true)
+      scaleStlFile(file, factors)
+        .then((scaled) => handleFileSelected(scaled))
+        .catch((err: Error) => alert(`Failed to scale model: ${err.message}`))
+        .finally(() => setScaling(false))
+    },
+    [file, handleFileSelected],
+  )
+
+  const handleAcceptScaleToFit = useCallback(() => {
+    if (fitScale === null) return
+    handleApplyScale({ x: fitScale, y: fitScale, z: fitScale })
+  }, [fitScale, handleApplyScale])
 
   // Picking a printer resets process/material to that machine's own
   // defaults (default_print_profile / default_filament_profile) --
@@ -239,9 +250,12 @@ export default function App() {
           <Uploader onFileSelected={handleFileSelected} fileName={file?.name ?? null} uploadStatus={uploadStatus} />
           <Viewer file={file} onDimensions={handleDimensions} />
           {dimensions && (
-            <div className="dimensions-readout">
-              {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
-            </div>
+            <>
+              <div className="dimensions-readout">
+                {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
+              </div>
+              <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
+            </>
           )}
         </section>
 
@@ -288,7 +302,7 @@ export default function App() {
             mm). Scale it down to {Math.round(fitScale * 100)}% to fit?
           </div>
           <div className="toast-actions">
-            <button type="button" onClick={handleAcceptScale} disabled={scaling}>
+            <button type="button" onClick={handleAcceptScaleToFit} disabled={scaling}>
               {scaling ? 'Scaling…' : 'Scale to fit'}
             </button>
             <button

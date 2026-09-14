@@ -63,15 +63,16 @@ export function computeFitScale(model: Dimensions, bed: BedSize): number | null 
 }
 
 /**
- * Re-parses `file` and uniformly scales the mesh by `factor`, returning a
- * new STL File (binary, same filename) -- not just a visual scale on the
- * preview. Used so the model actually slices at the scaled size instead of
- * only *looking* smaller in the viewer.
+ * Re-parses `file` and scales the mesh by `factors` (pass the same value
+ * three times for uniform scaling), returning a new STL File (binary, same
+ * filename) -- not just a visual scale on the preview. Used so the model
+ * actually slices at the scaled size instead of only *looking* different in
+ * the viewer.
  */
-export async function scaleStlFile(file: File, factor: number): Promise<File> {
+export async function scaleStlFile(file: File, factors: Dimensions): Promise<File> {
   const buffer = await file.arrayBuffer()
   const geometry = new STLLoader().parse(buffer)
-  geometry.scale(factor, factor, factor)
+  geometry.scale(factors.x, factors.y, factors.z)
   const mesh = new THREE.Mesh(geometry)
   const output = new STLExporter().parse(mesh, { binary: true }) as unknown as DataView
   // TS's BlobPart type requires .buffer to be exactly ArrayBuffer, not the

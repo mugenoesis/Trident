@@ -341,6 +341,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+.scale-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--panel-border);
+}
+
+.scale-axes {
+  display: grid;
+  /* minmax(0, 1fr), not a bare 1fr: number inputs carry a default intrinsic
+     minimum width, and a bare 1fr track can't shrink below that -- the
+     third column overflowed the panel on narrow/phone screens without
+     this (confirmed via a 390px-viewport screenshot). */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.scale-axes input {
+  width: 100%;
+}
+
 .toast {
   position: fixed;
   left: 50%;
