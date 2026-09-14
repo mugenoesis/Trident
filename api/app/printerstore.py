@@ -9,6 +9,7 @@ never leave via PrinterRecord; callers only ever see has_credentials.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -18,6 +19,21 @@ from typing import Any, Iterator
 
 from .config import settings
 from .schemas import MaterialProfileRecord, PrinterRecord
+
+_DUPLICATE_SUFFIX_RE = re.compile(r" \(\d+\)$")
+
+
+def _next_duplicate_name(base_name: str, existing_names: set[str]) -> str:
+    """"PLA" -> "PLA (2)", or "PLA (3)" if "(2)" is already taken, etc. --
+    strips any existing "(N)" suffix first so duplicating a duplicate
+    doesn't chain into "PLA (2) (2)"."""
+    stripped = _DUPLICATE_SUFFIX_RE.sub("", base_name)
+    n = 2
+    while True:
+        candidate = f"{stripped} ({n})"
+        if candidate not in existing_names:
+            return candidate
+        n += 1
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS printers (
@@ -245,6 +261,40 @@ class PrinterStore:
     def delete_material(self, material_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM material_profiles WHERE id = ?", (material_id,))
+
+    _MATERIAL_UPDATABLE_COLUMNS = frozenset(
+        {"name", "quick_settings", "advanced_overrides", "process_profile", "filament_profile"}
+    )
+
+    def update_material(self, material_id: str, **fields: Any) -> MaterialProfileRecord | None:
+        updates = {k: v for k, v in fields.items() if k in self._MATERIAL_UPDATABLE_COLUMNS}
+        if "quick_settings" in updates:
+            updates["quick_settings"] = json.dumps(updates["quick_settings"])
+        if "advanced_overrides" in updates:
+            updates["advanced_overrides"] = json.dumps(updates["advanced_overrides"])
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE material_profiles SET {set_clause} WHERE id = ?",  # noqa: S608 - keys are our own frozenset
+                    (*updates.values(), material_id),
+                )
+        return self.get_material(material_id)
+
+    def duplicate_material(self, material_id: str, *, user_id: str) -> MaterialProfileRecord | None:
+        original = self.get_material(material_id)
+        if original is None:
+            return None
+        existing_names = {m.name for m in self.list_materials(original.printer_id)}
+        return self.create_material(
+            printer_id=original.printer_id,
+            user_id=user_id,
+            name=_next_duplicate_name(original.name, existing_names),
+            quick_settings=original.quick_settings,
+            advanced_overrides=original.advanced_overrides,
+            process_profile=original.process_profile,
+            filament_profile=original.filament_profile,
+        )
 
     @staticmethod
     def _row_to_material(row: sqlite3.Row) -> MaterialProfileRecord:

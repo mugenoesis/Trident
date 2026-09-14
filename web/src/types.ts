@@ -146,3 +146,14 @@ export interface MaterialProfileCreateRequest {
   process_profile: string | null
   filament_profile: string | null
 }
+
+// A key left out entirely means "don't change" (see api/app/schemas.py's
+// MaterialProfileUpdateRequest) -- used for both a plain rename ({name})
+// and "update mode" (overwrite the saved settings: {quick_settings, ...}).
+export interface MaterialProfileUpdateRequest {
+  name?: string
+  quick_settings?: Record<string, string>
+  advanced_overrides?: Record<string, string>
+  process_profile?: string | null
+  filament_profile?: string | null
+}

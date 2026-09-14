@@ -9,10 +9,12 @@ from ..printerstore import store
 from ..schemas import (
     MaterialProfileCreateRequest,
     MaterialProfileRecord,
+    MaterialProfileUpdateRequest,
     PrinterCreateRequest,
     PrinterRecord,
     PrinterUpdateRequest,
     SendToPrinterRequest,
+    TestConnectionRequest,
 )
 from ..userstore import User
 from .jobs import resolve_job_gcode_path
@@ -35,6 +37,21 @@ def list_printers(current: User = Depends(require_user)) -> list[PrinterRecord]:
 @router.post("", response_model=PrinterRecord)
 def create_printer(body: PrinterCreateRequest, current: User = Depends(require_user)) -> PrinterRecord:
     return store.create_printer(user_id=current.id, **body.model_dump())
+
+
+@router.post("/test-connection")
+async def test_connection_ad_hoc(
+    body: TestConnectionRequest, current: User = Depends(require_user)  # noqa: ARG001 - auth gate only
+) -> dict[str, str]:
+    """Validates connection fields before a printer is even saved (the
+    create-printer form's Test connection button) -- for an already-saved
+    printer, POST /printers/{id}/test-connection uses its stored
+    credentials instead."""
+    try:
+        message = await printhost.test_connection(body.model_dump())
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"message": message}
 
 
 @router.put("/{printer_id}", response_model=PrinterRecord)
@@ -71,14 +88,45 @@ def create_material(
     return store.create_material(printer_id=printer_id, user_id=current.id, **body.model_dump())
 
 
-@router.delete("/{printer_id}/materials/{material_id}")
-def delete_material(
-    printer_id: str, material_id: str, current: User = Depends(require_user)
-) -> dict[str, bool]:
+def _get_owned_material(printer_id: str, material_id: str, current: User) -> MaterialProfileRecord:
     _get_owned_printer(printer_id, current)
     material = store.get_material(material_id)
     if material is None or material.printer_id != printer_id:
         raise HTTPException(status_code=404, detail="Material profile not found")
+    return material
+
+
+@router.put("/{printer_id}/materials/{material_id}", response_model=MaterialProfileRecord)
+def update_material(
+    printer_id: str,
+    material_id: str,
+    body: MaterialProfileUpdateRequest,
+    current: User = Depends(require_user),
+) -> MaterialProfileRecord:
+    """Covers both a plain rename and "update mode" (overwrite the saved
+    settings with whatever's currently dialed in) -- same request shape,
+    the frontend just chooses which fields to include."""
+    _get_owned_material(printer_id, material_id, current)
+    updated = store.update_material(material_id, **body.model_dump(exclude_unset=True))
+    assert updated is not None  # just confirmed the material exists above
+    return updated
+
+
+@router.post("/{printer_id}/materials/{material_id}/duplicate", response_model=MaterialProfileRecord)
+def duplicate_material(
+    printer_id: str, material_id: str, current: User = Depends(require_user)
+) -> MaterialProfileRecord:
+    _get_owned_material(printer_id, material_id, current)
+    duplicated = store.duplicate_material(material_id, user_id=current.id)
+    assert duplicated is not None  # just confirmed the material exists above
+    return duplicated
+
+
+@router.delete("/{printer_id}/materials/{material_id}")
+def delete_material(
+    printer_id: str, material_id: str, current: User = Depends(require_user)
+) -> dict[str, bool]:
+    _get_owned_material(printer_id, material_id, current)
     store.delete_material(material_id)
     return {"ok": True}
 

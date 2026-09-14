@@ -389,6 +389,36 @@
   margin-top: 0.2rem;
 }
 
+.settings-collapsible {
+  margin-bottom: 0.5rem;
+}
+
+.settings-collapsible summary {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0.5rem 0;
+}
+
+.material-update-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.rename-form input {
+  flex: 1;
+  min-width: 0;
+}
+
 .saved-printers,
 .material-profiles {
   display: flex;

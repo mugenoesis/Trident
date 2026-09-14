@@ -4,7 +4,9 @@ import type {
   JobRecord,
   MaterialProfileCreateRequest,
   MaterialProfileRecord,
+  MaterialProfileUpdateRequest,
   ModelUploadResponse,
+  PrinterConnection,
   PrinterCreateRequest,
   PrinterRecord,
   PrinterUpdateRequest,
@@ -153,6 +155,12 @@ export function testPrinterConnection(id: string): Promise<{ message: string }> 
   return postJson(`/printers/${id}/test-connection`, {})
 }
 
+// Ad-hoc variant: validates connection fields before a printer is even
+// saved (used by the create-printer form's Test connection button).
+export function testConnectionDetails(connection: PrinterConnection): Promise<{ message: string }> {
+  return postJson('/printers/test-connection', connection)
+}
+
 export function listMaterialProfiles(printerId: string): Promise<MaterialProfileRecord[]> {
   return request(`/printers/${printerId}/materials`)
 }
@@ -162,6 +170,21 @@ export function createMaterialProfile(
   req: MaterialProfileCreateRequest,
 ): Promise<MaterialProfileRecord> {
   return postJson(`/printers/${printerId}/materials`, req)
+}
+
+export function updateMaterialProfile(
+  printerId: string,
+  materialId: string,
+  req: MaterialProfileUpdateRequest,
+): Promise<MaterialProfileRecord> {
+  return putJson(`/printers/${printerId}/materials/${materialId}`, req)
+}
+
+export function duplicateMaterialProfile(
+  printerId: string,
+  materialId: string,
+): Promise<MaterialProfileRecord> {
+  return postJson(`/printers/${printerId}/materials/${materialId}/duplicate`, {})
 }
 
 export function deleteMaterialProfile(printerId: string, materialId: string): Promise<{ ok: boolean }> {

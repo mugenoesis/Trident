@@ -124,3 +124,70 @@ def test_material_profile_roundtrip(tmp_path: Path):
 
     materials = db.list_materials(printer.id)
     assert [m.id for m in materials] == [material.id]
+
+
+def _material(db: PrinterStore, printer_id: str, **overrides):
+    fields = dict(
+        printer_id=printer_id,
+        user_id="alice",
+        name="PLA",
+        quick_settings={"layer_height": "0.2"},
+        advanced_overrides={},
+        process_profile=None,
+        filament_profile=None,
+    )
+    fields.update(overrides)
+    return db.create_material(**fields)
+
+
+def test_update_material_rename_only(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    material = _material(db, printer.id)
+
+    updated = db.update_material(material.id, name="PLA Renamed")
+    assert updated is not None
+    assert updated.name == "PLA Renamed"
+    assert updated.quick_settings == {"layer_height": "0.2"}  # untouched
+
+
+def test_update_material_overwrites_settings(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    material = _material(db, printer.id)
+
+    updated = db.update_material(
+        material.id,
+        quick_settings={"layer_height": "0.28"},
+        advanced_overrides={"cool_plate_temp": "60"},
+    )
+    assert updated is not None
+    assert updated.name == "PLA"  # untouched
+    assert updated.quick_settings == {"layer_height": "0.28"}
+    assert updated.advanced_overrides == {"cool_plate_temp": "60"}
+
+
+def test_duplicate_material_increments_name(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    original = _material(db, printer.id, name="PLA", quick_settings={"layer_height": "0.2"})
+
+    dup1 = db.duplicate_material(original.id, user_id="alice")
+    assert dup1 is not None
+    assert dup1.name == "PLA (2)"
+    assert dup1.quick_settings == {"layer_height": "0.2"}
+    assert dup1.id != original.id
+
+    dup2 = db.duplicate_material(original.id, user_id="alice")
+    assert dup2 is not None
+    assert dup2.name == "PLA (3)"
+
+    # Duplicating a duplicate strips the existing suffix rather than chaining.
+    dup_of_dup = db.duplicate_material(dup1.id, user_id="alice")
+    assert dup_of_dup is not None
+    assert dup_of_dup.name == "PLA (4)"
+
+
+def test_duplicate_missing_material_returns_none(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    assert db.duplicate_material("does-not-exist", user_id="alice") is None

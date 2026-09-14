@@ -111,6 +111,19 @@ class MaterialProfileCreateRequest(BaseModel):
     filament_profile: str | None = None
 
 
+class MaterialProfileUpdateRequest(BaseModel):
+    """A field left out entirely is left unchanged (see routers/printers.py's
+    `model_dump(exclude_unset=True)`) -- used both for a plain rename
+    ({"name": ...}) and "update mode" (overwriting the saved settings with
+    the current ones: {"quick_settings": ..., "advanced_overrides": ...})."""
+
+    name: str | None = None
+    quick_settings: dict[str, str] | None = None
+    advanced_overrides: dict[str, str] | None = None
+    process_profile: str | None = None
+    filament_profile: str | None = None
+
+
 class MaterialProfileRecord(BaseModel):
     id: str
     printer_id: str
@@ -171,6 +184,20 @@ class PrinterRecord(BaseModel):
     # browser once saved -- just whether *something* is configured.
     has_credentials: bool
     created_at: str
+
+
+class TestConnectionRequest(BaseModel):
+    """Ad-hoc connection test: validates fields the caller just typed in,
+    for a printer that may not even be saved yet (routers/printers.py's
+    POST /printers/test-connection) -- distinct from testing an
+    already-saved printer's stored credentials (POST /printers/{id}/
+    test-connection, which needs no body)."""
+
+    host_type: str | None = None
+    print_host: str | None = None
+    printhost_apikey: str | None = None
+    printhost_user: str | None = None
+    printhost_password: str | None = None
 
 
 class SendToPrinterRequest(BaseModel):

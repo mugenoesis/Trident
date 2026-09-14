@@ -67,6 +67,97 @@ def test_material_profile_crud(client):
     assert client.get(f"/printers/{printer_id}/materials").json() == []
 
 
+def _material_body(**overrides):
+    body = dict(name="PLA", quick_settings={"layer_height": "0.2"}, advanced_overrides={})
+    body.update(overrides)
+    return body
+
+
+def test_rename_material_profile(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
+
+    resp = client.put(f"/printers/{printer_id}/materials/{material_id}", json={"name": "PLA v2"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "PLA v2"
+    assert body["quick_settings"] == {"layer_height": "0.2"}  # untouched
+
+
+def test_update_mode_overwrites_material_settings(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
+
+    resp = client.put(
+        f"/printers/{printer_id}/materials/{material_id}",
+        json={"quick_settings": {"layer_height": "0.3"}, "advanced_overrides": {"x": "1"}},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "PLA"  # untouched
+    assert body["quick_settings"] == {"layer_height": "0.3"}
+    assert body["advanced_overrides"] == {"x": "1"}
+
+
+def test_duplicate_material_profile(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
+
+    resp = client.post(f"/printers/{printer_id}/materials/{material_id}/duplicate")
+    assert resp.status_code == 200
+    dup = resp.json()
+    assert dup["name"] == "PLA (2)"
+    assert dup["id"] != material_id
+    assert dup["quick_settings"] == {"layer_height": "0.2"}
+
+    listed = client.get(f"/printers/{printer_id}/materials").json()
+    assert {m["name"] for m in listed} == {"PLA", "PLA (2)"}
+
+
+def test_material_actions_404_for_another_users_printer(client):
+    client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
+
+    client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
+    client.post("/auth/logout")
+    client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
+
+    assert client.put(f"/printers/{printer_id}/materials/{material_id}", json={"name": "x"}).status_code == 404
+    assert client.post(f"/printers/{printer_id}/materials/{material_id}/duplicate").status_code == 404
+
+
+def test_ad_hoc_test_connection_success(client, monkeypatch):
+    from app import printhost
+
+    async def fake_test_connection(printer, **kwargs):
+        assert printer["print_host"] == "http://printer.local"
+        assert printer["printhost_apikey"] == "k123"
+        return "Connected"
+
+    monkeypatch.setattr(printhost, "test_connection", fake_test_connection)
+
+    resp = client.post(
+        "/printers/test-connection",
+        json={"host_type": "moonraker", "print_host": "http://printer.local", "printhost_apikey": "k123"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"message": "Connected"}
+
+
+def test_ad_hoc_test_connection_surfaces_error(client, monkeypatch):
+    from app import printhost
+
+    async def failing(*args, **kwargs):
+        raise printhost.PrintHostError("no route to host")
+
+    monkeypatch.setattr(printhost, "test_connection", failing)
+
+    resp = client.post("/printers/test-connection", json={"host_type": "moonraker", "print_host": "http://x"})
+    assert resp.status_code == 502
+    assert "no route to host" in resp.json()["detail"]
+
+
 def test_printers_isolated_between_users(client):
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
     client.post("/printers", json=_printer_body(name="Alice's printer"))

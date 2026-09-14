@@ -7,6 +7,7 @@ import {
   deleteJob,
   deleteMaterialProfile,
   deletePrinter,
+  duplicateMaterialProfile,
   getJob,
   getProfileDetail,
   getSettingsSchema,
@@ -15,6 +16,7 @@ import {
   listPrinters,
   listProfiles,
   sendToPrinter,
+  updateMaterialProfile,
   updatePrinter,
   uploadModel,
 } from './api'
@@ -176,6 +178,17 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
   const backToModelView = useCallback(() => setViewMode('model'), [])
 
   const selectedPrinter = printers.find((p) => p.id === selectedPrinterId) ?? null
+  const selectedMaterial = materials.find((m) => m.id === selectedMaterialId) ?? null
+
+  // Collapsed by default once a saved printer/material is actually picked
+  // (nothing left to configure), expanded otherwise. Only *changes* to the
+  // selection force the collapse state -- toggling the <details> manually
+  // afterward (e.g. to peek at or tweak a selected profile) sticks until
+  // the selection changes again, rather than snapping back on every render.
+  const [printerSettingsOpen, setPrinterSettingsOpen] = useState(!selectedPrinterId)
+  const [quickSettingsOpen, setQuickSettingsOpen] = useState(!selectedMaterialId)
+  useEffect(() => setPrinterSettingsOpen(!selectedPrinterId), [selectedPrinterId])
+  useEffect(() => setQuickSettingsOpen(!selectedMaterialId), [selectedMaterialId])
 
   const handleSendToPrinter = useCallback(
     (jobId: string, startPrint: boolean) => {
@@ -358,15 +371,20 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
     setViewMode('model')
   }, [])
 
+  // Note: unlike the printer/vendor handlers, this deliberately does NOT
+  // clear selectedMaterialId -- once a material profile is selected,
+  // tweaking settings is "update mode" (SavedPrinters shows an "Update
+  // <name>" action that overwrites it) rather than instantly disowning the
+  // selection. Picking a *different* material or the blank option is what
+  // changes/clears selectedMaterialId (applyMaterialProfile / handleDeselect
+  // MaterialProfile, below).
   const handleQuickSettingsChange = useCallback((values: QuickSettingsValues) => {
     setQuickSettings(values)
-    setSelectedMaterialId(null)
     setViewMode('model')
   }, [])
 
   const handleAdvancedOverridesChange = useCallback((overrides: Record<string, string>) => {
     setAdvancedOverrides(overrides)
-    setSelectedMaterialId(null)
     setViewMode('model')
   }, [])
 
@@ -459,6 +477,44 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
           setSelectedMaterialId((prev) => (prev === id ? null : prev))
         })
         .catch((err: Error) => alert(`Failed to delete material profile: ${err.message}`))
+    },
+    [selectedPrinterId],
+  )
+
+  const handleDeselectMaterial = useCallback(() => setSelectedMaterialId(null), [])
+
+  // "Update mode": overwrites the already-selected material profile with
+  // whatever's currently dialed in, instead of creating a new one.
+  const handleUpdateMaterial = useCallback(() => {
+    if (!selectedPrinterId || !selectedMaterialId) {
+      return Promise.reject(new Error('Select a material profile first'))
+    }
+    return updateMaterialProfile(selectedPrinterId, selectedMaterialId, {
+      quick_settings: quickSettings as unknown as Record<string, string>,
+      advanced_overrides: advancedOverrides,
+      process_profile: processName || null,
+      filament_profile: filamentName || null,
+    }).then((material) => {
+      setMaterials((prev) => prev.map((m) => (m.id === material.id ? material : m)))
+    })
+  }, [selectedPrinterId, selectedMaterialId, quickSettings, advancedOverrides, processName, filamentName])
+
+  const handleRenameMaterial = useCallback(
+    (id: string, name: string) => {
+      if (!selectedPrinterId) return Promise.reject(new Error('No printer selected'))
+      return updateMaterialProfile(selectedPrinterId, id, { name }).then((material) => {
+        setMaterials((prev) => prev.map((m) => (m.id === material.id ? material : m)))
+      })
+    },
+    [selectedPrinterId],
+  )
+
+  const handleDuplicateMaterial = useCallback(
+    (id: string) => {
+      if (!selectedPrinterId) return
+      duplicateMaterialProfile(selectedPrinterId, id)
+        .then((material) => setMaterials((prev) => [...prev, material]))
+        .catch((err: Error) => alert(`Failed to duplicate material profile: ${err.message}`))
     },
     [selectedPrinterId],
   )
@@ -596,23 +652,40 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
             materials={materials}
             selectedMaterialId={selectedMaterialId}
             onSelectMaterial={applyMaterialProfile}
+            onDeselectMaterial={handleDeselectMaterial}
             onSaveMaterial={handleSaveMaterial}
+            onUpdateMaterial={handleUpdateMaterial}
+            onRenameMaterial={handleRenameMaterial}
+            onDuplicateMaterial={handleDuplicateMaterial}
             onDeleteMaterial={handleDeleteMaterial}
           />
-          <PrinterSelect
-            profiles={profiles}
-            vendor={vendor}
-            printerName={printerName}
-            processName={processName}
-            filamentName={filamentName}
-            onVendorChange={handleVendorChange}
-            onPrinterChange={handlePrinterChange}
-            onProcessChange={handleProcessChange}
-            onFilamentChange={handleFilamentChange}
-          />
+          <details
+            className="settings-collapsible"
+            open={printerSettingsOpen}
+            onToggle={(e) => setPrinterSettingsOpen(e.currentTarget.open)}
+          >
+            <summary>Printer settings{selectedPrinter ? ` (${selectedPrinter.name})` : ''}</summary>
+            <PrinterSelect
+              profiles={profiles}
+              vendor={vendor}
+              printerName={printerName}
+              processName={processName}
+              filamentName={filamentName}
+              onVendorChange={handleVendorChange}
+              onPrinterChange={handlePrinterChange}
+              onProcessChange={handleProcessChange}
+              onFilamentChange={handleFilamentChange}
+            />
+          </details>
 
-          <h2>Quick settings</h2>
-          <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
+          <details
+            className="settings-collapsible"
+            open={quickSettingsOpen}
+            onToggle={(e) => setQuickSettingsOpen(e.currentTarget.open)}
+          >
+            <summary>Quick settings{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
+            <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
+          </details>
 
           <AdvancedSettings
             schema={schema}

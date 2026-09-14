@@ -1,30 +1,63 @@
 import { useState } from 'react'
-import { testPrinterConnection } from '../api'
+import { testConnectionDetails, testPrinterConnection } from '../api'
 import type { MaterialProfileRecord, PrintHostType, PrinterRecord, PrinterUpdateRequest } from '../types'
+
+interface ConnectionFields {
+  host_type: PrintHostType | null
+  print_host: string | null
+  printhost_apikey: string | null
+  printhost_user: string | null
+  printhost_password: string | null
+}
 
 interface SavedPrintersProps {
   printers: PrinterRecord[]
   selectedPrinterId: string | null
   onSelectPrinter: (printer: PrinterRecord) => void
   canSaveCurrent: boolean
-  onSavePrinter: (
-    name: string,
-    connection: {
-      host_type: PrintHostType | null
-      print_host: string | null
-      printhost_apikey: string | null
-      printhost_user: string | null
-      printhost_password: string | null
-    },
-  ) => Promise<unknown>
+  onSavePrinter: (name: string, connection: ConnectionFields) => Promise<unknown>
   onUpdatePrinter: (id: string, body: PrinterUpdateRequest) => Promise<unknown>
   onDeletePrinter: (id: string) => void
 
   materials: MaterialProfileRecord[]
   selectedMaterialId: string | null
   onSelectMaterial: (material: MaterialProfileRecord) => void
+  onDeselectMaterial: () => void
   onSaveMaterial: (name: string) => Promise<unknown>
+  onUpdateMaterial: () => Promise<unknown>
+  onRenameMaterial: (id: string, name: string) => Promise<unknown>
+  onDuplicateMaterial: (id: string) => void
   onDeleteMaterial: (id: string) => void
+}
+
+// Shared by the create-printer form (testing connection details before the
+// printer even exists, via the ad-hoc endpoint) and the per-printer
+// Settings form (testing what's actually saved) -- same button/result/error
+// UI either way, just a different `onTest` call underneath.
+function TestConnectionButton({ onTest }: { onTest: () => Promise<{ message: string }> }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = () => {
+    setBusy(true)
+    setResult(null)
+    setError(null)
+    onTest()
+      .then((res) => setResult(res.message))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="test-connection">
+      <button type="button" className="preview-button" disabled={busy} onClick={run}>
+        {busy ? 'Testing…' : 'Test connection'}
+      </button>
+      {result && <span className="job-hint">{result}</span>}
+      {error && <span className="job-error">{error}</span>}
+    </div>
+  )
 }
 
 // A connection-details editor for one already-saved printer. Host
@@ -49,10 +82,6 @@ function PrinterSettingsForm({
   const [hostPassword, setHostPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const [testBusy, setTestBusy] = useState(false)
-  const [testResult, setTestResult] = useState<string | null>(null)
-  const [testError, setTestError] = useState<string | null>(null)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -83,18 +112,6 @@ function PrinterSettingsForm({
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setBusy(false))
-  }
-
-  // Tests the *saved* connection, not whatever's mid-edit in this form --
-  // save first if you want to test a credential you just typed.
-  const testConnection = () => {
-    setTestBusy(true)
-    setTestResult(null)
-    setTestError(null)
-    testPrinterConnection(printer.id)
-      .then((res) => setTestResult(res.message))
-      .catch((err: Error) => setTestError(err.message))
-      .finally(() => setTestBusy(false))
   }
 
   return (
@@ -146,16 +163,80 @@ function PrinterSettingsForm({
       </div>
       {error && <div className="job-error">{error}</div>}
 
-      {printer.print_host && (
-        <div className="test-connection">
-          <button type="button" className="preview-button" disabled={testBusy} onClick={testConnection}>
-            {testBusy ? 'Testing…' : 'Test connection'}
-          </button>
-          {testResult && <span className="job-hint">{testResult}</span>}
-          {testError && <span className="job-error">{testError}</span>}
-        </div>
-      )}
+      {/* Tests the *saved* connection, not whatever's mid-edit above --
+          save first if you want to test a credential you just typed. */}
+      {printer.print_host && <TestConnectionButton onTest={() => testPrinterConnection(printer.id)} />}
     </form>
+  )
+}
+
+// One row in "Manage material profiles": name (or an inline rename input),
+// Rename/Duplicate/Delete.
+function MaterialManageRow({
+  material,
+  onRename,
+  onDuplicate,
+  onDelete,
+}: {
+  material: MaterialProfileRecord
+  onRename: (id: string, name: string) => Promise<unknown>
+  onDuplicate: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  const [renaming, setRenaming] = useState(false)
+  const [name, setName] = useState(material.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submitRename = (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    onRename(material.id, name)
+      .then(() => setRenaming(false))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  if (renaming) {
+    return (
+      <li>
+        <form className="rename-form" onSubmit={submitRename}>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          <button type="submit" disabled={busy || !name}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            disabled={busy}
+            onClick={() => {
+              setRenaming(false)
+              setName(material.name)
+              setError(null)
+            }}
+          >
+            Cancel
+          </button>
+          {error && <span className="job-error">{error}</span>}
+        </form>
+      </li>
+    )
+  }
+
+  return (
+    <li>
+      <span>{material.name}</span>
+      <button type="button" className="link-button" onClick={() => setRenaming(true)}>
+        Rename
+      </button>
+      <button type="button" className="link-button" onClick={() => onDuplicate(material.id)}>
+        Duplicate
+      </button>
+      <button type="button" className="link-button job-delete" onClick={() => onDelete(material.id)}>
+        Delete
+      </button>
+    </li>
   )
 }
 
@@ -175,7 +256,11 @@ export default function SavedPrinters({
   materials,
   selectedMaterialId,
   onSelectMaterial,
+  onDeselectMaterial,
   onSaveMaterial,
+  onUpdateMaterial,
+  onRenameMaterial,
+  onDuplicateMaterial,
   onDeleteMaterial,
 }: SavedPrintersProps) {
   const [savingPrinter, setSavingPrinter] = useState(false)
@@ -194,6 +279,9 @@ export default function SavedPrinters({
   const [materialName, setMaterialName] = useState('')
   const [materialError, setMaterialError] = useState<string | null>(null)
   const [materialBusy, setMaterialBusy] = useState(false)
+
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateDone, setUpdateDone] = useState(false)
 
   const resetPrinterForm = () => {
     setSavingPrinter(false)
@@ -234,6 +322,17 @@ export default function SavedPrinters({
       .catch((err: Error) => setMaterialError(err.message))
       .finally(() => setMaterialBusy(false))
   }
+
+  const runUpdateMaterial = () => {
+    setUpdateBusy(true)
+    setUpdateDone(false)
+    onUpdateMaterial()
+      .then(() => setUpdateDone(true))
+      .catch((err: Error) => alert(`Failed to update material profile: ${err.message}`))
+      .finally(() => setUpdateBusy(false))
+  }
+
+  const selectedMaterial = materials.find((m) => m.id === selectedMaterialId) ?? null
 
   return (
     <div className="saved-printers">
@@ -302,7 +401,19 @@ export default function SavedPrinters({
                   onChange={(e) => setHostPassword(e.target.value)}
                 />
               </label>
-              <p className="auth-hint">You can test the connection from "Manage saved printers" after saving.</p>
+              {printHost && (
+                <TestConnectionButton
+                  onTest={() =>
+                    testConnectionDetails({
+                      host_type: hostType || null,
+                      print_host: printHost || null,
+                      printhost_apikey: apiKey || null,
+                      printhost_user: hostUser || null,
+                      printhost_password: hostPassword || null,
+                    })
+                  }
+                />
+              )}
             </>
           )}
           <div className="auth-form-actions">
@@ -363,6 +474,7 @@ export default function SavedPrinters({
                 onChange={(e) => {
                   const material = materials.find((m) => m.id === e.target.value)
                   if (material) onSelectMaterial(material)
+                  else onDeselectMaterial()
                 }}
               >
                 <option value="">— choose a material profile —</option>
@@ -375,9 +487,18 @@ export default function SavedPrinters({
             </label>
           </div>
 
+          {selectedMaterial && (
+            <div className="material-update-actions">
+              <button type="button" className="preview-button" disabled={updateBusy} onClick={runUpdateMaterial}>
+                {updateBusy ? 'Updating…' : `Update "${selectedMaterial.name}"`}
+              </button>
+              {updateDone && <span className="job-hint">Updated.</span>}
+            </div>
+          )}
+
           {!savingMaterial ? (
             <button type="button" className="link-button" onClick={() => setSavingMaterial(true)}>
-              Save current settings as a material profile…
+              {selectedMaterial ? 'Save as new profile…' : 'Save current settings as a material profile…'}
             </button>
           ) : (
             <form className="auth-form" onSubmit={submitMaterial}>
@@ -411,16 +532,13 @@ export default function SavedPrinters({
               <summary>Manage material profiles ({materials.length})</summary>
               <ul>
                 {materials.map((m) => (
-                  <li key={m.id}>
-                    <span>{m.name}</span>
-                    <button
-                      type="button"
-                      className="link-button job-delete"
-                      onClick={() => onDeleteMaterial(m.id)}
-                    >
-                      Delete
-                    </button>
-                  </li>
+                  <MaterialManageRow
+                    key={m.id}
+                    material={m}
+                    onRename={onRenameMaterial}
+                    onDuplicate={onDuplicateMaterial}
+                    onDelete={onDeleteMaterial}
+                  />
                 ))}
               </ul>
             </details>
