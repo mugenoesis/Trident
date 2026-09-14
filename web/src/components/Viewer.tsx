@@ -110,22 +110,13 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
           const plateDepth = bedSize?.depth ?? size.y * plateMargin
           const plateZ = -size.z / 2
 
-          // Auto-frame: fit the model's own bounding sphere by default, or
-          // the whole print volume (bed footprint + ceiling height) once a
-          // printer is selected, whichever needs the camera further back --
-          // otherwise a small model on a large-bed, tall-ceiling printer
-          // left the bed/ceiling just out of frame, needing a manual zoom
-          // to see the very thing this is meant to show at a glance.
-          const modelRadius = size.length() / 2 || 1
-          let effectiveRadius = modelRadius
-          if (bedSize) {
-            const farZ = Math.max(Math.abs(plateZ), Math.abs(plateZ + bedSize.height))
-            const printVolumeRadius = Math.sqrt(
-              (plateWidth / 2) ** 2 + (plateDepth / 2) ** 2 + farZ ** 2,
-            )
-            effectiveRadius = Math.max(modelRadius, printVolumeRadius)
-          }
-          const distance = effectiveRadius / Math.sin((Math.PI * camera.fov) / 360)
+          // Auto-frame the model itself, regardless of the plate/ceiling
+          // size -- those are there to check against by zooming/orbiting
+          // out manually if needed, not something the default view should
+          // reframe around (a small model on a large-bed printer would
+          // otherwise auto-zoom out to a barely-visible speck by default).
+          const radius = size.length() / 2 || 1
+          const distance = radius / Math.sin((Math.PI * camera.fov) / 360)
 
           camera.position.set(distance, distance, distance * 0.6)
           camera.near = distance / 100
@@ -154,14 +145,14 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
           // A second plane at the printer's max build height (only once a
           // printer -- and so a real bed size -- is selected): same
           // footprint as the bed, marking the ceiling of the printable
-          // volume. Same default +Z-facing normal as the bed (no rotation):
-          // the auto-framed camera above ends up *above* the ceiling height
-          // when fitting the whole print volume (confirmed empirically --
-          // the printable_height term in effectiveRadius pushes the camera
-          // well past it), so FrontSide is visible from that default
-          // overview angle. It then self-hides on zooming in close to the
-          // model for a normal below-the-ceiling inspection view, which is
-          // a reasonable bonus rather than a downside.
+          // volume. Not meant to be visible by default (the camera stays
+          // framed on the model, per above) -- just there to check against
+          // by zooming/orbiting out manually. Rotated 180° so its normal
+          // points -Z (down): with the camera framed on the model rather
+          // than the whole volume, it's normally positioned below the
+          // ceiling looking up/across, so this is the orientation that
+          // actually shows it on a manual zoom-out, the mirror image of the
+          // bed plate facing up toward a camera that's normally above it.
           if (bedSize) {
             ceiling = new THREE.Mesh(
               new THREE.PlaneGeometry(plateWidth, plateDepth),
@@ -172,6 +163,7 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
                 side: THREE.FrontSide,
               }),
             )
+            ceiling.rotation.x = Math.PI
             ceiling.position.z = plate.position.z + bedSize.height
             scene.add(ceiling)
           }
