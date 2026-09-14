@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ProfileSummary } from '../types'
 
 interface PrinterSelectProps {
@@ -6,26 +6,22 @@ interface PrinterSelectProps {
   vendor: string
   printerName: string
   processName: string
-  filamentName: string
   onVendorChange: (vendor: string) => void
   onPrinterChange: (name: string) => void
   onProcessChange: (name: string) => void
-  onFilamentChange: (name: string) => void
 }
 
+// Material/filament choice lives in FilamentSelect.tsx now, rendered
+// separately under "Quick settings" -- see App.tsx.
 export default function PrinterSelect({
   profiles,
   vendor,
   printerName,
   processName,
-  filamentName,
   onVendorChange,
   onPrinterChange,
   onProcessChange,
-  onFilamentChange,
 }: PrinterSelectProps) {
-  const [filamentQuery, setFilamentQuery] = useState('')
-
   const vendors = useMemo(
     () => [...new Set(profiles.map((p) => p.vendor))].sort(),
     [profiles],
@@ -44,13 +40,6 @@ export default function PrinterSelect({
       ),
     [profiles, vendor],
   )
-  const filaments = useMemo(() => {
-    const inVendor = profiles.filter((p) => p.vendor === vendor && p.kind === 'filament')
-    const q = filamentQuery.trim().toLowerCase()
-    const matches = q ? inVendor.filter((p) => p.name.toLowerCase().includes(q)) : inVendor
-    return matches.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200)
-  }, [profiles, vendor, filamentQuery])
-
   return (
     <div className="field-group">
       <label>
@@ -80,29 +69,6 @@ export default function PrinterSelect({
           {printers.map((p) => (
             <option key={p.name} value={p.name}>
               {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Material
-        <input
-          type="text"
-          placeholder={vendor ? `Search ${filaments.length ? '' : 'materials'}…` : 'Pick a vendor first'}
-          value={filamentQuery}
-          disabled={!vendor}
-          onChange={(e) => setFilamentQuery(e.target.value)}
-        />
-        <select
-          value={filamentName}
-          disabled={!vendor}
-          size={6}
-          onChange={(e) => onFilamentChange(e.target.value)}
-        >
-          {filaments.map((f) => (
-            <option key={f.name} value={f.name}>
-              {f.name}
             </option>
           ))}
         </select>

@@ -28,6 +28,7 @@ import {
   scaleStlFile,
 } from './dimensions'
 import AdvancedSettings from './components/AdvancedSettings'
+import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
@@ -670,11 +671,9 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
               vendor={vendor}
               printerName={printerName}
               processName={processName}
-              filamentName={filamentName}
               onVendorChange={handleVendorChange}
               onPrinterChange={handlePrinterChange}
               onProcessChange={handleProcessChange}
-              onFilamentChange={handleFilamentChange}
             />
           </details>
 
@@ -684,6 +683,12 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
             onToggle={(e) => setQuickSettingsOpen(e.currentTarget.open)}
           >
             <summary>Quick settings{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
+            <FilamentSelect
+              profiles={profiles}
+              vendor={vendor}
+              filamentName={filamentName}
+              onFilamentChange={handleFilamentChange}
+            />
             <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
           </details>
 
