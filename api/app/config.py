@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     jobstore_path: Path = Path("/data/output/jobstore.sqlite3")
 
     # AGPL-3.0 source-offer info (see docs/AGPL-COMPLIANCE.md).
-    orcaslicer_fork_url: str = "https://github.com/TBD/OrcaSlicer/tree/headless-cli"
+    orcaslicer_fork_url: str = "https://github.com/mugenoesis/OrcaSlicer/tree/headless-cli"
     orcaslicer_commit_sha: str = "unknown"
     wrapper_repo_url: str = "https://github.com/TBD/headless-orca"
 

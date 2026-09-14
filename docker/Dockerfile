@@ -23,23 +23,40 @@ COPY vendor/orcaslicer/ ./orcaslicer/
 WORKDIR /src/orcaslicer
 
 # Install system deps via the fork's own script rather than
-# hand-transcribing them (docs/ARCHITECTURE.md).
-RUN --mount=type=cache,target=/var/cache/apt \
-    ./build_linux.sh -u
+# hand-transcribing them (docs/ARCHITECTURE.md). `sudo` isn't present in
+# the base ubuntu image and build_linux.sh -u shells out to it.
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-builder,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends sudo git \
+    && ./build_linux.sh -u
+
+# vendor/orcaslicer is a git submodule, so the `.git` COPY'd in above is a
+# gitlink (a one-line text file) pointing at the superproject's
+# .git/modules/... -- which isn't part of this build context. Several deps
+# CMake patch steps shell out to `git apply` and walk up looking for a real
+# repo, so replace the dangling gitlink with a throwaway one so those
+# succeed the same way they would against a normal (non-submodule) checkout.
+RUN rm -rf .git \
+    && git init -q \
+    && git config user.email "build@headless-orca.local" \
+    && git config user.name "headless-orca build" \
+    && git add -A \
+    && git commit -q -m "Snapshot for Docker build"
 
 # Dependency build: slow (multi-hour, ~15-30GB) and cacheable in its own
 # layer, kept separate from the main-build layer below so source-only
-# changes don't invalidate it.
+# changes don't invalidate it. -j6 (not $(nproc)=8) + nice -n 10 on both
+# compile steps below: this host also runs other services (Plex, Immich,
+# etc.) that need CPU headroom during a multi-hour build.
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/sccache \
     cmake -S deps -B deps/build -G Ninja \
-    && cmake --build deps/build -j"$(nproc)"
+    && nice -n 10 cmake --build deps/build -j6
 
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/sccache \
     cmake -S . -B build -G "Ninja Multi-Config" \
         -DSLIC3R_PCH=ON -DORCA_TOOLS=ON \
-    && cmake --build build --config Release --target OrcaSlicer -j"$(nproc)"
+    && nice -n 10 cmake --build build --config Release --target OrcaSlicer -j6
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -48,37 +65,47 @@ FROM ubuntu:${UBUNTU_VERSION} AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    ORCA_API_ORCASLICER_BIN=/opt/orcaslicer/OrcaSlicer \
+    ORCA_API_ORCASLICER_BIN=/opt/orcaslicer/orca-slicer \
     ORCA_API_PROFILES_DIR=/opt/orcaslicer/resources/profiles \
     ORCA_API_ORCASLICER_DATADIR=/data/orcaslicer-datadir \
     ORCA_API_MODELS_DIR=/data/models \
     ORCA_API_OUTPUT_DIR=/data/output \
-    ORCA_API_JOBSTORE_PATH=/data/output/jobstore.sqlite3
+    ORCA_API_JOBSTORE_PATH=/data/output/jobstore.sqlite3 \
+    LD_LIBRARY_PATH=/opt/orcaslicer
 
 # GTK3/X11/GL runtime libs the binary links regardless of SLIC3R_GUI at
 # compile time, plus Xvfb + software Mesa as the offscreen-rendering path
 # for thumbnail generation (GLFW's actual backend is X11/GLX, not EGL).
-RUN --mount=type=cache,target=/var/cache/apt \
+# libegl1/libgstreamer1.0-0/libgstreamer-plugins-base1.0-0/libwebkit2gtk-4.1-0
+# were found by `ldd`'ing the actual M1 binary once it first linked successfully
+# (wx's WebView backend and GStreamer media backend, both compiled in
+# unconditionally regardless of whether they're ever exercised headlessly).
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-runtime,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
         libgl1-mesa-dri \
+        libegl1 \
         libgtk-3-0 \
         libx11-6 \
         libxkbcommon0 \
         libglu1-mesa \
+        libgstreamer1.0-0 \
+        libgstreamer-plugins-base1.0-0 \
+        libwebkit2gtk-4.1-0 \
         ca-certificates \
         python3 \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO once the builder stage is real: `ldd` the built binary here (or in
-# a throwaway build step) to capture the definitive runtime lib list,
-# including dlopen-loaded GStreamer libs invisible to ldd, and add any
-# missing packages above.
-
-COPY --from=builder /src/orcaslicer/build/Release/OrcaSlicer /opt/orcaslicer/OrcaSlicer
+# The whole Release/ directory, not just the executable: CMake stages the
+# embedded Python distribution (src/slic3r/plugin's pybind11::embed target)
+# and a self-built FFmpeg (newer .so versions than Ubuntu 24.04 ships) as
+# siblings of the binary. The executable's RUNPATH covers $ORIGIN/python/lib;
+# the FFmpeg libs aren't covered by any RUNPATH entry, hence LD_LIBRARY_PATH
+# above pointing at this same directory.
+COPY --from=builder /src/orcaslicer/build/src/Release/ /opt/orcaslicer/
 COPY --from=builder /src/orcaslicer/resources /opt/orcaslicer/resources
-RUN ln -s /opt/orcaslicer/OrcaSlicer /usr/local/bin/orca-slicer
+RUN ln -s /opt/orcaslicer/orca-slicer /usr/local/bin/orca-slicer
 
 # Pass e.g. --build-arg ORCASLICER_COMMIT_SHA=$(git -C vendor/orcaslicer rev-parse HEAD)
 ARG ORCASLICER_COMMIT_SHA=unknown
