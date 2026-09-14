@@ -58,13 +58,24 @@ export default function Viewer({ file }: ViewerProps) {
           geometry.computeVertexNormals()
           geometry.computeBoundingBox()
 
+          // A muted blue-gray blended into the dark background too easily.
+          // A saturated, warm color (like a printed-plastic filament) reads
+          // clearly against the dark viewport at any lighting angle.
           const material = new THREE.MeshStandardMaterial({
-            color: 0x7e8aa0,
-            metalness: 0.1,
-            roughness: 0.7,
+            color: 0xff6f2c,
+            metalness: 0.05,
+            roughness: 0.55,
           })
           mesh = new THREE.Mesh(geometry, material)
           scene.add(mesh)
+
+          // Edge lines make flat-shaded faces read as a solid shape instead
+          // of a smear of color, especially for simple/low-poly models.
+          const edges = new THREE.LineSegments(
+            new THREE.EdgesGeometry(geometry, 30),
+            new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
+          )
+          mesh.add(edges)
 
           // Auto-frame: center the model at the origin and back the camera
           // off far enough to see the whole bounding sphere.
@@ -123,6 +134,11 @@ export default function Viewer({ file }: ViewerProps) {
       if (mesh?.material) {
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
         mats.forEach((m) => m.dispose())
+      }
+      const edges = mesh?.children.find((c) => c instanceof THREE.LineSegments)
+      if (edges instanceof THREE.LineSegments) {
+        edges.geometry.dispose()
+        ;(edges.material as THREE.Material).dispose()
       }
       renderer.dispose()
       container.removeChild(renderer.domElement)
