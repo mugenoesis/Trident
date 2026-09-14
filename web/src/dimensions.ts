@@ -14,15 +14,6 @@ export interface BedSize {
   height: number // Z (printable_height), mm
 }
 
-export async function getStlDimensions(file: File): Promise<Dimensions> {
-  const buffer = await file.arrayBuffer()
-  const geometry = new STLLoader().parse(buffer)
-  geometry.computeBoundingBox()
-  const size = new THREE.Vector3()
-  geometry.boundingBox!.getSize(size)
-  return { x: size.x, y: size.y, z: size.z }
-}
-
 // A margin below 1.0: an exact-fit scale can still fail slicer validation
 // for sitting flush against the bed edge, and it looks uncomfortably tight
 // in the viewer.
