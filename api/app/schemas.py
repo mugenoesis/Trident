@@ -159,6 +159,14 @@ class PrinterRecord(BaseModel):
     created_at: str
 
 
+class SendToPrinterRequest(BaseModel):
+    # Physically starting a print is a real-world action software can't
+    # verify is safe (bed clear? filament loaded?), so it's opt-in and
+    # defaults off everywhere -- the frontend always surfaces this as an
+    # explicit checkbox rather than defaulting it on.
+    start_print: bool = False
+
+
 class SourceInfo(BaseModel):
     license: str = "AGPL-3.0"
     notice: str = (

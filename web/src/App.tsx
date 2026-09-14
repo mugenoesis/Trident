@@ -14,6 +14,7 @@ import {
   listMaterialProfiles,
   listPrinters,
   listProfiles,
+  sendToPrinter,
   uploadModel,
 } from './api'
 import {
@@ -170,6 +171,16 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
   }, [])
 
   const backToModelView = useCallback(() => setViewMode('model'), [])
+
+  const selectedPrinter = printers.find((p) => p.id === selectedPrinterId) ?? null
+
+  const handleSendToPrinter = useCallback(
+    (jobId: string, startPrint: boolean) => {
+      if (!selectedPrinterId) return Promise.reject(new Error('No printer selected'))
+      return sendToPrinter(selectedPrinterId, jobId, startPrint)
+    },
+    [selectedPrinterId],
+  )
 
   const handleDeleteJob = useCallback(
     (jobId: string) => {
@@ -599,6 +610,8 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
             history={history}
             onPreview={viewJobGcode}
             onDelete={handleDeleteJob}
+            selectedPrinter={selectedPrinter}
+            onSendToPrinter={handleSendToPrinter}
           />
         </section>
       </main>

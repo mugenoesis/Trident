@@ -98,19 +98,27 @@ def get_job(job_id: str, current: User = Depends(require_user)) -> JobRecord:
     return _get_owned_job(job_id, current)
 
 
-@router.get("/{job_id}/gcode")
-def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileResponse:
-    job = _get_owned_job(job_id, current)
+def resolve_job_gcode_path(job_id: str) -> Path:
+    """The on-disk sliced gcode file for a job -- shared by the download
+    route below and the send-to-printer route (routers/printers.py), which
+    needs the same file to actually upload it."""
     matches = list(_job_output_dir(job_id).glob("*.gcode"))
     if not matches:
         raise HTTPException(status_code=404, detail="No gcode produced (yet) for this job")
+    return matches[0]
+
+
+@router.get("/{job_id}/gcode")
+def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileResponse:
+    job = _get_owned_job(job_id, current)
+    gcode_path = resolve_job_gcode_path(job_id)
 
     # Name the download after the upload (e.g. "my_model.gcode") rather than
     # OrcaSlicer's generic on-disk "plate_1.gcode", which means nothing once
     # there's more than one job in flight. Falls back to the actual output
     # filename for models uploaded before this metadata existed.
     original_name = resolve_model_original_name(job.model_id)
-    download_name = f"{Path(original_name).stem}.gcode" if original_name else matches[0].name
+    download_name = f"{Path(original_name).stem}.gcode" if original_name else gcode_path.name
 
     # Not text/plain: .gcode isn't a MIME-registered extension, and browsers
     # (confirmed: Chrome on Android) "correct" the download filename to match
@@ -118,7 +126,7 @@ def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileRes
     # .gcode. application/octet-stream is the standard fix -- it doesn't map
     # to any particular extension, so the filename's own .gcode is left alone.
     return FileResponse(
-        matches[0], media_type="application/octet-stream", filename=download_name
+        gcode_path, media_type="application/octet-stream", filename=download_name
     )
 
 

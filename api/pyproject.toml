@@ -9,12 +9,14 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    # Runtime dependency, not just for tests: printhost.py uses this to
+    # upload sliced G-code straight to a Klipper/Moonraker or OctoPrint host.
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
-    "httpx>=0.27",
 ]
 
 [tool.pytest.ini_options]

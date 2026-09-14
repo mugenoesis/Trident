@@ -318,6 +318,14 @@
   border: 1px solid var(--panel-border);
 }
 
+.send-to-printer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
 .job-error {
   color: var(--danger);
   font-size: 0.85rem;

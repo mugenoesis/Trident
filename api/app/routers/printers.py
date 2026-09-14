@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import printhost
 from ..auth import require_user
+from ..jobstore import store as job_store
 from ..printerstore import store
 from ..schemas import (
     MaterialProfileCreateRequest,
     MaterialProfileRecord,
     PrinterCreateRequest,
     PrinterRecord,
+    SendToPrinterRequest,
 )
 from ..userstore import User
+from .jobs import resolve_job_gcode_path
 
 router = APIRouter(prefix="/printers", tags=["printers"])
 
@@ -62,4 +66,26 @@ def delete_material(
     if material is None or material.printer_id != printer_id:
         raise HTTPException(status_code=404, detail="Material profile not found")
     store.delete_material(material_id)
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/send/{job_id}")
+async def send_to_printer(
+    printer_id: str,
+    job_id: str,
+    body: SendToPrinterRequest,
+    current: User = Depends(require_user),
+) -> dict[str, bool]:
+    _get_owned_printer(printer_id, current)
+    job = job_store.get(job_id)
+    if job is None or job.user_id != current.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    gcode_path = resolve_job_gcode_path(job_id)
+
+    row = store.get_printer_row(printer_id)
+    assert row is not None  # just confirmed ownership above
+    try:
+        await printhost.send_gcode(row, gcode_path, body.start_print)
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}

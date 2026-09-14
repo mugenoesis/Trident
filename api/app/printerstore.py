@@ -120,6 +120,13 @@ class PrinterStore:
             row = conn.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
         return self._row_to_printer(row) if row else None
 
+    def get_printer_row(self, printer_id: str) -> sqlite3.Row | None:
+        """Raw row, secrets included -- for printhost.py's actual upload,
+        which needs the real apikey/password, not the masked PrinterRecord
+        that never leaves this module otherwise."""
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
+
     def get_owner(self, printer_id: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute("SELECT user_id FROM printers WHERE id = ?", (printer_id,)).fetchone()
