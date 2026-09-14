@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -12,7 +13,7 @@ from ..config import settings
 from ..jobstore import store
 from ..schemas import JobCreateRequest, JobRecord, JobStatus
 from ..userstore import User
-from .models import resolve_model_original_name, resolve_model_owner, resolve_model_path
+from .models import delete_model, resolve_model_original_name, resolve_model_owner, resolve_model_path
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -119,6 +120,22 @@ def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileRes
     return FileResponse(
         matches[0], media_type="application/octet-stream", filename=download_name
     )
+
+
+@router.delete("/{job_id}")
+def delete_job(job_id: str, current: User = Depends(require_user)) -> dict[str, bool]:
+    """"I'm finished with this" -- deletes the job's output (gcode/thumbnail)
+    immediately, and the uploaded model too if no other job still points at
+    it. Complements the automatic retention sweep (cleanup.py) for anyone
+    who wants files gone right away instead of waiting out the retention
+    window."""
+    job = _get_owned_job(job_id, current)
+    shutil.rmtree(_job_output_dir(job_id), ignore_errors=True)
+    store.delete(job_id)
+    still_referenced = any(j.model_id == job.model_id for j in store.list_all())
+    if not still_referenced:
+        delete_model(job.model_id)
+    return {"ok": True}
 
 
 @router.get("/{job_id}/thumbnail")

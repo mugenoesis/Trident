@@ -105,6 +105,17 @@ def resolve_model_owner(model_id: str) -> str | None:
     return (meta or {}).get("owner_user_id") or None
 
 
+def delete_model(model_id: str) -> None:
+    """Removes the uploaded model file(s) and its metadata sidecar.
+
+    Used both by the explicit DELETE /jobs/{id} route (when it was the last
+    job referencing this model) and the cleanup sweep (cleanup.py).
+    """
+    for f in settings.models_dir.glob(f"{model_id}.*"):
+        f.unlink(missing_ok=True)
+    _meta_path(model_id).unlink(missing_ok=True)
+
+
 def resolve_model_uploaded_at(model_id: str) -> datetime | None:
     """When the model was uploaded, if known -- used by the cleanup sweep
     to age out old, unreferenced uploads."""

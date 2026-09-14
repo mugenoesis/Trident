@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import profiles as profiles_module
+from .cleanup import run_cleanup_loop
 from .config import settings
 from .routers import auth, jobs, models, profiles, source
 
@@ -14,7 +16,13 @@ from .routers import auth, jobs, models, profiles, source
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     profiles_module.catalog.load()
-    yield
+    cleanup_task = asyncio.create_task(run_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(

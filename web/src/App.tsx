@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   createJob,
+  deleteJob,
   getJob,
   getProfileDetail,
   getSettingsSchema,
@@ -148,6 +149,23 @@ function MainApp({ authStatus, onSwitchToMulti, onCreateUser, onLogout }: MainAp
   }, [])
 
   const backToModelView = useCallback(() => setViewMode('model'), [])
+
+  const handleDeleteJob = useCallback(
+    (jobId: string) => {
+      deleteJob(jobId)
+        .then(() => {
+          listJobs().then(setHistory).catch(() => {})
+          setCurrentJob((prev) => (prev?.id === jobId ? null : prev))
+          setViewedJobId((prev) => {
+            if (prev !== jobId) return prev
+            setViewMode('model')
+            return null
+          })
+        })
+        .catch((err: Error) => alert(`Failed to delete job: ${err.message}`))
+    },
+    [],
+  )
 
   // Initial catalog load.
   useEffect(() => {
@@ -434,6 +452,7 @@ function MainApp({ authStatus, onSwitchToMulti, onCreateUser, onLogout }: MainAp
             currentJob={currentJob}
             history={history}
             onPreview={viewJobGcode}
+            onDelete={handleDeleteJob}
           />
         </section>
       </main>

@@ -112,6 +112,17 @@ class JobStore:
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
+    def list_all(self) -> list[JobRecord]:
+        """Every job regardless of owner -- used by the cleanup sweep,
+        which operates system-wide, not on behalf of a particular user."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
+        return [self._row_to_record(r) for r in rows]
+
+    def delete(self, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
     def set_status(self, job_id: str, status: JobStatus) -> None:
         with self._connect() as conn:
             conn.execute(

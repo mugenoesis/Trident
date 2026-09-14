@@ -344,6 +344,11 @@
   color: var(--text-dim);
 }
 
+.job-delete {
+  margin-left: auto;
+  color: var(--danger);
+}
+
 .dimensions-readout {
   text-align: center;
   font-size: 0.85rem;

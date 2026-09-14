@@ -9,6 +9,7 @@ interface JobPanelProps {
   currentJob: JobRecord | null
   history: JobRecord[]
   onPreview: (jobId: string) => void
+  onDelete: (jobId: string) => void
 }
 
 function StatusBadge({ status }: { status: JobRecord['status'] }) {
@@ -33,6 +34,7 @@ export default function JobPanel({
   currentJob,
   history,
   onPreview,
+  onDelete,
 }: JobPanelProps) {
   return (
     <div className="job-panel">
@@ -95,6 +97,13 @@ export default function JobPanel({
                     </a>
                   </>
                 )}
+                <button
+                  type="button"
+                  className="link-button job-delete"
+                  onClick={() => onDelete(job.id)}
+                >
+                  Delete
+                </button>
               </li>
             ))}
           </ul>

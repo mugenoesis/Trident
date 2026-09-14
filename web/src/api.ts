@@ -74,6 +74,10 @@ export function listJobs(): Promise<JobRecord[]> {
   return request('/jobs')
 }
 
+export function deleteJob(id: string): Promise<{ ok: boolean }> {
+  return request(`/jobs/${id}`, { method: 'DELETE' })
+}
+
 export function gcodeDownloadUrl(id: string): string {
   return `${API_BASE}/jobs/${id}/gcode`
 }

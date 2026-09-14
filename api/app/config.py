@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # SQLite user/account + auth-mode store.
     users_db_path: Path = Path("/data/output/users.sqlite3")
 
+    # How long a terminal (succeeded/failed) job's output, and an uploaded
+    # model with no remaining job referencing it, survive before the
+    # background cleanup sweep deletes them. Active (queued/running) jobs
+    # are never touched regardless of age.
+    retention_hours: float = 48.0
+    cleanup_interval_minutes: float = 30.0
+
     # AGPL-3.0 source-offer info (see docs/AGPL-COMPLIANCE.md).
     orcaslicer_fork_url: str = "https://github.com/mugenoesis/OrcaSlicer/tree/headless-cli"
     orcaslicer_commit_sha: str = "unknown"
