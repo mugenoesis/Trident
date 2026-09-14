@@ -2,6 +2,7 @@ import io
 
 from app import cli_runner
 from app.cli_runner import SliceResult
+from app.config import settings
 
 
 def _upload_model(client) -> str:
@@ -74,6 +75,76 @@ def test_create_job_success_path(client, monkeypatch):
     body = got.json()
     assert body["status"] == "succeeded"
     assert body["result"] == {"return_code": 0, "error_string": ""}
+
+
+def test_gcode_download_named_after_upload(client, monkeypatch):
+    model_id = _upload_model(client)  # uploaded as "cube.stl"
+
+    def fake_run_slice(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "plate_1.gcode").write_text("; fake gcode\n")
+        return SliceResult(
+            return_code=0,
+            result_json={"return_code": 0, "error_string": ""},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+
+    resp = client.post(
+        "/jobs",
+        json={
+            "model_id": model_id,
+            "printer_profile": "Generic Printer",
+            "process_profile": "0.20mm Standard",
+        },
+    )
+    job_id = resp.json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "succeeded"
+
+    got = client.get(f"/jobs/{job_id}/gcode")
+    assert got.status_code == 200
+    assert got.headers["content-type"] == "application/octet-stream"
+    # "cube.stl" -> "cube.gcode", not OrcaSlicer's on-disk "plate_1.gcode".
+    assert 'filename="cube.gcode"' in got.headers["content-disposition"]
+
+
+def test_gcode_download_falls_back_without_upload_metadata(client, monkeypatch):
+    model_id = _upload_model(client)
+    # Simulate a model uploaded before the sidecar metadata existed.
+    (settings.models_dir / ".meta" / f"{model_id}.name").unlink()
+
+    def fake_run_slice(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "plate_1.gcode").write_text("; fake gcode\n")
+        return SliceResult(
+            return_code=0,
+            result_json={"return_code": 0, "error_string": ""},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+
+    resp = client.post(
+        "/jobs",
+        json={
+            "model_id": model_id,
+            "printer_profile": "Generic Printer",
+            "process_profile": "0.20mm Standard",
+        },
+    )
+    job_id = resp.json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "succeeded"
+
+    got = client.get(f"/jobs/{job_id}/gcode")
+    assert got.status_code == 200
+    assert 'filename="plate_1.gcode"' in got.headers["content-disposition"]
 
 
 def test_create_job_failure_path(client, monkeypatch):

@@ -13,6 +13,14 @@ router = APIRouter(prefix="/models", tags=["models"])
 _ALLOWED_SUFFIXES = {".stl", ".3mf", ".obj", ".step", ".stp"}
 _MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500MB
 
+# Sidecar metadata (currently just the original filename, so downloaded
+# G-code can be named after the upload instead of OrcaSlicer's generic
+# "plate_N.gcode" -- see routers/jobs.py). A subdirectory, not
+# f"{model_id}.name" next to the model itself: resolve_model_path() globs
+# f"{model_id}.*" and returning the sidecar instead of the actual model
+# would be a matter of glob ordering luck.
+_META_DIRNAME = ".meta"
+
 
 @router.post("", response_model=ModelUploadResponse)
 async def upload_model(file: UploadFile) -> ModelUploadResponse:
@@ -37,7 +45,12 @@ async def upload_model(file: UploadFile) -> ModelUploadResponse:
                 raise HTTPException(status_code=413, detail="File too large")
             out.write(chunk)
 
-    return ModelUploadResponse(model_id=model_id, filename=file.filename or dest.name)
+    original_name = file.filename or dest.name
+    meta_dir = settings.models_dir / _META_DIRNAME
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / f"{model_id}.name").write_text(original_name)
+
+    return ModelUploadResponse(model_id=model_id, filename=original_name)
 
 
 def resolve_model_path(model_id: str) -> Path:
@@ -47,3 +60,17 @@ def resolve_model_path(model_id: str) -> Path:
     if not matches:
         raise HTTPException(status_code=404, detail="model_id not found")
     return matches[0]
+
+
+def resolve_model_original_name(model_id: str) -> str | None:
+    """The filename the model was originally uploaded as, if known.
+
+    Used to name downloaded G-code after the upload instead of OrcaSlicer's
+    generic "plate_N.gcode" (routers/jobs.py). None for models uploaded
+    before this metadata existed, or if the sidecar was somehow lost --
+    callers should fall back to the actual output filename.
+    """
+    meta_file = settings.models_dir / _META_DIRNAME / f"{model_id}.name"
+    if not meta_file.is_file():
+        return None
+    return meta_file.read_text().strip() or None

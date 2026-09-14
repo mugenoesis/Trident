@@ -10,7 +10,7 @@ from ..blocked_settings import blocked_keys
 from ..config import settings
 from ..jobstore import store
 from ..schemas import JobCreateRequest, JobRecord, JobStatus
-from .models import resolve_model_path
+from .models import resolve_model_original_name, resolve_model_path
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -90,13 +90,21 @@ def get_job_gcode(job_id: str) -> FileResponse:
     matches = list(_job_output_dir(job_id).glob("*.gcode"))
     if not matches:
         raise HTTPException(status_code=404, detail="No gcode produced (yet) for this job")
+
+    # Name the download after the upload (e.g. "my_model.gcode") rather than
+    # OrcaSlicer's generic on-disk "plate_1.gcode", which means nothing once
+    # there's more than one job in flight. Falls back to the actual output
+    # filename for models uploaded before this metadata existed.
+    original_name = resolve_model_original_name(job.model_id)
+    download_name = f"{Path(original_name).stem}.gcode" if original_name else matches[0].name
+
     # Not text/plain: .gcode isn't a MIME-registered extension, and browsers
     # (confirmed: Chrome on Android) "correct" the download filename to match
     # the Content-Type they were given, appending .txt over the intended
     # .gcode. application/octet-stream is the standard fix -- it doesn't map
     # to any particular extension, so the filename's own .gcode is left alone.
     return FileResponse(
-        matches[0], media_type="application/octet-stream", filename=matches[0].name
+        matches[0], media_type="application/octet-stream", filename=download_name
     )
 
 
