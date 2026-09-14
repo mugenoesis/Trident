@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import profiles as profiles_module
 from .config import settings
-from .routers import jobs, models, profiles, source
+from .routers import auth, jobs, models, profiles, source
 
 
 @asynccontextmanager
@@ -28,15 +28,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # Wide open: this is only exercised by `npm run dev` (frontend on a
-    # different port) hitting this API directly. The built frontend is
-    # served from this same app (see the StaticFiles mount below), so
-    # production traffic is same-origin and never touches CORS at all.
-    allow_origins=["*"],
+    # Only exercised by `npm run dev` (frontend on a different port) hitting
+    # this API directly -- the built frontend is served from this same app
+    # (see the StaticFiles mount below), so production traffic is
+    # same-origin and never touches CORS at all. Can't be a wildcard
+    # origin now that auth uses a cookie: browsers refuse credentialed
+    # requests against "*", so this is an explicit origin + allow_credentials.
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(models.router)
 app.include_router(profiles.router)
 app.include_router(jobs.router)

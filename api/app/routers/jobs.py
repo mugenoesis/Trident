@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from .. import cli_runner
+from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
 from ..jobstore import store
 from ..schemas import JobCreateRequest, JobRecord, JobStatus
-from .models import resolve_model_original_name, resolve_model_path
+from ..userstore import User
+from .models import resolve_model_original_name, resolve_model_owner, resolve_model_path
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -48,7 +50,9 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
 
 
 @router.post("", response_model=JobRecord)
-def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks) -> JobRecord:
+def create_job(
+    request: JobCreateRequest, background_tasks: BackgroundTasks, current: User = Depends(require_user)
+) -> JobRecord:
     rejected = blocked_keys(request.setting_overrides)
     if rejected:
         raise HTTPException(
@@ -57,8 +61,15 @@ def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks) -> 
         )
 
     model_path = resolve_model_path(request.model_id)
+    # A model with no recorded owner predates per-user ownership and stays
+    # accessible (nothing to enforce); one with a *different* owner is a 404,
+    # not a 403, so this doesn't confirm the model_id exists to a non-owner.
+    owner = resolve_model_owner(request.model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
 
     job = store.create(
+        user_id=current.id,
         model_id=request.model_id,
         printer_profile=request.printer_profile,
         process_profile=request.process_profile,
@@ -70,23 +81,25 @@ def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks) -> 
 
 
 @router.get("", response_model=list[JobRecord])
-def list_jobs() -> list[JobRecord]:
-    return store.list()
+def list_jobs(current: User = Depends(require_user)) -> list[JobRecord]:
+    return store.list(current.id)
 
 
-@router.get("/{job_id}", response_model=JobRecord)
-def get_job(job_id: str) -> JobRecord:
+def _get_owned_job(job_id: str, current: User) -> JobRecord:
     job = store.get(job_id)
-    if job is None:
+    if job is None or job.user_id != current.id:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
 
+@router.get("/{job_id}", response_model=JobRecord)
+def get_job(job_id: str, current: User = Depends(require_user)) -> JobRecord:
+    return _get_owned_job(job_id, current)
+
+
 @router.get("/{job_id}/gcode")
-def get_job_gcode(job_id: str) -> FileResponse:
-    job = store.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileResponse:
+    job = _get_owned_job(job_id, current)
     matches = list(_job_output_dir(job_id).glob("*.gcode"))
     if not matches:
         raise HTTPException(status_code=404, detail="No gcode produced (yet) for this job")
@@ -109,10 +122,8 @@ def get_job_gcode(job_id: str) -> FileResponse:
 
 
 @router.get("/{job_id}/thumbnail")
-def get_job_thumbnail(job_id: str) -> FileResponse:
-    job = store.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+def get_job_thumbnail(job_id: str, current: User = Depends(require_user)) -> FileResponse:
+    _get_owned_job(job_id, current)
     matches = list(_job_output_dir(job_id).glob("*.png"))
     if not matches:
         raise HTTPException(status_code=404, detail="No thumbnail produced (yet) for this job")

@@ -115,7 +115,7 @@ def test_gcode_download_named_after_upload(client, monkeypatch):
 def test_gcode_download_falls_back_without_upload_metadata(client, monkeypatch):
     model_id = _upload_model(client)
     # Simulate a model uploaded before the sidecar metadata existed.
-    (settings.models_dir / ".meta" / f"{model_id}.name").unlink()
+    (settings.models_dir / ".meta" / f"{model_id}.json").unlink()
 
     def fake_run_slice(**kwargs):
         output_dir = kwargs["output_dir"]

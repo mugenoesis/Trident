@@ -19,6 +19,7 @@ import {
 import AdvancedSettings from './components/AdvancedSettings'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
+import LoginGate from './components/LoginGate'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
   QUICK_SETTING_KEYS,
@@ -26,9 +27,12 @@ import QuickSettings, {
   type QuickSettingsValues,
 } from './components/QuickSettings'
 import ScaleControls from './components/ScaleControls'
+import SettingsMenu from './components/SettingsMenu'
+import SetupGate from './components/SetupGate'
 import Uploader from './components/Uploader'
 import Viewer from './components/Viewer'
 import type { JobRecord, ProfileSummary, SettingDef } from './types'
+import { useAuth } from './useAuth'
 
 const ACTIVE_STATUSES: JobRecord['status'][] = ['queued', 'running']
 const POLL_INTERVAL_MS = 1500
@@ -64,6 +68,41 @@ function computeSliceSignature(
 }
 
 export default function App() {
+  const auth = useAuth()
+
+  if (!auth.status) return null // brief first-load flash while /auth/status resolves
+
+  if (auth.status.mode === 'unset') {
+    return (
+      <SetupGate
+        onChooseSingle={() => auth.setup({ mode: 'single' })}
+        onChooseMulti={(username, password) => auth.setup({ mode: 'multi', username, password })}
+      />
+    )
+  }
+
+  if (auth.status.mode === 'multi' && !auth.status.logged_in) {
+    return <LoginGate onLogin={auth.login} />
+  }
+
+  return (
+    <MainApp
+      authStatus={auth.status}
+      onSwitchToMulti={auth.switchToMulti}
+      onCreateUser={auth.createUser}
+      onLogout={auth.logout}
+    />
+  )
+}
+
+interface MainAppProps {
+  authStatus: NonNullable<ReturnType<typeof useAuth>['status']>
+  onSwitchToMulti: (username: string, password: string) => Promise<unknown>
+  onCreateUser: (username: string, password: string) => Promise<unknown>
+  onLogout: () => Promise<unknown>
+}
+
+function MainApp({ authStatus, onSwitchToMulti, onCreateUser, onLogout }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -327,6 +366,12 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>headless-orca</h1>
+        <SettingsMenu
+          status={authStatus}
+          onSwitchToMulti={onSwitchToMulti}
+          onCreateUser={onCreateUser}
+          onLogout={onLogout}
+        />
       </header>
 
       {catalogError && (

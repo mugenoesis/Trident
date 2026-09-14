@@ -62,6 +62,7 @@ class JobProgress(BaseModel):
 
 class JobRecord(BaseModel):
     id: str
+    user_id: str
     status: JobStatus
     model_id: str
     printer_profile: str
@@ -73,6 +74,33 @@ class JobRecord(BaseModel):
     progress: JobProgress | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class AuthStatus(BaseModel):
+    mode: str  # "unset" | "single" | "multi"
+    logged_in: bool
+    username: str | None = None
+
+
+class AuthSetupRequest(BaseModel):
+    mode: str  # "single" | "multi"
+    username: str | None = None
+    password: str | None = None
+
+
+class SwitchToMultiRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
 
 
 class SourceInfo(BaseModel):

@@ -44,6 +44,7 @@ export interface JobProgress {
 
 export interface JobRecord {
   id: string
+  user_id: string
   status: JobStatus
   model_id: string
   printer_profile: string
@@ -63,4 +64,14 @@ export interface JobCreateRequest {
   process_profile: string
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
+}
+
+// "unset": fresh install, no mode chosen yet -- behaves like "single"
+// server-side, but the frontend uses it to show the first-run picker.
+export type AuthMode = 'unset' | 'single' | 'multi'
+
+export interface AuthStatus {
+  mode: AuthMode
+  logged_in: boolean
+  username: string | null
 }

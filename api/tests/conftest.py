@@ -12,6 +12,7 @@ _base = Path(_tmp.name)
 os.environ.setdefault("ORCA_API_MODELS_DIR", str(_base / "models"))
 os.environ.setdefault("ORCA_API_OUTPUT_DIR", str(_base / "output"))
 os.environ.setdefault("ORCA_API_JOBSTORE_PATH", str(_base / "output" / "jobstore.sqlite3"))
+os.environ.setdefault("ORCA_API_USERS_DB_PATH", str(_base / "output" / "users.sqlite3"))
 os.environ.setdefault("ORCA_API_PROFILES_DIR", str(_base / "profiles"))
 os.environ.setdefault("ORCA_API_ORCASLICER_DATADIR", str(_base / "datadir"))
 os.environ.setdefault("ORCA_API_ORCASLICER_BIN", "orca-slicer-not-installed-in-tests")
@@ -24,6 +25,18 @@ def data_dirs() -> dict[str, Path]:
         "output": Path(os.environ["ORCA_API_OUTPUT_DIR"]),
         "profiles": Path(os.environ["ORCA_API_PROFILES_DIR"]),
     }
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_state():
+    # auth_mode/users live in a process-wide singleton (same pattern as the
+    # jobstore), so a test that switches to multi-user mode would otherwise
+    # leak into every test that runs after it in the same pytest session.
+    from app.userstore import store as user_store
+
+    user_store.reset_for_tests()
+    yield
+    user_store.reset_for_tests()
 
 
 @pytest.fixture()

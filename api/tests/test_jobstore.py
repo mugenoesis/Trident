@@ -7,6 +7,7 @@ from app.schemas import JobProgress, JobStatus
 def test_create_get_roundtrip(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     job = db.create(
+        user_id="local",
         model_id="abc123",
         printer_profile="Generic Printer",
         process_profile="0.20mm Standard",
@@ -14,6 +15,7 @@ def test_create_get_roundtrip(tmp_path: Path):
         setting_overrides={"layer_height": 0.2},
     )
     assert job.status == JobStatus.QUEUED
+    assert job.user_id == "local"
 
     fetched = db.get(job.id)
     assert fetched is not None
@@ -24,6 +26,7 @@ def test_create_get_roundtrip(tmp_path: Path):
 def test_progress_and_finish(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     job = db.create(
+        user_id="local",
         model_id="abc123",
         printer_profile="p",
         process_profile="q",
@@ -54,13 +57,27 @@ def test_get_missing_returns_none(tmp_path: Path):
 def test_list_orders_newest_first(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     first = db.create(
-        model_id="a", printer_profile="p", process_profile="q",
+        user_id="local", model_id="a", printer_profile="p", process_profile="q",
         filament_profiles=[], setting_overrides={},
     )
     second = db.create(
-        model_id="b", printer_profile="p", process_profile="q",
+        user_id="local", model_id="b", printer_profile="p", process_profile="q",
         filament_profiles=[], setting_overrides={},
     )
-    ids = [j.id for j in db.list()]
+    ids = [j.id for j in db.list("local")]
     assert ids[0] == second.id or ids[0] == first.id  # timestamps may tie; both present
     assert set(ids) == {first.id, second.id}
+
+
+def test_list_scoped_to_user(tmp_path: Path):
+    db = JobStore(tmp_path / "jobs.sqlite3")
+    mine = db.create(
+        user_id="alice", model_id="a", printer_profile="p", process_profile="q",
+        filament_profiles=[], setting_overrides={},
+    )
+    db.create(
+        user_id="bob", model_id="b", printer_profile="p", process_profile="q",
+        filament_profiles=[], setting_overrides={},
+    )
+    ids = [j.id for j in db.list("alice")]
+    assert ids == [mine.id]

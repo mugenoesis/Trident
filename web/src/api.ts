@@ -1,4 +1,5 @@
 import type {
+  AuthStatus,
   JobCreateRequest,
   JobRecord,
   ModelUploadResponse,
@@ -15,7 +16,11 @@ import type {
 const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init)
+  // 'include' rather than the same-origin default: needed for the session
+  // cookie to actually be sent/set during `npm run dev`, where the frontend
+  // (:5173) and API (:8000) are different origins. Harmless in production,
+  // where it's same-origin anyway.
+  const res = await fetch(`${API_BASE}${path}`, { credentials: 'include', ...init })
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -75,4 +80,38 @@ export function gcodeDownloadUrl(id: string): string {
 
 export function thumbnailUrl(id: string): string {
   return `${API_BASE}/jobs/${id}/thumbnail`
+}
+
+function postJson<T>(path: string, body: unknown): Promise<T> {
+  return request(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function getAuthStatus(): Promise<AuthStatus> {
+  return request('/auth/status')
+}
+
+export function setupAuth(
+  body: { mode: 'single' } | { mode: 'multi'; username: string; password: string },
+): Promise<AuthStatus> {
+  return postJson('/auth/setup', body)
+}
+
+export function login(username: string, password: string): Promise<AuthStatus> {
+  return postJson('/auth/login', { username, password })
+}
+
+export function logout(): Promise<{ ok: boolean }> {
+  return postJson('/auth/logout', {})
+}
+
+export function switchToMulti(username: string, password: string): Promise<AuthStatus> {
+  return postJson('/auth/switch-to-multi', { username, password })
+}
+
+export function createUser(username: string, password: string): Promise<AuthStatus> {
+  return postJson('/auth/users', { username, password })
 }

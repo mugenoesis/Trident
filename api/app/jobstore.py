@@ -21,6 +21,7 @@ from .schemas import JobProgress, JobRecord, JobStatus
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'local',
     status TEXT NOT NULL,
     model_id TEXT NOT NULL,
     printer_profile TEXT NOT NULL,
@@ -47,6 +48,13 @@ class JobStore:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            # Migration for DBs created before user_id existed: CREATE TABLE
+            # IF NOT EXISTS above is a no-op against an existing table, so
+            # the column has to be added explicitly. New rows on a fresh
+            # table already get it from the CREATE TABLE's DEFAULT.
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if "user_id" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -61,6 +69,7 @@ class JobStore:
     def create(
         self,
         *,
+        user_id: str,
         model_id: str,
         printer_profile: str,
         process_profile: str,
@@ -72,12 +81,13 @@ class JobStore:
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO jobs (
-                    id, status, model_id, printer_profile, process_profile,
+                    id, user_id, status, model_id, printer_profile, process_profile,
                     filament_profiles, setting_overrides, created_at, updated_at,
                     progress, result, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
                 (
                     job_id,
+                    user_id,
                     JobStatus.QUEUED.value,
                     model_id,
                     printer_profile,
@@ -95,9 +105,11 @@ class JobStore:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_record(row) if row else None
 
-    def list(self) -> list[JobRecord]:
+    def list(self, user_id: str) -> list[JobRecord]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+            ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
     def set_status(self, job_id: str, status: JobStatus) -> None:
@@ -140,6 +152,7 @@ class JobStore:
         progress_raw = row["progress"]
         return JobRecord(
             id=row["id"],
+            user_id=row["user_id"],
             status=JobStatus(row["status"]),
             model_id=row["model_id"],
             printer_profile=row["printer_profile"],
