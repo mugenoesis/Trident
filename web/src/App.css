@@ -1,0 +1,313 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.app-header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.app-header h1 {
+  font-size: 1.1rem;
+}
+
+.banner-error {
+  background: #3a1f22;
+  color: var(--danger);
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  /* Default (stretch): both panels take app-main's full height, which is
+     what lets .viewer-wrap's flex:1 (inside .panel-viewer) actually resolve
+     to a real height instead of collapsing to 0 -- confirmed via a headless
+     browser smoke test where the model loaded correctly but rendered into a
+     0px-tall canvas. */
+  min-height: 500px;
+}
+
+/* Phones/narrow screens: stack the viewer above the settings panel
+   instead of side-by-side. */
+@media (max-width: 800px) {
+  .app-main {
+    flex-direction: column;
+  }
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.panel-viewer {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.panel-settings {
+  flex: 1;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.uploader {
+  border: 2px dashed var(--panel-border);
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.uploader-drag {
+  border-color: var(--accent);
+  background: #2a1f3a;
+}
+
+.uploader-status {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.viewer-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.viewer {
+  width: 100%;
+  height: 100%;
+}
+
+.viewer canvas {
+  display: block;
+}
+
+.viewer-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  pointer-events: none;
+  text-align: center;
+  padding: 1rem;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.field-group select[size] {
+  height: auto;
+}
+
+.advanced-process summary {
+  margin: 0.2rem 0;
+}
+
+.advanced-settings {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.advanced-search {
+  position: relative;
+}
+
+.advanced-search input {
+  width: 100%;
+}
+
+.advanced-results {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+}
+
+.advanced-results li button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+  border-radius: 0;
+  color: var(--text);
+  font-weight: normal;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.advanced-results li:last-child button {
+  border-bottom: none;
+}
+
+.advanced-key {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-family: monospace;
+}
+
+.advanced-overrides {
+  width: 100%;
+  margin-top: 0.6rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.advanced-overrides td {
+  padding: 0.3rem 0.3rem;
+  vertical-align: middle;
+}
+
+.advanced-overrides td:last-child {
+  width: 1%;
+}
+
+.advanced-overrides button {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  padding: 0.2rem 0.4rem;
+}
+
+.job-panel {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.slice-button {
+  width: 100%;
+  padding: 0.7rem;
+  font-size: 1rem;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #3a3f47;
+}
+
+.status-succeeded {
+  background: #1f3a28;
+  color: var(--success);
+}
+
+.status-failed {
+  background: #3a1f22;
+  color: var(--danger);
+}
+
+.status-running,
+.status-queued {
+  background: #3a331f;
+  color: var(--warning);
+}
+
+.job-progress {
+  margin-top: 0.4rem;
+  background: #2c313a;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.job-progress-bar {
+  height: 8px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.job-progress-message {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  padding: 0.2rem 0;
+}
+
+.job-result {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+}
+
+.download-button {
+  display: inline-block;
+  background: var(--accent);
+  color: white;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.job-thumbnail {
+  max-width: 96px;
+  max-height: 96px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+}
+
+.job-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin-top: 0.3rem;
+}
+
+.job-history ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.3rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.job-history li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.job-history-time {
+  color: var(--text-dim);
+}

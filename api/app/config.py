@@ -39,5 +39,13 @@ class Settings(BaseSettings):
     # mirroring cli_callback_mgr_t::start()'s ~1s open retry loop.
     pipe_open_timeout_s: float = 5.0
 
+    # Built web/ frontend (npm run build's dist/). Relative default matches
+    # running `uvicorn` from the api/ dir against a locally-built frontend;
+    # the Docker image overrides this to the baked-in static dir. Mounting
+    # is skipped entirely if this path doesn't exist (see main.py), so a
+    # missing frontend build never breaks the API itself.
+    static_dir: Path = Path("../web/dist")
+
 
 settings = Settings()
+

@@ -12,6 +12,18 @@
 ARG UBUNTU_VERSION=24.04
 
 # ---------------------------------------------------------------------------
+# Frontend build stage -- independent of the OrcaSlicer C++ build below, so
+# changes here never invalidate that (multi-hour, cached) stage.
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS frontend
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# ---------------------------------------------------------------------------
 # Builder stage
 # ---------------------------------------------------------------------------
 FROM ubuntu:${UBUNTU_VERSION} AS builder
@@ -116,6 +128,12 @@ COPY api/pyproject.toml ./
 COPY api/app ./app
 RUN python3 -m venv /opt/api/.venv \
     && /opt/api/.venv/bin/pip install --no-cache-dir .
+
+# Built web/ frontend, served by the API itself (app/main.py mounts this as
+# a StaticFiles catch-all after all API routes) -- one container, one port,
+# same-origin so the Android "Add to Home Screen" PWA flow needs no CORS.
+COPY --from=frontend /web/dist /opt/api/static
+ENV ORCA_API_STATIC_DIR=/opt/api/static
 
 VOLUME ["/data/models", "/data/output", "/data/orcaslicer-datadir"]
 

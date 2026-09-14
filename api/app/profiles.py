@@ -27,8 +27,14 @@ _KNOWN_KINDS = {"machine", "process", "filament"}
 
 def _infer_kind(data: dict, path: Path) -> str:
     kind = data.get("type")
-    if isinstance(kind, str) and kind.lower() in _KNOWN_KINDS:
-        return kind.lower()
+    if isinstance(kind, str):
+        # A recognized explicit type always wins. An unrecognized-but-present
+        # type (e.g. upstream's "machine_model" -- a printer-family
+        # descriptor like bed shape/available nozzles, not a loadable
+        # preset) must NOT fall through to the path guess below: its own
+        # "machine" subdirectory would otherwise misclassify it as an
+        # actual, selectable machine preset.
+        return kind.lower() if kind.lower() in _KNOWN_KINDS else "unknown"
     lower_parts = {p.lower() for p in path.parts}
     for known in _KNOWN_KINDS:
         if known in lower_parts or f"{known}s" in lower_parts:
@@ -58,6 +64,14 @@ class ProfileCatalog:
                 except (json.JSONDecodeError, OSError) as exc:
                     logger.warning("Skipping unreadable profile %s: %s", preset_path, exc)
                     continue
+                # instantiation:"false" marks shared base/template presets meant
+                # only to be `inherits`-ed from (e.g. "fdm_machine_common"), not
+                # to be loaded directly -- OrcaSlicer's CLI resolves `inherits`
+                # chains on its own from the leaf preset's path, so these never
+                # need to be independently selectable or resolvable here.
+                if str(data.get("instantiation", "true")).lower() == "false":
+                    continue
+
                 kind = _infer_kind(data, preset_path.relative_to(vendor_dir))
                 name = data.get("name", preset_path.stem)
                 detail = ProfileDetail(
@@ -79,6 +93,23 @@ class ProfileCatalog:
 
     def get(self, vendor: str, kind: str, name: str) -> ProfileDetail | None:
         return self._by_key.get((vendor, kind, name))
+
+    def get_by_name(self, kind: str, name: str) -> ProfileDetail | None:
+        """Look up a profile by (kind, name) alone, ignoring vendor.
+
+        Used to resolve JobCreateRequest's printer_profile/process_profile/
+        filament_profiles (bare names, as shown in GET /profiles) into the
+        actual file path `--load-settings`/`--load-filaments` need (see
+        cli_runner.py). Names aren't guaranteed globally unique across
+        vendors, so this is a best-effort first match -- acceptable because
+        process/filament profile names already carry a vendor-qualifying
+        "@<printer>" suffix by convention, and machine names are themselves
+        vendor+model-specific in practice.
+        """
+        for detail in self._by_key.values():
+            if detail.kind == kind and detail.name == name:
+                return detail
+        return None
 
 
 catalog = ProfileCatalog(settings.profiles_dir)

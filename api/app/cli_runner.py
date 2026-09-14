@@ -22,12 +22,25 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import profiles as profiles_module
 from .config import settings
 from .schemas import JobProgress
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[JobProgress], None]
+
+
+def _resolve_profile_path(kind: str, name: str) -> str:
+    """--load-settings/--load-filaments take literal file paths, not the bare
+    catalog names GET /profiles and JobCreateRequest use (confirmed against a
+    real build: OrcaSlicer.cpp's load_config_file() does a plain
+    boost::filesystem::exists() on the string it's given, no name lookup).
+    """
+    detail = profiles_module.catalog.get_by_name(kind, name)
+    if detail is None:
+        raise ValueError(f"Unknown {kind} profile: {name!r}")
+    return str(settings.profiles_dir / detail.path)
 
 
 class SliceResult:
@@ -92,6 +105,12 @@ def run_slice(
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
 ) -> SliceResult:
+    # Resolved before the FIFO/reader thread exist so an unknown profile name
+    # fails fast without leaking a thread blocked forever on open()-for-read.
+    printer_path = _resolve_profile_path("machine", printer_profile)
+    process_path = _resolve_profile_path("process", process_profile)
+    filament_paths = [_resolve_profile_path("filament", f) for f in filament_profiles]
+
     output_dir.mkdir(parents=True, exist_ok=True)
     fifo_path = output_dir / "progress.pipe"
     if fifo_path.exists():
@@ -114,12 +133,18 @@ def run_slice(
         "--pipe",
         str(fifo_path),
         "--load-settings",
-        f"{printer_profile};{process_profile}",
+        f"{printer_path};{process_path}",
     ]
-    if filament_profiles:
-        cmd += ["--load-filaments", ";".join(filament_profiles)]
+    if filament_paths:
+        cmd += ["--load-filaments", ";".join(filament_paths)]
     for key, value in setting_overrides.items():
-        cmd += [f"--{key}", str(value)]
+        # ConfigOptionDef::cli_args() (libslic3r/Config.cpp) derives the CLI flag
+        # from the config key by replacing underscores with dashes, unless the
+        # option defines a custom `cli` alias -- that's a rarer case this doesn't
+        # handle, but covers the vast majority of settings (confirmed against a
+        # real build: --layer_height is rejected as "Invalid option", --layer-height
+        # works).
+        cmd += [f"--{key.replace('_', '-')}", str(value)]
     cmd.append(str(model_path))
 
     try:

@@ -1,8 +1,8 @@
 # headless-orca
 
-A Docker container that runs [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer)'s slicing engine headlessly (no display), with source patches to harden its existing CLI mode, fronted by a FastAPI service that exposes slicing over HTTP.
+A Docker container that runs [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer)'s slicing engine headlessly (no display), with source patches to harden its existing CLI mode, fronted by a FastAPI service (+ a web UI) that exposes slicing over HTTP.
 
-Status: builds end-to-end and runs. `docker build -f docker/Dockerfile -t headless-orca .` compiles the patched `vendor/orcaslicer` fork and assembles the runtime image; `docker run headless-orca orca-slicer --slice 0 --outputdir ... file.3mf` and `docker run -p 8000:8000 headless-orca` (the API server) both work against a real binary. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and remaining milestones (thumbnail rendering verification, `--help-json`, etc.).
+Status: builds end-to-end and runs, including a real upload → preview → slice → download flow through the web UI. `docker build -f docker/Dockerfile -t headless-orca .` compiles the patched `vendor/orcaslicer` fork, builds the frontend, and assembles the runtime image; `docker run -p 8000:8000 headless-orca` serves both the API and the UI at `http://<host>:8000/` (Swagger at `/docs`). It's a responsive single page app, installable as a PWA on Android via "Add to Home Screen". See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and remaining milestones (thumbnail rendering verification, direct-to-printer upload, etc.).
 
 ## Running the API locally (without OrcaSlicer)
 
@@ -31,6 +31,7 @@ headless-orca/
 ├── vendor/orcaslicer/   # git submodule -> patched OrcaSlicer fork
 ├── docker/              # multi-stage Dockerfile + entrypoint
 ├── api/                 # FastAPI service
+├── web/                 # React/Vite frontend (see web/README.md)
 ├── docs/                # architecture notes, AGPL compliance notes
 └── scripts/             # smoke tests, helper scripts
 ```

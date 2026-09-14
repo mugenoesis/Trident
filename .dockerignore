@@ -1,0 +1,13 @@
+.git
+data/
+docker-build.log*
+docker-build.pid
+
+# Frontend: reinstalled/rebuilt inside the `frontend` build stage.
+web/node_modules
+web/dist
+
+# API: reinstalled inside the `runtime` stage.
+api/.venv
+api/**/__pycache__
+api/.pytest_cache

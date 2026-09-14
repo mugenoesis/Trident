@@ -69,6 +69,11 @@ def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks) -> 
     return job
 
 
+@router.get("", response_model=list[JobRecord])
+def list_jobs() -> list[JobRecord]:
+    return store.list()
+
+
 @router.get("/{job_id}", response_model=JobRecord)
 def get_job(job_id: str) -> JobRecord:
     job = store.get(job_id)
