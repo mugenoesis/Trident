@@ -5,6 +5,7 @@ export interface QuickSettingsValues {
   sparse_infill_density: string
   wall_loops: string
   sparse_infill_pattern: string
+  curr_bed_type: string
 }
 
 interface QuickSettingsProps {
@@ -18,6 +19,7 @@ const KEYS: (keyof QuickSettingsValues)[] = [
   'sparse_infill_density',
   'wall_loops',
   'sparse_infill_pattern',
+  'curr_bed_type',
 ]
 
 function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
@@ -31,6 +33,7 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
     onChange({ ...values, [key]: value })
 
   const patternDef = findDef(schema, 'sparse_infill_pattern')
+  const bedTypeDef = findDef(schema, 'curr_bed_type')
 
   return (
     <div className="field-group">
@@ -83,6 +86,20 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
           ))}
         </select>
       </label>
+
+      <label>
+        Build plate
+        <select
+          value={values.curr_bed_type}
+          onChange={(e) => set('curr_bed_type', e.target.value)}
+        >
+          {(bedTypeDef?.enum_values ?? [values.curr_bed_type]).map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   )
 }
@@ -97,6 +114,7 @@ export function defaultQuickSettings(schema: SettingDef[]): QuickSettingsValues 
     sparse_infill_density: def('sparse_infill_density', '15'),
     wall_loops: def('wall_loops', '2'),
     sparse_infill_pattern: def('sparse_infill_pattern', 'grid'),
+    curr_bed_type: def('curr_bed_type', 'Cool Plate'),
   }
 }
 

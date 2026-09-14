@@ -167,6 +167,7 @@ export default function App() {
       sparse_infill_density: `${quickSettings.sparse_infill_density}%`,
       wall_loops: quickSettings.wall_loops,
       sparse_infill_pattern: quickSettings.sparse_infill_pattern,
+      curr_bed_type: quickSettings.curr_bed_type,
     }
     createJob({
       model_id: modelId,
