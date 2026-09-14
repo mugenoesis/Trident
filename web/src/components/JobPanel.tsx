@@ -3,6 +3,7 @@ import type { JobRecord } from '../types'
 
 interface JobPanelProps {
   canSlice: boolean
+  alreadySliced: boolean
   onSlice: () => void
   slicing: boolean
   currentJob: JobRecord | null
@@ -26,6 +27,7 @@ function JobProgressBar({ job }: { job: JobRecord }) {
 
 export default function JobPanel({
   canSlice,
+  alreadySliced,
   onSlice,
   slicing,
   currentJob,
@@ -37,6 +39,9 @@ export default function JobPanel({
       <button className="slice-button" type="button" disabled={!canSlice || slicing} onClick={onSlice}>
         {slicing ? 'Slicing…' : 'Slice'}
       </button>
+      {alreadySliced && !slicing && (
+        <div className="job-hint">Nothing changed since the last slice.</div>
+      )}
 
       {currentJob && (
         <div className="current-job">
@@ -46,6 +51,13 @@ export default function JobPanel({
           )}
           {currentJob.status === 'succeeded' && (
             <div className="job-result">
+              <button
+                type="button"
+                className="preview-button"
+                onClick={() => onPreview(currentJob.id)}
+              >
+                View G-code
+              </button>
               <a className="download-button" href={gcodeDownloadUrl(currentJob.id)} download>
                 Download G-code
               </a>

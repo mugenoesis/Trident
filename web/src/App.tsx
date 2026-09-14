@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   createJob,
@@ -33,6 +33,36 @@ import type { JobRecord, ProfileSummary, SettingDef } from './types'
 const ACTIVE_STATUSES: JobRecord['status'][] = ['queued', 'running']
 const POLL_INTERVAL_MS = 1500
 
+// A stable fingerprint of everything that actually affects slice output.
+// Used to tell "you changed something" apart from "you clicked Slice again
+// with the same settings" -- object key order isn't guaranteed to stay
+// consistent across state updates, so each object's entries are sorted by
+// key before stringifying rather than relying on JSON.stringify's
+// insertion-order behavior.
+function sortedEntries(obj: Record<string, unknown>): [string, unknown][] {
+  return Object.keys(obj)
+    .sort()
+    .map((key) => [key, obj[key]])
+}
+
+function computeSliceSignature(
+  modelId: string | null,
+  printerName: string,
+  processName: string,
+  filamentName: string,
+  quickSettings: QuickSettingsValues,
+  advancedOverrides: Record<string, string>,
+): string {
+  return JSON.stringify({
+    modelId,
+    printerName,
+    processName,
+    filamentName,
+    quickSettings: sortedEntries(quickSettings as unknown as Record<string, unknown>),
+    advancedOverrides: sortedEntries(advancedOverrides),
+  })
+}
+
 export default function App() {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [schema, setSchema] = useState<SettingDef[]>([])
@@ -58,6 +88,10 @@ export default function App() {
   const [slicing, setSlicing] = useState(false)
   const [currentJob, setCurrentJob] = useState<JobRecord | null>(null)
   const [history, setHistory] = useState<JobRecord[]>([])
+  // Signature of the settings the current/last job was actually sliced
+  // with, so a repeat click of "Slice" with nothing changed can be a no-op
+  // instead of queuing an identical job.
+  const [lastSlicedSignature, setLastSlicedSignature] = useState<string | null>(null)
 
   // Which job's G-code the viewer panel shows, and whether it's showing
   // that at all right now (vs. the 3D model). Separate from currentJob:
@@ -247,12 +281,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentJob?.id, currentJob?.status])
 
-  const canSlice = Boolean(modelId && printerName && processName && filamentName)
+  const currentSignature = useMemo(
+    () => computeSliceSignature(modelId, printerName, processName, filamentName, quickSettings, advancedOverrides),
+    [modelId, printerName, processName, filamentName, quickSettings, advancedOverrides],
+  )
+  // Only a *successful* prior slice blocks re-slicing -- a failed job with
+  // unchanged settings should still be retryable (e.g. a transient error).
+  const alreadySliced = currentJob?.status === 'succeeded' && lastSlicedSignature === currentSignature
+  const canSlice = Boolean(modelId && printerName && processName && filamentName) && !alreadySliced
 
   const handleSlice = useCallback(() => {
     if (!modelId || !printerName || !processName || !filamentName) return
     setSlicing(true)
     setViewMode('model')
+    setLastSlicedSignature(currentSignature)
     const overrides: Record<string, string> = {
       ...advancedOverrides,
       layer_height: quickSettings.layer_height,
@@ -279,7 +321,7 @@ export default function App() {
         setSlicing(false)
         alert(`Failed to start slicing job: ${err.message}`)
       })
-  }, [modelId, printerName, processName, filamentName, quickSettings, advancedOverrides])
+  }, [modelId, printerName, processName, filamentName, quickSettings, advancedOverrides, currentSignature])
 
   return (
     <div className="app">
@@ -341,6 +383,7 @@ export default function App() {
 
           <JobPanel
             canSlice={canSlice}
+            alreadySliced={alreadySliced}
             onSlice={handleSlice}
             slicing={slicing}
             currentJob={currentJob}

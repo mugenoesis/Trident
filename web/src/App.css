@@ -238,6 +238,13 @@
   font-size: 1rem;
 }
 
+.job-hint {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: -0.3rem;
+}
+
 .status-badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
