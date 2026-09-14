@@ -94,8 +94,17 @@
 }
 
 .viewer {
-  width: 100%;
-  height: 100%;
+  /* Not width/height:100% -- when .viewer-wrap's height comes purely from
+     hitting its min-height floor (no actual flex-grow happening, which is
+     exactly what happens in the narrow/stacked mobile layout), that's not
+     treated as a "definite" height for a percentage-height child to resolve
+     against, so height:100% silently computed to 0 (confirmed: viewer-wrap
+     rendered at 320px, .viewer inside it at 0px). Absolute positioning
+     against the nearest positioned ancestor (.viewer-wrap is
+     position:relative) sizes reliably regardless of how that ancestor got
+     its height. */
+  position: absolute;
+  inset: 0;
 }
 
 .viewer canvas {
