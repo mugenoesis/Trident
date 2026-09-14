@@ -28,6 +28,11 @@ export default function Viewer({ file }: ViewerProps) {
       0.1,
       10000,
     )
+    // STL/print convention is Z-up (Z = build height, model sits on the
+    // plate at its minimum Z), not three.js's default Y-up -- without this,
+    // an asymmetric model renders lying on its side. Must be set before
+    // OrbitControls is constructed, which reads it to orient orbiting.
+    camera.up.set(0, 0, 1)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(window.devicePixelRatio)
@@ -46,6 +51,7 @@ export default function Viewer({ file }: ViewerProps) {
     controls.enableDamping = true
 
     let mesh: THREE.Mesh | null = null
+    let plate: THREE.Mesh | null = null
     let animationId = 0
     let disposed = false
 
@@ -89,12 +95,33 @@ export default function Viewer({ file }: ViewerProps) {
           const radius = size.length() / 2 || 1
           const distance = radius / Math.sin((Math.PI * camera.fov) / 360)
 
-          camera.position.set(distance, distance * 0.6, distance)
+          camera.position.set(distance, distance, distance * 0.6)
           camera.near = distance / 100
           camera.far = distance * 100
           camera.updateProjectionMatrix()
           controls.target.set(0, 0, 0)
           controls.update()
+
+          // A small reference plate just under the model, sized to its
+          // footprint rather than any real printer's bed -- just enough to
+          // show "this is roughly where the build surface is", not a
+          // to-scale plate. FrontSide (the default) makes it a one-way
+          // surface: PlaneGeometry's normal points along +Z (up) with no
+          // rotation needed, so orbiting underneath looks at its back face,
+          // which isn't rendered -- the plate disappears instead of
+          // blocking the view of the model from below.
+          const plateMargin = 1.3
+          plate = new THREE.Mesh(
+            new THREE.PlaneGeometry(size.x * plateMargin, size.y * plateMargin),
+            new THREE.MeshBasicMaterial({
+              color: 0xaab0bb,
+              transparent: true,
+              opacity: 0.25,
+              side: THREE.FrontSide,
+            }),
+          )
+          plate.position.z = -size.z / 2
+          scene.add(plate)
 
           URL.revokeObjectURL(url)
         },
@@ -105,7 +132,7 @@ export default function Viewer({ file }: ViewerProps) {
         },
       )
     } else {
-      camera.position.set(40, 30, 40)
+      camera.position.set(40, 40, 30)
       controls.update()
     }
 
@@ -140,6 +167,8 @@ export default function Viewer({ file }: ViewerProps) {
         edges.geometry.dispose()
         ;(edges.material as THREE.Material).dispose()
       }
+      plate?.geometry.dispose()
+      ;(plate?.material as THREE.Material | undefined)?.dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
