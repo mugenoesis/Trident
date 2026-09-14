@@ -33,7 +33,7 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
   const [visibleLayers, setVisibleLayers] = useState(0)
-  const [renderMode, setRenderMode] = useState<RenderMode>('solid')
+  const [renderMode, setRenderMode] = useState<RenderMode>('lines')
 
   const layersRef = useRef<GcodeLayer[]>([])
   const renderModeRef = useRef<RenderMode>(renderMode)
@@ -67,13 +67,21 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.1)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55))
+    // Key light: positioned to roughly match the camera's viewing direction
+    // (same X/Y sign, higher elevation) so the faces the camera actually
+    // sees are the ones getting lit, instead of being side- or back-lit.
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
     keyLight.castShadow = true
     keyLight.shadow.mapSize.set(1024, 1024)
     keyLight.shadow.bias = -0.0005
     scene.add(keyLight)
     scene.add(keyLight.target)
+    // Fill light: soft, no shadow, from the opposite side -- keeps the
+    // faces away from the key light from going fully black.
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.35)
+    scene.add(fillLight)
+    scene.add(fillLight.target)
 
     // Only shown/lit in "solid" mode -- catches shadows to make layer/wall
     // detail readable, but would just clutter the raw path view.
@@ -249,7 +257,11 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
         ground.position.set(0, 0, groundZ)
 
         const radius = size.length() / 2 || 1
-        keyLight.position.set(radius * 1.4, -radius * 1.1, radius * 2.4)
+        // Same X/Y sign as the camera (set just below) so the key light
+        // shines from roughly the direction the camera is looking from,
+        // just higher overhead -- lights the visible faces instead of
+        // grazing/back-lighting them.
+        keyLight.position.set(radius * 1.3, radius * 1.6, radius * 1.8)
         keyLight.shadow.camera.left = -radius * 1.5
         keyLight.shadow.camera.right = radius * 1.5
         keyLight.shadow.camera.top = radius * 1.5
@@ -257,6 +269,7 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
         keyLight.shadow.camera.near = 0.1
         keyLight.shadow.camera.far = radius * 6
         keyLight.shadow.camera.updateProjectionMatrix()
+        fillLight.position.set(-radius * 1.2, -radius * 0.8, radius * 1.0)
 
         const distance = radius / Math.sin((Math.PI * camera.fov) / 360)
         camera.position.set(distance, distance, distance * 0.6)
