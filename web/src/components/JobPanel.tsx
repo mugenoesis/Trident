@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { gcodeDownloadUrl, thumbnailUrl } from '../api'
-import type { JobRecord, PrinterRecord } from '../types'
+import type { JobRecord } from '../types'
 
 interface JobPanelProps {
   canSlice: boolean
@@ -11,56 +10,6 @@ interface JobPanelProps {
   history: JobRecord[]
   onPreview: (jobId: string) => void
   onDelete: (jobId: string) => void
-  selectedPrinter: PrinterRecord | null
-  onSendToPrinter: (jobId: string, startPrint: boolean) => Promise<unknown>
-}
-
-// Only rendered once a saved printer with connection details is selected --
-// App.tsx's SavedPrinters is where those get configured in the first place.
-function SendToPrinterControl({
-  printer,
-  jobId,
-  onSend,
-}: {
-  printer: PrinterRecord
-  jobId: string
-  onSend: (jobId: string, startPrint: boolean) => Promise<unknown>
-}) {
-  const [startPrint, setStartPrint] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<'idle' | 'sent' | 'error'>('idle')
-  const [error, setError] = useState<string | null>(null)
-
-  const send = () => {
-    setBusy(true)
-    setResult('idle')
-    setError(null)
-    onSend(jobId, startPrint)
-      .then(() => setResult('sent'))
-      .catch((err: Error) => {
-        setResult('error')
-        setError(err.message)
-      })
-      .finally(() => setBusy(false))
-  }
-
-  return (
-    <div className="send-to-printer">
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={startPrint}
-          onChange={(e) => setStartPrint(e.target.checked)}
-        />
-        Start printing immediately
-      </label>
-      <button type="button" className="preview-button" disabled={busy} onClick={send}>
-        {busy ? 'Sending…' : `Send to ${printer.name}`}
-      </button>
-      {result === 'sent' && <div className="job-hint">Sent to {printer.name}.</div>}
-      {result === 'error' && <div className="job-error">{error}</div>}
-    </div>
-  )
 }
 
 function StatusBadge({ status }: { status: JobRecord['status'] }) {
@@ -86,8 +35,6 @@ export default function JobPanel({
   history,
   onPreview,
   onDelete,
-  selectedPrinter,
-  onSendToPrinter,
 }: JobPanelProps) {
   return (
     <div className="job-panel">
@@ -125,9 +72,6 @@ export default function JobPanel({
                 }}
               />
             </div>
-          )}
-          {currentJob.status === 'succeeded' && selectedPrinter?.print_host && (
-            <SendToPrinterControl printer={selectedPrinter} jobId={currentJob.id} onSend={onSendToPrinter} />
           )}
           {currentJob.status === 'failed' && (
             <div className="job-error">{currentJob.error ?? 'Slicing failed'}</div>

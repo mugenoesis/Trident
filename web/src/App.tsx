@@ -37,6 +37,7 @@ import QuickSettings, {
 } from './components/QuickSettings'
 import SavedPrinters from './components/SavedPrinters'
 import ScaleControls from './components/ScaleControls'
+import SendToPrinterControl from './components/SendToPrinterControl'
 import SettingsMenu from './components/SettingsMenu'
 import SetupGate from './components/SetupGate'
 import Uploader from './components/Uploader'
@@ -551,7 +552,17 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
       <main className="app-main">
         <section className="panel panel-viewer">
           {showGcode && viewedJobId ? (
-            <GcodeViewer jobId={viewedJobId} onBackToModel={backToModelView} />
+            <>
+              <GcodeViewer jobId={viewedJobId} onBackToModel={backToModelView} />
+              {selectedPrinter?.print_host && (
+                <SendToPrinterControl
+                  key={viewedJobId}
+                  printer={selectedPrinter}
+                  jobId={viewedJobId}
+                  onSend={handleSendToPrinter}
+                />
+              )}
+            </>
           ) : (
             <>
               <Uploader
@@ -619,8 +630,6 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
             history={history}
             onPreview={viewJobGcode}
             onDelete={handleDeleteJob}
-            selectedPrinter={selectedPrinter}
-            onSendToPrinter={handleSendToPrinter}
           />
         </section>
       </main>
