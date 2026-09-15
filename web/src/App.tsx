@@ -360,7 +360,30 @@ function MainApp({
       const firstOfKind = (kind: 'process' | 'filament') => {
         const inVendor = profiles.filter((p) => p.vendor === vendor && p.kind === kind)
         const namedForPrinter = inVendor.find((p) => p.name.includes(name))
-        return namedForPrinter?.name ?? inVendor[0]?.name ?? ''
+        if (namedForPrinter) return namedForPrinter.name
+        if (inVendor[0]) return inVendor[0].name
+        if (kind !== 'filament') return ''
+        // Machine-only vendors (Voron, and 16+ others in this catalog) ship
+        // no filament profiles of their own at all -- filament choice isn't
+        // actually tied to printer vendor the way process profiles are, so
+        // fall back to the catalog's vendor-agnostic "system" filaments
+        // (OrcaSlicer's own default set) rather than leaving this empty,
+        // which would otherwise permanently block both saving a printer and
+        // slicing (both require a non-empty filament). Specifically prefer
+        // "Generic PLA" within that set over just the first system filament
+        // in whatever order the catalog happens to list them (confirmed
+        // that can land on something like PA-CF -- carbon-fiber nylon
+        // needing a hardened nozzle and high temps -- a bad silent default).
+        const systemFilaments = profiles.filter(
+          (p) => p.kind === 'filament' && p.vendor === 'OrcaFilamentLibrary',
+        )
+        const genericPla =
+          systemFilaments.find((p) => p.name === 'Generic PLA @System') ??
+          systemFilaments.find((p) => p.name.startsWith('Generic PLA'))
+        if (genericPla) return genericPla.name
+        if (systemFilaments[0]) return systemFilaments[0].name
+        const anyFilament = profiles.find((p) => p.kind === 'filament')
+        return anyFilament?.name ?? ''
       }
 
       getProfileDetail(vendor, 'machine', name)
