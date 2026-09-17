@@ -904,23 +904,23 @@ function MainApp({
           >
             <summary>Quick settings{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
             {filamentSlots.map((slot, i) => (
-              <div className="filament-slot" key={i}>
-                <FilamentSelect
-                  profiles={profiles}
-                  vendor={vendor}
-                  filamentName={slot.profile}
-                  onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
-                  label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
-                />
-                <label className="filament-slot-color">
-                  <span>Color</span>
+              <FilamentSelect
+                key={i}
+                profiles={profiles}
+                vendor={vendor}
+                filamentName={slot.profile}
+                onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
+                label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
+                accessory={
                   <input
                     type="color"
+                    className="filament-slot-color-input"
                     value={slot.color}
                     onChange={(e) => handleFilamentSlotChange(i, { color: e.target.value })}
+                    aria-label={`Slot ${i + 1} color`}
                   />
-                </label>
-              </div>
+                }
+              />
             ))}
             {showMaterialSourceToggle && (
               <div className="field-group material-source-toggle">

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { ProfileSummary } from '../types'
 
 interface FilamentSelectProps {
@@ -9,6 +10,15 @@ interface FilamentSelectProps {
   // Overridable so App.tsx can label multiple instances "Slot 1 material",
   // "Slot 2 material", etc. for multi-extruder/AMS printers.
   label?: string
+  // Rendered inline next to the label text (App.tsx uses this for each
+  // slot's color swatch). Deliberately inline with the label rather than
+  // beside the whole component: the search input + multi-row <select>
+  // below can be much taller than the swatch, and vertically aligning a
+  // short sibling against that tall block (confirmed via a mobile
+  // screenshot) leaves it looking like it floats disconnected, off to one
+  // side, between slots -- anchoring it to the label keeps it visually
+  // tied to the slot it actually belongs to at any width.
+  accessory?: ReactNode
 }
 
 // Split out of PrinterSelect.tsx: material/filament choice is something you
@@ -23,6 +33,7 @@ export default function FilamentSelect({
   filamentName,
   onFilamentChange,
   label = 'Material',
+  accessory,
 }: FilamentSelectProps) {
   const [filamentQuery, setFilamentQuery] = useState('')
 
@@ -56,7 +67,10 @@ export default function FilamentSelect({
   return (
     <div className="field-group">
       <label>
-        {label}
+        <span className="filament-select-label-row">
+          <span>{label}</span>
+          {accessory}
+        </span>
         <input
           type="text"
           placeholder={`Search ${filaments.length ? '' : 'materials'}…`}

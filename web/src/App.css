@@ -687,31 +687,21 @@
   filter: brightness(1.1);
 }
 
-.filament-slot {
+.filament-select-label-row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 0.6rem;
 }
 
-.filament-slot > .field-group {
-  flex: 1;
-}
-
-.filament-slot-color {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-
-.filament-slot-color input[type='color'] {
-  width: 2.4rem;
-  height: 2rem;
+.filament-slot-color-input {
+  width: 1.7rem;
+  height: 1.7rem;
   padding: 0;
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   background: none;
+  flex-shrink: 0;
 }
 
 .material-source-toggle .segmented-control {
