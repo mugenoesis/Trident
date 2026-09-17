@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from app.printerstore import PrinterStore
@@ -9,7 +10,8 @@ def _printer_fields(**overrides):
         vendor="BBL",
         machine_profile="Bambu Lab A1 0.4 nozzle",
         process_profile="0.20mm Standard @BBL A1",
-        filament_profile="Bambu PLA Basic @BBL A1",
+        filament_profiles=["Bambu PLA Basic @BBL A1"],
+        filament_colors=["#ffffff"],
         bed_width=256.0,
         bed_depth=256.0,
         bed_height=256.0,
@@ -98,7 +100,7 @@ def test_delete_printer_cascades_material_profiles(tmp_path: Path):
         quick_settings={"layer_height": "0.2"},
         advanced_overrides={},
         process_profile=None,
-        filament_profile=None,
+        filament_profiles=None,
     )
     db.delete_printer(printer.id)
     assert db.get_printer(printer.id) is None
@@ -115,12 +117,15 @@ def test_material_profile_roundtrip(tmp_path: Path):
         quick_settings={"layer_height": "0.24", "sparse_infill_density": "25"},
         advanced_overrides={"cool_plate_temp": "70"},
         process_profile="0.24mm Draft @BBL A1",
-        filament_profile="Bambu PETG HF @BBL A1",
+        filament_profiles=["Bambu PETG HF @BBL A1"],
+        filament_colors=["#ffffff"],
     )
     fetched = db.get_material(material.id)
     assert fetched is not None
     assert fetched.quick_settings == {"layer_height": "0.24", "sparse_infill_density": "25"}
     assert fetched.advanced_overrides == {"cool_plate_temp": "70"}
+    assert fetched.filament_profiles == ["Bambu PETG HF @BBL A1"]
+    assert fetched.filament_colors == ["#ffffff"]
 
     materials = db.list_materials(printer.id)
     assert [m.id for m in materials] == [material.id]
@@ -134,7 +139,7 @@ def _material(db: PrinterStore, printer_id: str, **overrides):
         quick_settings={"layer_height": "0.2"},
         advanced_overrides={},
         process_profile=None,
-        filament_profile=None,
+        filament_profiles=None,
     )
     fields.update(overrides)
     return db.create_material(**fields)
@@ -191,3 +196,84 @@ def test_duplicate_material_increments_name(tmp_path: Path):
 def test_duplicate_missing_material_returns_none(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     assert db.duplicate_material("does-not-exist", user_id="alice") is None
+
+
+def test_printer_supports_multiple_filament_slots(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(
+        user_id="alice",
+        **_printer_fields(
+            vendor="Snapmaker",
+            machine_profile="Snapmaker U1 (0.4+0.6 nozzle)",
+            filament_profiles=["Generic PLA", "Generic PETG", "Generic ABS", "Generic TPU"],
+            filament_colors=["#ff0000", "#00ff00", "#0000ff", "#ffff00"],
+        ),
+    )
+    fetched = db.get_printer(printer.id)
+    assert fetched is not None
+    assert fetched.filament_profiles == ["Generic PLA", "Generic PETG", "Generic ABS", "Generic TPU"]
+    assert fetched.filament_colors == ["#ff0000", "#00ff00", "#0000ff", "#ffff00"]
+
+
+def test_migrates_db_with_old_scalar_filament_profile(tmp_path: Path):
+    """Simulates a printer/material_profiles table from before
+    filament_profiles/filament_colors existed -- reopening the store as a
+    PrinterStore must migrate old rows into one-element lists (a recorded
+    color of white as a neutral placeholder, since none was ever saved)."""
+    db_path = tmp_path / "printers.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE printers (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+            vendor TEXT NOT NULL, machine_profile TEXT NOT NULL,
+            process_profile TEXT NOT NULL, filament_profile TEXT NOT NULL,
+            bed_width REAL, bed_depth REAL, bed_height REAL, host_type TEXT,
+            print_host TEXT, printhost_apikey TEXT, printhost_user TEXT,
+            printhost_password TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE material_profiles (
+            id TEXT PRIMARY KEY, printer_id TEXT NOT NULL, user_id TEXT NOT NULL,
+            name TEXT NOT NULL, quick_settings TEXT NOT NULL,
+            advanced_overrides TEXT NOT NULL, process_profile TEXT,
+            filament_profile TEXT, created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """INSERT INTO printers (id, user_id, name, vendor, machine_profile, process_profile,
+               filament_profile, created_at)
+           VALUES ('p1', 'alice', 'Old printer', 'BBL', 'Bambu Lab A1', '0.20mm Standard',
+               'Bambu PLA Basic', '2024-01-01T00:00:00+00:00')"""
+    )
+    conn.execute(
+        """INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
+               advanced_overrides, process_profile, filament_profile, created_at)
+           VALUES ('m1', 'p1', 'alice', 'PLA', '{}', '{}', NULL, 'Bambu PLA Basic',
+               '2024-01-01T00:00:00+00:00')"""
+    )
+    conn.execute(
+        """INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
+               advanced_overrides, process_profile, filament_profile, created_at)
+           VALUES ('m2', 'p1', 'alice', 'No filament set', '{}', '{}', NULL, NULL,
+               '2024-01-01T00:00:00+00:00')"""
+    )
+    conn.commit()
+    conn.close()
+
+    db = PrinterStore(db_path)
+
+    printer = db.get_printer("p1")
+    assert printer is not None
+    assert printer.filament_profiles == ["Bambu PLA Basic"]
+    assert printer.filament_colors == ["#ffffff"]
+
+    material = db.get_material("m1")
+    assert material is not None
+    assert material.filament_profiles == ["Bambu PLA Basic"]
+    assert material.filament_colors == ["#ffffff"]
+
+    no_filament = db.get_material("m2")
+    assert no_filament is not None
+    assert no_filament.filament_profiles is None
+    assert no_filament.filament_colors is None

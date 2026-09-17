@@ -54,6 +54,49 @@ def test_run_slice_happy_path(tmp_path: Path, monkeypatch, data_dirs):
     assert not (output_dir / "progress.pipe").exists()
 
 
+def test_run_slice_plate_index_maps_to_slice_flag(tmp_path: Path, monkeypatch, data_dirs):
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "cube.stl"
+    model_path.write_text("fake")
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        plate_index=5,
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "slice_arg.txt").read_text() == "5"
+
+
+def test_run_slice_no_plate_index_slices_all_plates(tmp_path: Path, monkeypatch, data_dirs):
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "cube.stl"
+    model_path.write_text("fake")
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "slice_arg.txt").read_text() == "0"
+
+
 def test_run_slice_unknown_profile_raises(tmp_path: Path, data_dirs):
     model_path = tmp_path / "cube.stl"
     model_path.write_text("fake")

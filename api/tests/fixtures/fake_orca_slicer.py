@@ -34,5 +34,9 @@ outputdir = pathlib.Path(args.outputdir)
 outputdir.mkdir(parents=True, exist_ok=True)
 (outputdir / "result.json").write_text(json.dumps({"return_code": 0, "error_string": ""}))
 (outputdir / "out.gcode").write_text("; fake gcode\n")
+# Records the received --slice value so test_cli_runner.py can assert on it
+# without needing to mock subprocess.run (which would leave the FIFO
+# reader thread blocked forever waiting for a writer that never connects).
+(outputdir / "slice_arg.txt").write_text(args.slice or "")
 
 sys.exit(0)

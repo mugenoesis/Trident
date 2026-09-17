@@ -11,7 +11,8 @@ def _printer_body(**overrides):
         vendor="BBL",
         machine_profile="Bambu Lab A1 0.4 nozzle",
         process_profile="0.20mm Standard @BBL A1",
-        filament_profile="Bambu PLA Basic @BBL A1",
+        filament_profiles=["Bambu PLA Basic @BBL A1"],
+        filament_colors=["#ffffff"],
         bed_width=256.0,
         bed_depth=256.0,
         bed_height=256.0,
@@ -43,6 +44,22 @@ def test_credentials_never_returned(client):
     assert body["has_credentials"] is True
     assert "topsecret" not in created.text
     assert "printhost_apikey" not in body
+
+
+def test_create_printer_with_multiple_filament_slots(client):
+    created = client.post(
+        "/printers",
+        json=_printer_body(
+            vendor="Snapmaker",
+            machine_profile="Snapmaker U1 (0.4+0.6 nozzle)",
+            filament_profiles=["Generic PLA", "Generic PETG"],
+            filament_colors=["#ff0000", "#0000ff"],
+        ),
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["filament_profiles"] == ["Generic PLA", "Generic PETG"]
+    assert body["filament_colors"] == ["#ff0000", "#0000ff"]
 
 
 def test_material_profile_crud(client):
@@ -82,6 +99,20 @@ def test_rename_material_profile(client):
     body = resp.json()
     assert body["name"] == "PLA v2"
     assert body["quick_settings"] == {"layer_height": "0.2"}  # untouched
+
+
+def test_update_material_filament_slots(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
+
+    resp = client.put(
+        f"/printers/{printer_id}/materials/{material_id}",
+        json={"filament_profiles": ["A", "B"], "filament_colors": ["#111111", "#222222"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["filament_profiles"] == ["A", "B"]
+    assert body["filament_colors"] == ["#111111", "#222222"]
 
 
 def test_update_mode_overwrites_material_settings(client):

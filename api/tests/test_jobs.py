@@ -147,6 +147,44 @@ def test_gcode_download_falls_back_without_upload_metadata(client, monkeypatch):
     assert 'filename="plate_1.gcode"' in got.headers["content-disposition"]
 
 
+def test_gcode_download_targets_specific_plate(client, monkeypatch):
+    model_id = _upload_model(client)
+
+    def fake_run_slice(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Simulate a multi-plate output dir: an unrelated plate_1.gcode
+        # plus the plate that was actually requested. Without the
+        # plate-specific lookup, a blind glob could return either one.
+        (output_dir / "plate_1.gcode").write_text("; plate 1 (not requested)\n")
+        (output_dir / "plate_2.gcode").write_text("; plate 2 (requested)\n")
+        return SliceResult(
+            return_code=0,
+            result_json={"return_code": 0, "error_string": ""},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+
+    resp = client.post(
+        "/jobs",
+        json={
+            "model_id": model_id,
+            "printer_profile": "Generic Printer",
+            "process_profile": "0.20mm Standard",
+            "plate_index": 2,
+        },
+    )
+    job_id = resp.json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "succeeded"
+
+    got = client.get(f"/jobs/{job_id}/gcode")
+    assert got.status_code == 200
+    assert got.content == b"; plate 2 (requested)\n"
+
+
 def test_create_job_failure_path(client, monkeypatch):
     model_id = _upload_model(client)
 

@@ -49,6 +49,11 @@ class JobCreateRequest(BaseModel):
     process_profile: str
     filament_profiles: list[str] = Field(default_factory=list)
     setting_overrides: dict[str, Any] = Field(default_factory=dict)
+    # 1-based, mirrors OrcaSlicer's own --slice N syntax. None means "not a
+    # multi-plate .3mf" -- slice as today (--slice 0, all plates). Distinct
+    # from JobProgress.plate_index/plate_count below, which are populated
+    # from the --pipe progress stream (an output of slicing), not an input.
+    plate_index: int | None = None
 
 
 class JobProgress(BaseModel):
@@ -69,11 +74,24 @@ class JobRecord(BaseModel):
     process_profile: str
     filament_profiles: list[str]
     setting_overrides: dict[str, Any]
+    plate_index: int | None = None
     created_at: str
     updated_at: str
     progress: JobProgress | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class PlateInfo(BaseModel):
+    index: int
+    name: str | None = None
+    object_count: int | None = None
+    thumbnail: str | None = None  # in-zip path; None if not present/not a .3mf
+
+
+class ThreeMfInspection(BaseModel):
+    plates: list[PlateInfo]
+    extruder_indices: list[int] = Field(default_factory=list)
 
 
 class AuthStatus(BaseModel):
@@ -118,7 +136,11 @@ class MaterialProfileCreateRequest(BaseModel):
     quick_settings: dict[str, str] = Field(default_factory=dict)
     advanced_overrides: dict[str, str] = Field(default_factory=dict)
     process_profile: str | None = None
-    filament_profile: str | None = None
+    # One entry per physical extruder/AMS slot, index-aligned with
+    # filament_colors. None (vs. an empty list) means "this material profile
+    # doesn't touch filament choice", matching the old scalar's None.
+    filament_profiles: list[str] | None = None
+    filament_colors: list[str] | None = None  # "#rrggbb", UI label only
 
 
 class MaterialProfileUpdateRequest(BaseModel):
@@ -131,7 +153,8 @@ class MaterialProfileUpdateRequest(BaseModel):
     quick_settings: dict[str, str] | None = None
     advanced_overrides: dict[str, str] | None = None
     process_profile: str | None = None
-    filament_profile: str | None = None
+    filament_profiles: list[str] | None = None
+    filament_colors: list[str] | None = None
 
 
 class MaterialProfileRecord(BaseModel):
@@ -141,7 +164,8 @@ class MaterialProfileRecord(BaseModel):
     quick_settings: dict[str, str]
     advanced_overrides: dict[str, str]
     process_profile: str | None = None
-    filament_profile: str | None = None
+    filament_profiles: list[str] | None = None
+    filament_colors: list[str] | None = None
     created_at: str
 
 
@@ -150,7 +174,11 @@ class PrinterCreateRequest(BaseModel):
     vendor: str
     machine_profile: str
     process_profile: str
-    filament_profile: str
+    # One entry per physical extruder/AMS slot, index-aligned with
+    # filament_colors (e.g. Snapmaker U1 = several independent heads, Bambu
+    # X1C = several AMS slots feeding one nozzle -- same shape either way).
+    filament_profiles: list[str] = Field(default_factory=list)
+    filament_colors: list[str] = Field(default_factory=list)  # "#rrggbb", UI label only -- never sent to OrcaSlicer
     bed_width: float | None = None
     bed_depth: float | None = None
     bed_height: float | None = None
@@ -184,7 +212,8 @@ class PrinterRecord(BaseModel):
     vendor: str
     machine_profile: str
     process_profile: str
-    filament_profile: str
+    filament_profiles: list[str]
+    filament_colors: list[str]
     bed_width: float | None = None
     bed_depth: float | None = None
     bed_height: float | None = None

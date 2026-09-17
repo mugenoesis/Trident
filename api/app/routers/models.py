@@ -7,9 +7,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
+from .. import threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ModelUploadResponse
+from ..schemas import ModelUploadResponse, PlateInfo, ThreeMfInspection
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -71,9 +72,25 @@ async def upload_model(file: UploadFile, current: User = Depends(require_user)) 
         "owner_user_id": current.id,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
+    if suffix == ".3mf":
+        try:
+            inspection = threemf.inspect_3mf(dest)
+            meta["plates"] = [p.model_dump() for p in inspection.plates]
+            meta["extruder_indices"] = inspection.extruder_indices
+        except Exception:  # noqa: BLE001 - a parse bug must never fail the upload itself
+            pass
     _meta_path(model_id).write_text(json.dumps(meta))
 
     return ModelUploadResponse(model_id=model_id, filename=original_name)
+
+
+@router.get("/{model_id}/plates", response_model=ThreeMfInspection)
+def get_model_plates(model_id: str, current: User = Depends(require_user)) -> ThreeMfInspection:
+    resolve_model_path(model_id)  # 404s on unknown/invalid model_id
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    return resolve_model_plates(model_id)
 
 
 def resolve_model_path(model_id: str) -> Path:
@@ -129,6 +146,36 @@ def delete_model(model_id: str) -> None:
     for f in settings.models_dir.glob(f"{model_id}.*"):
         f.unlink(missing_ok=True)
     _meta_path(model_id).unlink(missing_ok=True)
+
+
+def resolve_model_plates(model_id: str) -> ThreeMfInspection:
+    """The model's parsed plate/material-slot info -- always returns a
+    shape, so callers never need a separate "is this even a 3mf" branch.
+
+    Fast path: the sidecar already has it (set at upload time). Otherwise,
+    for a .3mf uploaded before this feature shipped, parse it on the fly and
+    best-effort re-persist for next time. Anything else (non-3mf, or a .3mf
+    whose parse genuinely failed) gets a synthetic single implicit plate.
+    """
+    meta = _read_meta(model_id) or {}
+    if "plates" in meta:
+        return ThreeMfInspection(
+            plates=[PlateInfo(**p) for p in meta["plates"]],
+            extruder_indices=meta.get("extruder_indices", []),
+        )
+
+    model_path = resolve_model_path(model_id)
+    if model_path.suffix.lower() == ".3mf":
+        inspection = threemf.inspect_3mf(model_path)
+        try:
+            meta["plates"] = [p.model_dump() for p in inspection.plates]
+            meta["extruder_indices"] = inspection.extruder_indices
+            _meta_path(model_id).write_text(json.dumps(meta))
+        except OSError:
+            pass  # cache write is best-effort, not a source of truth
+        return inspection
+
+    return ThreeMfInspection(plates=[PlateInfo(index=1)], extruder_indices=[])
 
 
 def resolve_model_uploaded_at(model_id: str) -> datetime | None:

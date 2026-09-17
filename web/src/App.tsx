@@ -9,6 +9,7 @@ import {
   deletePrinter,
   duplicateMaterialProfile,
   getJob,
+  getModelPlates,
   getProfileDetail,
   getSettingsSchema,
   listJobs,
@@ -32,6 +33,7 @@ import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
+import PlatePicker from './components/PlatePicker'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
   QUICK_SETTING_KEYS,
@@ -53,6 +55,7 @@ import type {
   PrinterUpdateRequest,
   ProfileSummary,
   SettingDef,
+  ThreeMfInspection,
 } from './types'
 import { useAuth } from './useAuth'
 
@@ -75,7 +78,8 @@ function computeSliceSignature(
   modelId: string | null,
   printerName: string,
   processName: string,
-  filamentName: string,
+  effectiveFilamentProfiles: string[],
+  plateIndex: number | null,
   quickSettings: QuickSettingsValues,
   advancedOverrides: Record<string, string>,
 ): string {
@@ -83,10 +87,48 @@ function computeSliceSignature(
     modelId,
     printerName,
     processName,
-    filamentName,
+    effectiveFilamentProfiles,
+    plateIndex,
     quickSettings: sortedEntries(quickSettings as unknown as Record<string, unknown>),
     advancedOverrides: sortedEntries(advancedOverrides),
   })
+}
+
+interface FilamentSlot {
+  profile: string
+  color: string
+}
+
+// Cycled by index when a fresh slot is added (picking a printer with more
+// heads/AMS slots than the previous one, or a brand-new upload) so slots
+// aren't all identically colored -- purely a UI label, never sent to
+// OrcaSlicer.
+const DEFAULT_SLOT_COLORS = ['#e8e8e8', '#ff3b30', '#0a84ff', '#ffd60a', '#34c759', '#af52de']
+
+function defaultSlotColor(index: number): string {
+  return DEFAULT_SLOT_COLORS[index % DEFAULT_SLOT_COLORS.length]
+}
+
+// One slot per physical extruder/AMS slot -- length driven by the selected
+// machine profile's nozzle_diameter array (see handlePrinterChange below).
+// All fresh slots default to the same profile; the user can then pick
+// something different per slot.
+function buildFilamentSlots(count: number, defaultProfile: string): FilamentSlot[] {
+  return Array.from({ length: Math.max(1, count) }, (_, i) => ({
+    profile: defaultProfile,
+    color: defaultSlotColor(i),
+  }))
+}
+
+// nozzle_diameter's array length is the reliable signal for physical
+// extruder/AMS-slot count (confirmed against the vendored OrcaSlicer
+// catalog: Bambu X1C -- one nozzle behind an AMS -- has length 1; Snapmaker
+// U1/Dual, genuine independent extruders, have length 2+). Default to 1 for
+// any machine profile that doesn't have it, isn't an array, or is empty --
+// never block on an unrecognized shape.
+function slotCountFromMachineData(data: Record<string, unknown> | undefined): number {
+  const nozzleDiameter = data?.nozzle_diameter
+  return Array.isArray(nozzleDiameter) && nozzleDiameter.length > 0 ? nozzleDiameter.length : 1
 }
 
 export default function App() {
@@ -148,8 +190,23 @@ function MainApp({
   const [vendor, setVendor] = useState('')
   const [printerName, setPrinterName] = useState('')
   const [processName, setProcessName] = useState('')
-  const [filamentName, setFilamentName] = useState('')
+  const [filamentSlots, setFilamentSlots] = useState<FilamentSlot[]>(buildFilamentSlots(1, ''))
   const [bedSize, setBedSize] = useState<BedSize | null>(null)
+
+  // Premade multi-plate/multi-material .3mf support: parsed once per upload
+  // (see handleFileSelected), always present (a synthetic single implicit
+  // plate for non-3mf uploads) so the plate picker/materials-source toggle
+  // below can render unconditionally off its shape.
+  const [plateInfo, setPlateInfo] = useState<ThreeMfInspection | null>(null)
+  const [plateIndex, setPlateIndex] = useState<number | null>(null)
+  // 'slots': send the configured filamentSlots to OrcaSlicer (remaps the
+  // file's own per-object assignments onto them when 2+ distinct profiles
+  // are given). 'embedded': send none at all, so the file's own baked-in
+  // per-slot materials are used exactly as authored. Passing exactly one
+  // profile against a genuinely multi-material file silently flattens it
+  // (see the footgun warning below) -- this toggle exists specifically to
+  // make that an explicit choice rather than an accident.
+  const [materialSource, setMaterialSource] = useState<'slots' | 'embedded'>('slots')
 
   const [scaleToastDismissed, setScaleToastDismissed] = useState(false)
   const [scaling, setScaling] = useState(false)
@@ -267,7 +324,14 @@ function MainApp({
     setQuickSettings((prev) => ({ ...prev, ...material.quick_settings }))
     setAdvancedOverrides(material.advanced_overrides)
     if (material.process_profile) setProcessName(material.process_profile)
-    if (material.filament_profile) setFilamentName(material.filament_profile)
+    if (material.filament_profiles && material.filament_profiles.length > 0) {
+      setFilamentSlots(
+        material.filament_profiles.map((profile, i) => ({
+          profile,
+          color: material.filament_colors?.[i] ?? defaultSlotColor(i),
+        })),
+      )
+    }
     setViewMode('model')
   }, [])
 
@@ -301,10 +365,21 @@ function MainApp({
     setUploadStatus('uploading')
     setScaleToastDismissed(false)
     setViewMode('model')
+    setPlateInfo(null)
+    setPlateIndex(null)
+    setMaterialSource('slots')
     uploadModel(selected)
       .then((res) => {
         setModelId(res.model_id)
         setUploadStatus('done')
+        // Always fetch (even for non-3mf uploads): the endpoint always
+        // returns a shape (a synthetic single implicit plate for anything
+        // that isn't a .3mf with real plate metadata), so the plate
+        // picker/materials-source toggle never need a separate "is this
+        // even a 3mf" branch.
+        getModelPlates(res.model_id)
+          .then(setPlateInfo)
+          .catch(() => setPlateInfo(null))
       })
       .catch(() => setUploadStatus('error'))
   }, [])
@@ -344,7 +419,7 @@ function MainApp({
     (name: string) => {
       setPrinterName(name)
       setProcessName('')
-      setFilamentName('')
+      setFilamentSlots(buildFilamentSlots(1, ''))
       setBedSize(null)
       setScaleToastDismissed(false)
       setSelectedPrinterId(null)
@@ -403,12 +478,12 @@ function MainApp({
                 ? defaultFilament[0]
                 : firstOfKind('filament')
           setProcessName(process)
-          setFilamentName(filament)
+          setFilamentSlots(buildFilamentSlots(slotCountFromMachineData(detail.data), filament))
           setBedSize(parseBedSize(detail.data))
         })
         .catch(() => {
           setProcessName(firstOfKind('process'))
-          setFilamentName(firstOfKind('filament'))
+          setFilamentSlots(buildFilamentSlots(1, firstOfKind('filament')))
         })
     },
     [vendor, profiles],
@@ -418,7 +493,7 @@ function MainApp({
     setVendor(v)
     setPrinterName('')
     setProcessName('')
-    setFilamentName('')
+    setFilamentSlots(buildFilamentSlots(1, ''))
     setBedSize(null)
     setSelectedPrinterId(null)
     setViewMode('model')
@@ -432,8 +507,8 @@ function MainApp({
     setViewMode('model')
   }, [])
 
-  const handleFilamentChange = useCallback((name: string) => {
-    setFilamentName(name)
+  const handleFilamentSlotChange = useCallback((index: number, patch: Partial<FilamentSlot>) => {
+    setFilamentSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)))
     setViewMode('model')
   }, [])
 
@@ -463,7 +538,14 @@ function MainApp({
     setVendor(printer.vendor)
     setPrinterName(printer.machine_profile)
     setProcessName(printer.process_profile)
-    setFilamentName(printer.filament_profile)
+    setFilamentSlots(
+      printer.filament_profiles.length > 0
+        ? printer.filament_profiles.map((profile, i) => ({
+            profile,
+            color: printer.filament_colors[i] ?? defaultSlotColor(i),
+          }))
+        : buildFilamentSlots(1, ''),
+    )
     setBedSize(
       printer.bed_width != null && printer.bed_depth != null && printer.bed_height != null
         ? { width: printer.bed_width, depth: printer.bed_depth, height: printer.bed_height }
@@ -480,7 +562,8 @@ function MainApp({
         vendor,
         machine_profile: printerName,
         process_profile: processName,
-        filament_profile: filamentName,
+        filament_profiles: filamentSlots.map((s) => s.profile),
+        filament_colors: filamentSlots.map((s) => s.color),
         bed_width: bedSize?.width ?? null,
         bed_depth: bedSize?.depth ?? null,
         bed_height: bedSize?.height ?? null,
@@ -490,7 +573,7 @@ function MainApp({
         setSelectedPrinterId(printer.id)
       })
     },
-    [vendor, printerName, processName, filamentName, bedSize],
+    [vendor, printerName, processName, filamentSlots, bedSize],
   )
 
   const handleUpdatePrinter = useCallback((id: string, body: PrinterUpdateRequest) => {
@@ -547,13 +630,14 @@ function MainApp({
         quick_settings: quickSettings as unknown as Record<string, string>,
         advanced_overrides: advancedOverrides,
         process_profile: processName || null,
-        filament_profile: filamentName || null,
+        filament_profiles: filamentSlots.map((s) => s.profile),
+        filament_colors: filamentSlots.map((s) => s.color),
       }).then((material) => {
         setMaterials((prev) => [...prev, material])
         setSelectedMaterialId(material.id)
       })
     },
-    [selectedPrinterId, quickSettings, advancedOverrides, processName, filamentName],
+    [selectedPrinterId, quickSettings, advancedOverrides, processName, filamentSlots],
   )
 
   const handleDeleteMaterial = useCallback(
@@ -581,11 +665,12 @@ function MainApp({
       quick_settings: quickSettings as unknown as Record<string, string>,
       advanced_overrides: advancedOverrides,
       process_profile: processName || null,
-      filament_profile: filamentName || null,
+      filament_profiles: filamentSlots.map((s) => s.profile),
+      filament_colors: filamentSlots.map((s) => s.color),
     }).then((material) => {
       setMaterials((prev) => prev.map((m) => (m.id === material.id ? material : m)))
     })
-  }, [selectedPrinterId, selectedMaterialId, quickSettings, advancedOverrides, processName, filamentName])
+  }, [selectedPrinterId, selectedMaterialId, quickSettings, advancedOverrides, processName, filamentSlots])
 
   const handleRenameMaterial = useCallback(
     (id: string, name: string) => {
@@ -634,17 +719,50 @@ function MainApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentJob?.id, currentJob?.status])
 
+  // 'embedded' means "respect this .3mf's own baked-in per-slot materials
+  // as authored" -- send none at all (cli_runner.py already treats an empty
+  // list as "omit --load-filaments"). Otherwise send the configured slots;
+  // when the file is genuinely multi-material (extruder_indices.length > 1)
+  // this needs 2+ distinct profiles to avoid OrcaSlicer's collapse-to-one-
+  // material behavior -- see the footgun warning below.
+  const effectiveFilamentProfiles = useMemo(
+    () => (materialSource === 'embedded' ? [] : filamentSlots.map((s) => s.profile)),
+    [materialSource, filamentSlots],
+  )
+
+  const showMaterialSourceToggle = (plateInfo?.extruder_indices.length ?? 0) > 0
+  const showMultiMaterialFootgunWarning =
+    (plateInfo?.extruder_indices.length ?? 0) > 1 && effectiveFilamentProfiles.length === 1
+  const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1
+
   const currentSignature = useMemo(
-    () => computeSliceSignature(modelId, printerName, processName, filamentName, quickSettings, advancedOverrides),
-    [modelId, printerName, processName, filamentName, quickSettings, advancedOverrides],
+    () =>
+      computeSliceSignature(
+        modelId,
+        printerName,
+        processName,
+        effectiveFilamentProfiles,
+        plateIndex,
+        quickSettings,
+        advancedOverrides,
+      ),
+    [modelId, printerName, processName, effectiveFilamentProfiles, plateIndex, quickSettings, advancedOverrides],
   )
   // Only a *successful* prior slice blocks re-slicing -- a failed job with
   // unchanged settings should still be retryable (e.g. a transient error).
   const alreadySliced = currentJob?.status === 'succeeded' && lastSlicedSignature === currentSignature
-  const canSlice = Boolean(modelId && printerName && processName && filamentName) && !alreadySliced
+  const filamentSlotsFilled = filamentSlots.every((s) => s.profile)
+  // A multi-plate file requires an explicit pick before slicing is enabled
+  // -- there's no good "slice all of them" default once a specific plate
+  // picker exists (see plan: pre-slice picker, not slice-everything).
+  const plateChosenIfNeeded = !showPlatePicker || plateIndex !== null
+  const canSlice =
+    Boolean(modelId && printerName && processName && filamentSlotsFilled) &&
+    plateChosenIfNeeded &&
+    !alreadySliced
 
   const handleSlice = useCallback(() => {
-    if (!modelId || !printerName || !processName || !filamentName) return
+    if (!modelId || !printerName || !processName || !filamentSlotsFilled || !plateChosenIfNeeded) return
     setSlicing(true)
     setViewMode('model')
     setLastSlicedSignature(currentSignature)
@@ -666,15 +784,27 @@ function MainApp({
       model_id: modelId,
       printer_profile: printerName,
       process_profile: processName,
-      filament_profiles: [filamentName],
+      filament_profiles: effectiveFilamentProfiles,
       setting_overrides: overrides,
+      plate_index: plateIndex ?? undefined,
     })
       .then(setCurrentJob)
       .catch((err: Error) => {
         setSlicing(false)
         alert(`Failed to start slicing job: ${err.message}`)
       })
-  }, [modelId, printerName, processName, filamentName, quickSettings, advancedOverrides, currentSignature])
+  }, [
+    modelId,
+    printerName,
+    processName,
+    filamentSlotsFilled,
+    plateChosenIfNeeded,
+    effectiveFilamentProfiles,
+    plateIndex,
+    quickSettings,
+    advancedOverrides,
+    currentSignature,
+  ])
 
   return (
     <div className="app">
@@ -723,6 +853,9 @@ function MainApp({
                   <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
                 </>
               )}
+              {showPlatePicker && plateInfo && (
+                <PlatePicker plates={plateInfo.plates} plateIndex={plateIndex} onChange={setPlateIndex} />
+              )}
             </>
           )}
         </section>
@@ -733,7 +866,7 @@ function MainApp({
             printers={printers}
             selectedPrinterId={selectedPrinterId}
             onSelectPrinter={applySavedPrinter}
-            canSaveCurrent={Boolean(vendor && printerName && processName && filamentName)}
+            canSaveCurrent={Boolean(vendor && printerName && processName && filamentSlotsFilled)}
             onSavePrinter={handleSavePrinter}
             onUpdatePrinter={handleUpdatePrinter}
             onDeletePrinter={handleDeletePrinter}
@@ -770,12 +903,54 @@ function MainApp({
             onToggle={(e) => setQuickSettingsOpen(e.currentTarget.open)}
           >
             <summary>Quick settings{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
-            <FilamentSelect
-              profiles={profiles}
-              vendor={vendor}
-              filamentName={filamentName}
-              onFilamentChange={handleFilamentChange}
-            />
+            {filamentSlots.map((slot, i) => (
+              <div className="filament-slot" key={i}>
+                <FilamentSelect
+                  profiles={profiles}
+                  vendor={vendor}
+                  filamentName={slot.profile}
+                  onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
+                  label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
+                />
+                <label className="filament-slot-color">
+                  <span>Color</span>
+                  <input
+                    type="color"
+                    value={slot.color}
+                    onChange={(e) => handleFilamentSlotChange(i, { color: e.target.value })}
+                  />
+                </label>
+              </div>
+            ))}
+            {showMaterialSourceToggle && (
+              <div className="field-group material-source-toggle">
+                <span>Materials for this file</span>
+                <div className="segmented-control">
+                  <button
+                    type="button"
+                    className={materialSource === 'slots' ? 'active' : ''}
+                    onClick={() => setMaterialSource('slots')}
+                  >
+                    Use my slot materials
+                  </button>
+                  <button
+                    type="button"
+                    className={materialSource === 'embedded' ? 'active' : ''}
+                    onClick={() => setMaterialSource('embedded')}
+                  >
+                    Use this file&rsquo;s built-in materials
+                  </button>
+                </div>
+              </div>
+            )}
+            {showMultiMaterialFootgunWarning && (
+              <div className="banner-warning">
+                This file uses multiple materials internally. Slicing with a single material profile
+                will flatten them onto one filament and disable the wipe tower. Switch to &ldquo;Use
+                this file&rsquo;s built-in materials&rdquo;, or configure more than one material slot,
+                to keep them separate.
+              </div>
+            )}
             <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
           </details>
 

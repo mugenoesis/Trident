@@ -102,6 +102,7 @@ def run_slice(
     process_profile: str,
     filament_profiles: list[str],
     setting_overrides: dict[str, Any],
+    plate_index: int | None = None,
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
 ) -> SliceResult:
@@ -125,7 +126,10 @@ def run_slice(
     cmd = [
         settings.orcaslicer_bin,
         "--slice",
-        "0",  # slice all plates; see --help-fff for plate selection syntax
+        # 0 = slice all plates; N = slice only plate N (--help-fff). Driven
+        # by the pre-slice plate picker for multi-plate .3mf uploads -- None
+        # means "not applicable", same as today's always-slice-everything.
+        str(plate_index) if plate_index is not None else "0",
         "--datadir",
         str(settings.orcaslicer_datadir),
         "--outputdir",

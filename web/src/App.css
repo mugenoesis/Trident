@@ -686,3 +686,75 @@
 .danger-button:hover:not(:disabled) {
   filter: brightness(1.1);
 }
+
+.filament-slot {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.filament-slot > .field-group {
+  flex: 1;
+}
+
+.filament-slot-color {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.filament-slot-color input[type='color'] {
+  width: 2.4rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: none;
+}
+
+.material-source-toggle .segmented-control {
+  display: flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.material-source-toggle .segmented-control button {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.material-source-toggle .segmented-control button.active {
+  background: var(--accent);
+  color: white;
+}
+
+.banner-warning {
+  background: #3a301a;
+  color: var(--warning);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.plate-picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.plate-picker-option {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem !important;
+  color: var(--text) !important;
+}

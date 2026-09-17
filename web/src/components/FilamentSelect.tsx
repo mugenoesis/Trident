@@ -6,6 +6,9 @@ interface FilamentSelectProps {
   vendor: string
   filamentName: string
   onFilamentChange: (name: string) => void
+  // Overridable so App.tsx can label multiple instances "Slot 1 material",
+  // "Slot 2 material", etc. for multi-extruder/AMS printers.
+  label?: string
 }
 
 // Split out of PrinterSelect.tsx: material/filament choice is something you
@@ -14,7 +17,13 @@ interface FilamentSelectProps {
 // collapses once a saved printer is picked -- this lives in "Quick
 // settings" instead, which is exactly where a per-job tweak like this
 // belongs.
-export default function FilamentSelect({ profiles, vendor, filamentName, onFilamentChange }: FilamentSelectProps) {
+export default function FilamentSelect({
+  profiles,
+  vendor,
+  filamentName,
+  onFilamentChange,
+  label = 'Material',
+}: FilamentSelectProps) {
   const [filamentQuery, setFilamentQuery] = useState('')
 
   const filaments = useMemo(() => {
@@ -47,7 +56,7 @@ export default function FilamentSelect({ profiles, vendor, filamentName, onFilam
   return (
     <div className="field-group">
       <label>
-        Material
+        {label}
         <input
           type="text"
           placeholder={`Search ${filaments.length ? '' : 'materials'}…`}

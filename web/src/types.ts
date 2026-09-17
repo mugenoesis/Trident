@@ -51,6 +51,7 @@ export interface JobRecord {
   process_profile: string
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
+  plate_index: number | null
   created_at: string
   updated_at: string
   progress: JobProgress | null
@@ -64,6 +65,19 @@ export interface JobCreateRequest {
   process_profile: string
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
+  plate_index?: number | null
+}
+
+export interface PlateInfo {
+  index: number
+  name: string | null
+  object_count: number | null
+  thumbnail: string | null
+}
+
+export interface ThreeMfInspection {
+  plates: PlateInfo[]
+  extruder_indices: number[]
 }
 
 // "unset": fresh install, no mode chosen yet -- behaves like "single"
@@ -100,7 +114,11 @@ export interface PrinterRecord extends PrinterConnection {
   vendor: string
   machine_profile: string
   process_profile: string
-  filament_profile: string
+  // One entry per physical extruder/AMS slot, index-aligned with
+  // filament_colors (e.g. Snapmaker U1's several independent heads, or
+  // Bambu X1C's several AMS slots feeding one nozzle).
+  filament_profiles: string[]
+  filament_colors: string[] // "#rrggbb", UI label only -- never sent to OrcaSlicer
   bed_width: number | null
   bed_depth: number | null
   bed_height: number | null
@@ -113,7 +131,8 @@ export interface PrinterCreateRequest extends PrinterConnection {
   vendor: string
   machine_profile: string
   process_profile: string
-  filament_profile: string
+  filament_profiles: string[]
+  filament_colors: string[]
   bed_width: number | null
   bed_depth: number | null
   bed_height: number | null
@@ -139,7 +158,8 @@ export interface MaterialProfileRecord {
   quick_settings: Record<string, string>
   advanced_overrides: Record<string, string>
   process_profile: string | null
-  filament_profile: string | null
+  filament_profiles: string[] | null
+  filament_colors: string[] | null
   created_at: string
 }
 
@@ -148,7 +168,8 @@ export interface MaterialProfileCreateRequest {
   quick_settings: Record<string, string>
   advanced_overrides: Record<string, string>
   process_profile: string | null
-  filament_profile: string | null
+  filament_profiles: string[] | null
+  filament_colors: string[] | null
 }
 
 // A key left out entirely means "don't change" (see api/app/schemas.py's
@@ -159,5 +180,6 @@ export interface MaterialProfileUpdateRequest {
   quick_settings?: Record<string, string>
   advanced_overrides?: Record<string, string>
   process_profile?: string | null
-  filament_profile?: string | null
+  filament_profiles?: string[] | null
+  filament_colors?: string[] | null
 }

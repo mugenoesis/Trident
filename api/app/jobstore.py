@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 """
 
+# 1-based, mirrors --slice N. NULL means "not a multi-plate .3mf", slice as
+# today (--slice 0, all plates).
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +58,8 @@ class JobStore:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
             if "user_id" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
+            if "plate_index" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN plate_index INTEGER")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -75,6 +80,7 @@ class JobStore:
         process_profile: str,
         filament_profiles: list[str],
         setting_overrides: dict[str, Any],
+        plate_index: int | None = None,
     ) -> JobRecord:
         job_id = uuid.uuid4().hex
         now = _now()
@@ -82,9 +88,9 @@ class JobStore:
             conn.execute(
                 """INSERT INTO jobs (
                     id, user_id, status, model_id, printer_profile, process_profile,
-                    filament_profiles, setting_overrides, created_at, updated_at,
+                    filament_profiles, setting_overrides, plate_index, created_at, updated_at,
                     progress, result, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
                 (
                     job_id,
                     user_id,
@@ -94,6 +100,7 @@ class JobStore:
                     process_profile,
                     json.dumps(filament_profiles),
                     json.dumps(setting_overrides),
+                    plate_index,
                     now,
                     now,
                 ),
@@ -183,6 +190,7 @@ class JobStore:
             process_profile=row["process_profile"],
             filament_profiles=json.loads(row["filament_profiles"]),
             setting_overrides=json.loads(row["setting_overrides"]),
+            plate_index=row["plate_index"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             progress=JobProgress.model_validate_json(progress_raw) if progress_raw else None,

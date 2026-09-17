@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS material_profiles (
 );
 """
 
+# filament_profile (both tables) is superseded by filament_profiles/
+# filament_colors (JSON-encoded arrays, one entry per physical extruder/AMS
+# slot) but kept as a physical column -- SQLite DROP COLUMN support varies
+# by version and there's no reason to fight it. printers.create_printer()
+# still writes it (satisfying its NOT NULL) for schema compatibility only;
+# nothing reads it back once the migration below has run.
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -79,6 +86,37 @@ class PrinterStore:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            self._migrate_filament_arrays(conn)
+
+    @staticmethod
+    def _migrate_filament_arrays(conn: sqlite3.Connection) -> None:
+        printer_columns = {row["name"] for row in conn.execute("PRAGMA table_info(printers)")}
+        if "filament_profiles" not in printer_columns:
+            conn.execute("ALTER TABLE printers ADD COLUMN filament_profiles TEXT")
+            conn.execute("ALTER TABLE printers ADD COLUMN filament_colors TEXT")
+            for row in conn.execute("SELECT id, filament_profile FROM printers"):
+                conn.execute(
+                    "UPDATE printers SET filament_profiles = ?, filament_colors = ? WHERE id = ?",
+                    (json.dumps([row["filament_profile"]]), json.dumps(["#ffffff"]), row["id"]),
+                )
+
+        material_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(material_profiles)")
+        }
+        if "filament_profiles" not in material_columns:
+            conn.execute("ALTER TABLE material_profiles ADD COLUMN filament_profiles TEXT")
+            conn.execute("ALTER TABLE material_profiles ADD COLUMN filament_colors TEXT")
+            for row in conn.execute("SELECT id, filament_profile FROM material_profiles"):
+                if row["filament_profile"] is not None:
+                    profiles_json = json.dumps([row["filament_profile"]])
+                    colors_json = json.dumps(["#ffffff"])
+                else:
+                    profiles_json = None
+                    colors_json = None
+                conn.execute(
+                    "UPDATE material_profiles SET filament_profiles = ?, filament_colors = ? WHERE id = ?",
+                    (profiles_json, colors_json, row["id"]),
+                )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -95,14 +133,17 @@ class PrinterStore:
     def create_printer(self, *, user_id: str, **fields: Any) -> PrinterRecord:
         printer_id = uuid.uuid4().hex
         now = _now()
+        filament_profiles = fields.get("filament_profiles") or []
+        filament_colors = fields.get("filament_colors") or []
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO printers (
                     id, user_id, name, vendor, machine_profile, process_profile,
-                    filament_profile, bed_width, bed_depth, bed_height, host_type,
+                    filament_profile, filament_profiles, filament_colors,
+                    bed_width, bed_depth, bed_height, host_type,
                     print_host, printhost_apikey, printhost_user, printhost_password,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     printer_id,
                     user_id,
@@ -110,7 +151,9 @@ class PrinterStore:
                     fields["vendor"],
                     fields["machine_profile"],
                     fields["process_profile"],
-                    fields["filament_profile"],
+                    filament_profiles[0] if filament_profiles else "",
+                    json.dumps(filament_profiles),
+                    json.dumps(filament_colors),
                     fields.get("bed_width"),
                     fields.get("bed_depth"),
                     fields.get("bed_height"),
@@ -196,7 +239,8 @@ class PrinterStore:
             vendor=row["vendor"],
             machine_profile=row["machine_profile"],
             process_profile=row["process_profile"],
-            filament_profile=row["filament_profile"],
+            filament_profiles=json.loads(row["filament_profiles"] or "[]"),
+            filament_colors=json.loads(row["filament_colors"] or "[]"),
             bed_width=row["bed_width"],
             bed_depth=row["bed_depth"],
             bed_height=row["bed_height"],
@@ -219,16 +263,21 @@ class PrinterStore:
         quick_settings: dict[str, str],
         advanced_overrides: dict[str, str],
         process_profile: str | None,
-        filament_profile: str | None,
+        filament_profiles: list[str] | None = None,
+        filament_colors: list[str] | None = None,
     ) -> MaterialProfileRecord:
         material_id = uuid.uuid4().hex
         now = _now()
+        # A material profile's legacy scalar filament_profile column is kept
+        # physically in place (see the migration note near _SCHEMA) but is
+        # never written by new code -- filament_profiles/filament_colors are
+        # the only source of truth going forward.
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO material_profiles (
                     id, printer_id, user_id, name, quick_settings, advanced_overrides,
-                    process_profile, filament_profile, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    process_profile, filament_profiles, filament_colors, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     material_id,
                     printer_id,
@@ -237,7 +286,8 @@ class PrinterStore:
                     json.dumps(quick_settings),
                     json.dumps(advanced_overrides),
                     process_profile,
-                    filament_profile,
+                    json.dumps(filament_profiles) if filament_profiles is not None else None,
+                    json.dumps(filament_colors) if filament_colors is not None else None,
                     now,
                 ),
             )
@@ -263,7 +313,14 @@ class PrinterStore:
             conn.execute("DELETE FROM material_profiles WHERE id = ?", (material_id,))
 
     _MATERIAL_UPDATABLE_COLUMNS = frozenset(
-        {"name", "quick_settings", "advanced_overrides", "process_profile", "filament_profile"}
+        {
+            "name",
+            "quick_settings",
+            "advanced_overrides",
+            "process_profile",
+            "filament_profiles",
+            "filament_colors",
+        }
     )
 
     def update_material(self, material_id: str, **fields: Any) -> MaterialProfileRecord | None:
@@ -272,6 +329,12 @@ class PrinterStore:
             updates["quick_settings"] = json.dumps(updates["quick_settings"])
         if "advanced_overrides" in updates:
             updates["advanced_overrides"] = json.dumps(updates["advanced_overrides"])
+        if "filament_profiles" in updates:
+            v = updates["filament_profiles"]
+            updates["filament_profiles"] = json.dumps(v) if v is not None else None
+        if "filament_colors" in updates:
+            v = updates["filament_colors"]
+            updates["filament_colors"] = json.dumps(v) if v is not None else None
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             with self._connect() as conn:
@@ -293,11 +356,14 @@ class PrinterStore:
             quick_settings=original.quick_settings,
             advanced_overrides=original.advanced_overrides,
             process_profile=original.process_profile,
-            filament_profile=original.filament_profile,
+            filament_profiles=original.filament_profiles,
+            filament_colors=original.filament_colors,
         )
 
     @staticmethod
     def _row_to_material(row: sqlite3.Row) -> MaterialProfileRecord:
+        filament_profiles = row["filament_profiles"]
+        filament_colors = row["filament_colors"]
         return MaterialProfileRecord(
             id=row["id"],
             printer_id=row["printer_id"],
@@ -305,7 +371,8 @@ class PrinterStore:
             quick_settings=json.loads(row["quick_settings"]),
             advanced_overrides=json.loads(row["advanced_overrides"]),
             process_profile=row["process_profile"],
-            filament_profile=row["filament_profile"],
+            filament_profiles=json.loads(filament_profiles) if filament_profiles is not None else None,
+            filament_colors=json.loads(filament_colors) if filament_colors is not None else None,
             created_at=row["created_at"],
         )
 

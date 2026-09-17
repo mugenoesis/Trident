@@ -49,6 +49,35 @@ def test_progress_and_finish(tmp_path: Path):
     assert done.result == {"return_code": 0}
 
 
+def test_plate_index_defaults_to_none(tmp_path: Path):
+    db = JobStore(tmp_path / "jobs.sqlite3")
+    job = db.create(
+        user_id="local",
+        model_id="abc123",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
+    )
+    assert job.plate_index is None
+    assert db.get(job.id).plate_index is None
+
+
+def test_plate_index_roundtrip(tmp_path: Path):
+    db = JobStore(tmp_path / "jobs.sqlite3")
+    job = db.create(
+        user_id="local",
+        model_id="abc123",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
+        plate_index=2,
+    )
+    assert job.plate_index == 2
+    assert db.get(job.id).plate_index == 2
+
+
 def test_get_missing_returns_none(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     assert db.get("does-not-exist") is None

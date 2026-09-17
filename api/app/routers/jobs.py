@@ -32,6 +32,7 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
             process_profile=request.process_profile,
             filament_profiles=request.filament_profiles,
             setting_overrides=request.setting_overrides,
+            plate_index=request.plate_index,
             on_progress=lambda p: store.update_progress(job_id, p),
         )
     except Exception as exc:  # noqa: BLE001 - report to job record, don't crash the worker
@@ -76,6 +77,7 @@ def create_job(
         process_profile=request.process_profile,
         filament_profiles=request.filament_profiles,
         setting_overrides=request.setting_overrides,
+        plate_index=request.plate_index,
     )
     background_tasks.add_task(_run_job, job.id, model_path, request)
     return job
@@ -101,7 +103,21 @@ def get_job(job_id: str, current: User = Depends(require_user)) -> JobRecord:
 def resolve_job_gcode_path(job_id: str) -> Path:
     """The on-disk sliced gcode file for a job -- shared by the download
     route below and the send-to-printer route (routers/printers.py), which
-    needs the same file to actually upload it."""
+    needs the same file to actually upload it.
+
+    When the job requested a specific plate, OrcaSlicer names its output
+    plate_{plate_index}.gcode (confirmed: --slice N and the resulting
+    plate_N.gcode share the same 1-based N) -- prefer that exact file so a
+    job never returns some other plate's output by glob-order luck. Falls
+    through to the glob for every job that didn't request a specific plate
+    (including all jobs predating plate_index), or if the specific file
+    isn't there yet (still slicing) -- same "not ready yet" 404 as today.
+    """
+    job = store.get(job_id)
+    if job is not None and job.plate_index is not None:
+        specific = _job_output_dir(job_id) / f"plate_{job.plate_index}.gcode"
+        if specific.is_file():
+            return specific
     matches = list(_job_output_dir(job_id).glob("*.gcode"))
     if not matches:
         raise HTTPException(status_code=404, detail="No gcode produced (yet) for this job")
@@ -148,7 +164,11 @@ def delete_job(job_id: str, current: User = Depends(require_user)) -> dict[str, 
 
 @router.get("/{job_id}/thumbnail")
 def get_job_thumbnail(job_id: str, current: User = Depends(require_user)) -> FileResponse:
-    _get_owned_job(job_id, current)
+    job = _get_owned_job(job_id, current)
+    if job.plate_index is not None:
+        specific = _job_output_dir(job_id) / f"plate_{job.plate_index}.png"
+        if specific.is_file():
+            return FileResponse(specific, media_type="image/png", filename=specific.name)
     matches = list(_job_output_dir(job_id).glob("*.png"))
     if not matches:
         raise HTTPException(status_code=404, detail="No thumbnail produced (yet) for this job")

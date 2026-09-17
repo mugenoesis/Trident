@@ -13,6 +13,7 @@ import type {
   ProfileDetail,
   ProfileSummary,
   SettingsSchema,
+  ThreeMfInspection,
 } from './types'
 
 // In production the built frontend is served by the same FastAPI app
@@ -63,6 +64,10 @@ export async function uploadModel(file: File): Promise<ModelUploadResponse> {
   const form = new FormData()
   form.append('file', file)
   return request('/models', { method: 'POST', body: form })
+}
+
+export function getModelPlates(modelId: string): Promise<ThreeMfInspection> {
+  return request(`/models/${encodeURIComponent(modelId)}/plates`)
 }
 
 export function createJob(req: JobCreateRequest): Promise<JobRecord> {
