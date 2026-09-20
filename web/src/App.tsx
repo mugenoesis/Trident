@@ -277,6 +277,27 @@ function MainApp({
   // above) -- used at slice time to work around a real catalog bug where a
   // mixed-diameter toolchanger's own process profile fails validation.
   const [nozzleDiameters, setNozzleDiameters] = useState<number[]>([])
+  // Some catalog toolchanger profiles (confirmed: Snapmaker U1 "0.4+0.6
+  // nozzle") assume a specific mix of physical nozzle sizes across heads
+  // that not everyone's real machine matches -- e.g. all 4 heads actually
+  // fitted with 0.4mm nozzles, not 2x0.4mm + 2x0.6mm. Rather than picking a
+  // less-capable single-nozzle profile (losing multi-material entirely),
+  // this lets the user correct nozzle_diameter to their real, uniform size
+  // at slice time -- confirmed via direct CLI testing that overriding it
+  // (e.g. --nozzle-diameter="0.4;0.4;0.4;0.4") slices correctly, since the
+  // machine's own base template already supports a uniform-diameter
+  // configuration; the catalog leaf profile just picked one specific real
+  // hardware kit as its default. Empty means "don't override".
+  const [nozzleDiameterOverride, setNozzleDiameterOverride] = useState('')
+  const mixedNozzleDiameters = new Set(nozzleDiameters).size > 1
+
+  // Clears whenever the underlying machine's own nozzle_diameter data
+  // changes (i.e. whenever the printer/vendor selection changes) -- an
+  // override for one machine's mismatch shouldn't silently carry over to
+  // a different one.
+  useEffect(() => {
+    setNozzleDiameterOverride('')
+  }, [nozzleDiameters])
 
   // Premade multi-plate/multi-material .3mf support: parsed once per upload
   // (see handleFileSelected), always present (a synthetic single implicit
@@ -955,16 +976,33 @@ function MainApp({
       overrides.support_type = quickSettings.support_type
       overrides.support_buildplate_only = quickSettings.support_buildplate_only
     }
-    // Confirmed via direct CLI testing: a mixed-diameter toolchanger's own
-    // bundled process profile can fail slicing outright ("Bridge line
-    // width must not exceed nozzle diameter") because its default
-    // bridge_line_width was sized for its smaller nozzle but validated
-    // against its largest -- clamp to the smallest configured nozzle
-    // whenever there's genuine diameter variation, unless the user has
-    // already set this explicitly via Advanced settings.
-    const uniqueNozzleDiameters = new Set(nozzleDiameters)
-    if (uniqueNozzleDiameters.size > 1 && !('bridge_line_width' in advancedOverrides)) {
-      overrides.bridge_line_width = String(Math.min(...nozzleDiameters))
+    const parsedNozzleOverride = Number(nozzleDiameterOverride)
+    const hasNozzleOverride =
+      nozzleDiameterOverride.trim() !== '' && Number.isFinite(parsedNozzleOverride) && parsedNozzleOverride > 0
+    if (hasNozzleOverride) {
+      // The user has confirmed their real, uniform nozzle size -- correct
+      // every head to match (confirmed via direct CLI testing this slices
+      // correctly: the machine's own base template already supports a
+      // uniform-diameter configuration, the catalog leaf profile just
+      // picked one specific real hardware kit as its default) and clamp
+      // bridge_line_width to that same real value.
+      overrides.nozzle_diameter = Array(nozzleDiameters.length || 1).fill(parsedNozzleOverride).join(';')
+      if (!('bridge_line_width' in advancedOverrides)) {
+        overrides.bridge_line_width = String(parsedNozzleOverride)
+      }
+    } else {
+      // Confirmed via direct CLI testing: a mixed-diameter toolchanger's
+      // own bundled process profile can fail slicing outright ("Bridge
+      // line width must not exceed nozzle diameter") because its default
+      // bridge_line_width was sized for its smaller nozzle but validated
+      // against its largest -- clamp to the smallest configured nozzle
+      // whenever there's genuine diameter variation and the user hasn't
+      // corrected it above, unless they've already set this explicitly
+      // via Advanced settings.
+      const uniqueNozzleDiameters = new Set(nozzleDiameters)
+      if (uniqueNozzleDiameters.size > 1 && !('bridge_line_width' in advancedOverrides)) {
+        overrides.bridge_line_width = String(Math.min(...nozzleDiameters))
+      }
     }
     createJob({
       model_id: modelId,
@@ -990,6 +1028,7 @@ function MainApp({
     quickSettings,
     advancedOverrides,
     nozzleDiameters,
+    nozzleDiameterOverride,
     currentSignature,
   ])
 
@@ -1126,6 +1165,22 @@ function MainApp({
               onPrinterChange={handlePrinterChange}
               onProcessChange={handleProcessChange}
             />
+            {mixedNozzleDiameters && (
+              <div className="field-group nozzle-diameter-correction">
+                <label>
+                  This profile assumes mixed nozzle sizes ({nozzleDiameters.map((d) => `${d}mm`).join(', ')}). If
+                  every head on your printer is actually the same size, enter it here to correct it:
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    placeholder="e.g. 0.4"
+                    value={nozzleDiameterOverride}
+                    onChange={(e) => setNozzleDiameterOverride(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
           </details>
 
           <details
