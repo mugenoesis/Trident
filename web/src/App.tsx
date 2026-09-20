@@ -107,7 +107,11 @@ interface FilamentSlot {
 // heads/AMS slots than the previous one, or a brand-new upload) so slots
 // aren't all identically colored -- purely a UI label, never sent to
 // OrcaSlicer.
-const DEFAULT_SLOT_COLORS = ['#e8e8e8', '#ff3b30', '#0a84ff', '#ffd60a', '#34c759', '#af52de']
+// Matches entries in COLOR_PRESETS below exactly (not just visually similar
+// hex values) so a freshly-added slot's default color always has a
+// friendly name available in the nozzle-assignment dropdown, rather than
+// falling back to a raw hex code there.
+const DEFAULT_SLOT_COLORS = ['#ffffff', '#e0301e', '#0a84ff', '#ffd60a', '#34c759', '#af52de']
 
 function defaultSlotColor(index: number): string {
   return DEFAULT_SLOT_COLORS[index % DEFAULT_SLOT_COLORS.length]
@@ -116,21 +120,33 @@ function defaultSlotColor(index: number): string {
 // One-click presets covering the filament colors people actually load
 // (black/white/gray included -- notably absent from DEFAULT_SLOT_COLORS
 // above, which only needs to be *distinct* per slot, not comprehensive).
-// The native <input type="color"> below still covers anything else.
+// The native <input type="color"> below still covers anything else. Named
+// (not just hex) so a plain-text context that can't render a swatch --
+// e.g. a <select><option> in the nozzle-assignment dropdown, which has no
+// way to show a colored box -- can still say "Red" instead of "#e0301e".
 const COLOR_PRESETS = [
-  '#000000',
-  '#ffffff',
-  '#808080',
-  '#e0301e',
-  '#ff8c00',
-  '#ffd60a',
-  '#34c759',
-  '#00c2d1',
-  '#0a84ff',
-  '#af52de',
-  '#ff2d92',
-  '#8b5a2b',
+  { hex: '#000000', name: 'Black' },
+  { hex: '#ffffff', name: 'White' },
+  { hex: '#808080', name: 'Gray' },
+  { hex: '#e0301e', name: 'Red' },
+  { hex: '#ff8c00', name: 'Orange' },
+  { hex: '#ffd60a', name: 'Yellow' },
+  { hex: '#34c759', name: 'Green' },
+  { hex: '#00c2d1', name: 'Teal' },
+  { hex: '#0a84ff', name: 'Blue' },
+  { hex: '#af52de', name: 'Purple' },
+  { hex: '#ff2d92', name: 'Pink' },
+  { hex: '#8b5a2b', name: 'Brown' },
 ]
+
+const COLOR_NAME_BY_HEX = new Map(COLOR_PRESETS.map(({ hex, name }) => [hex.toLowerCase(), name]))
+
+// Falls back to the raw hex for a custom color picked via the native
+// dialog rather than one of the presets above -- still better than no
+// label at all when matching a slot to a file's saved color/name.
+function colorLabel(hex: string): string {
+  return COLOR_NAME_BY_HEX.get(hex.toLowerCase()) ?? hex
+}
 
 // One slot per physical extruder/AMS slot -- length driven by the selected
 // machine profile's nozzle_diameter array (see handlePrinterChange below).
@@ -1045,7 +1061,7 @@ function MainApp({
                         </option>
                         {filamentSlots.map((slot, slotIdx) => (
                           <option key={slotIdx} value={slotIdx}>
-                            {`Slot ${slotIdx + 1}${slot.profile ? ` — ${slot.profile}` : ''}`}
+                            {`Slot ${slotIdx + 1} (${colorLabel(slot.color)})${slot.profile ? ` — ${slot.profile}` : ''}`}
                           </option>
                         ))}
                       </select>
@@ -1119,15 +1135,15 @@ function MainApp({
                 }
                 belowLabel={
                   <div className="color-preset-row">
-                    {COLOR_PRESETS.map((c) => (
+                    {COLOR_PRESETS.map(({ hex, name }) => (
                       <button
-                        key={c}
+                        key={hex}
                         type="button"
-                        className={`color-preset-swatch${slot.color === c ? ' selected' : ''}`}
-                        style={{ background: c }}
-                        aria-label={c}
-                        title={c}
-                        onClick={() => handleFilamentSlotChange(i, { color: c })}
+                        className={`color-preset-swatch${slot.color === hex ? ' selected' : ''}`}
+                        style={{ background: hex }}
+                        aria-label={name}
+                        title={name}
+                        onClick={() => handleFilamentSlotChange(i, { color: hex })}
                       />
                     ))}
                   </div>
