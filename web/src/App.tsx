@@ -174,17 +174,24 @@ function parsedNozzleDiameters(data: Record<string, unknown> | undefined): numbe
 // author's color for that role when known (from Metadata/project_settings
 // .config's filament_colour, which catches paint-on/per-triangle color
 // assignments that per-object extruder metadata misses entirely -- see
-// api/app/threemf.py) -- null when genuinely unknown.
+// api/app/threemf.py) -- null when genuinely unknown. `name` is that same
+// file's saved material name for the role (e.g. "Bambu PLA Basic @BBL
+// A1M") when known -- shown purely to help matching it to one of your own
+// materials, never treated as an actual profile in your own catalog.
 interface FileRole {
   color: string | null
+  name: string | null
 }
 
 function fileRolesFromInspection(info: ThreeMfInspection | null): FileRole[] {
   if (info?.embedded_filament_colors.length) {
-    return info.embedded_filament_colors.map((c) => ({ color: c || null }))
+    return info.embedded_filament_colors.map((c, i) => ({
+      color: c || null,
+      name: info.embedded_filament_names[i] || null,
+    }))
   }
   const count = info?.extruder_indices.length || 1
-  return Array.from({ length: count }, () => ({ color: null }))
+  return Array.from({ length: count }, () => ({ color: null, name: null }))
 }
 
 export default function App() {
@@ -1020,7 +1027,10 @@ function MainApp({
                             style={role.color ? { background: role.color } : undefined}
                             title={role.color ?? 'Unknown color'}
                           />
-                          <span className="nozzle-assignment-role-label">Color {roleIdx + 1}</span>
+                          <span className="nozzle-assignment-role-label">
+                            Color {roleIdx + 1}
+                            {role.name ? ` — ${role.name}` : ''}
+                          </span>
                         </>
                       )}
                       <select

@@ -63,6 +63,7 @@ def finalize_new_model(
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
+            meta["embedded_filament_names"] = inspection.embedded_filament_names
             meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
         except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
             pass
@@ -192,6 +193,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
             plates=[PlateInfo(**p) for p in meta["plates"]],
             extruder_indices=meta.get("extruder_indices", []),
             embedded_filament_colors=meta.get("embedded_filament_colors", []),
+            embedded_filament_names=meta.get("embedded_filament_names", []),
             color_tree=[ColorNode(**c) for c in meta.get("color_tree", [])],
         )
 
@@ -202,6 +204,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
+            meta["embedded_filament_names"] = inspection.embedded_filament_names
             meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
             _meta_path(model_id).write_text(json.dumps(meta))
         except OSError:

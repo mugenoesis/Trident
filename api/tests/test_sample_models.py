@@ -3,8 +3,35 @@ def test_list_sample_models(client):
     assert resp.status_code == 200
     body = resp.json()
     ids = {s["id"] for s in body}
-    assert {"benchy", "calibration-cube", "orca-badge", "stanford-bunny"} <= ids
+    assert {"benchy", "calibration-cube", "orca-badge", "orca-badge-colored", "stanford-bunny"} <= ids
     assert all({"id", "name", "description"} <= s.keys() for s in body)
+
+
+def test_load_colored_sample_produces_a_real_color_tree(client):
+    """orca-badge-colored is a real file (api/app/sample_assets/, not a
+    test fixture) -- unlike the other samples in this test module, its
+    /plates response should reflect genuine parsed color data, proving
+    the file itself is wired correctly end to end."""
+    resp = client.post("/sample-models/orca-badge-colored/load")
+    assert resp.status_code == 200
+    model_id = resp.json()["model_id"]
+
+    plates = client.get(f"/models/{model_id}/plates")
+    assert plates.status_code == 200
+    body = plates.json()
+    assert len(body["embedded_filament_colors"]) == 4
+    assert len(body["color_tree"]) == 3  # 3 top-level composite objects, per the real badge structure
+    # Every leaf color actually came from embedded_filament_colors.
+    def all_colors(nodes):
+        for n in nodes:
+            if n["children"]:
+                yield from all_colors(n["children"])
+            elif n["color"]:
+                yield n["color"]
+
+    seen = set(all_colors(body["color_tree"]))
+    assert seen
+    assert seen <= set(body["embedded_filament_colors"])
 
 
 def test_load_sample_model_creates_a_model_id(client, data_dirs):

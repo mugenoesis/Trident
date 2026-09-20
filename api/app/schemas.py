@@ -121,6 +121,14 @@ class ThreeMfInspection(BaseModel):
     # misses entirely). An empty string means "role exists, no known
     # color" rather than "no role" -- length is what matters.
     embedded_filament_colors: list[str] = Field(default_factory=list)
+    # The file's own author's saved material name per role (Metadata/
+    # project_settings.config's filament_settings_id, e.g. "Bambu PLA
+    # Basic @BBL A1M"), same index space as embedded_filament_colors --
+    # shown next to each role's color swatch purely to help a user match
+    # the file's intended material to one of their own; never used to
+    # resolve an actual profile (that name won't exist in this printer's
+    # own catalog). Empty string/list when unknown.
+    embedded_filament_names: list[str] = Field(default_factory=list)
     # One entry per top-level <build><item> (in file order); see ColorNode.
     # Empty when the file has no per-object/part color info to offer (a
     # non-3mf, a plain single-object file, or one whose color is only

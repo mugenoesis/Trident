@@ -91,6 +91,11 @@ export interface ThreeMfInspection {
   // metadata misses entirely). An empty string means "role exists, no
   // known color" rather than "no role" -- length is what matters.
   embedded_filament_colors: string[]
+  // The file's own author's saved material name per role (e.g. "Bambu
+  // PLA Basic @BBL A1M"), same index space as embedded_filament_colors --
+  // shown next to a role's swatch purely to help matching it to one of
+  // your own materials; never an actual profile in your own catalog.
+  embedded_filament_names: string[]
   // One entry per top-level object placed in the file (<build><item>
   // order), mirroring the exact tree three.js's 3MFLoader itself builds
   // (a composite object's Group children come from <components> in the

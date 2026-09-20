@@ -17,6 +17,15 @@ Format/DRC.cpp's load_drc() in the same unconditional if/else chain as
 .stl/.3mf/.obj, and OrcaSlicer.cpp's CLI path calls that same
 read_from_file()) that the CLI slices .drc files exactly like any other
 supported format, no conversion needed.
+
+One entry (orca-badge-colored) isn't a vendor resource at all: the
+bundled OrcaBadge.3mf has real per-part material assignments but no
+Metadata/project_settings.config (no filament_colour saved with it), so
+it can't demonstrate the 3D preview's per-object color rendering
+(threemf.py's color_tree) through the UI on its own. This is that same
+badge with a project_settings.config added (real colors, same composite
+structure) -- stored under sample_assets/ (this repo, not the vendored
+OrcaSlicer resources) since it's our own asset, not upstream's.
 """
 from __future__ import annotations
 
@@ -25,13 +34,16 @@ from pathlib import Path
 
 from .config import settings
 
+_OWN_ASSETS_DIR = Path(__file__).parent / "sample_assets"
+
 
 @dataclass(frozen=True)
 class SampleModel:
     id: str
     name: str
     description: str
-    filename: str  # relative to settings.sample_models_dir
+    filename: str  # relative to source_dir (settings.sample_models_dir by default)
+    source_dir: Path | None = None  # overrides settings.sample_models_dir for this one sample
 
 
 _SAMPLES: list[SampleModel] = [
@@ -54,6 +66,13 @@ _SAMPLES: list[SampleModel] = [
         filename="OrcaBadge.3mf",
     ),
     SampleModel(
+        id="orca-badge-colored",
+        name="Orca Badge (colored)",
+        description="Same badge, with real per-part colors so the 3D preview's multi-color rendering has something to show.",
+        filename="orca_badge_colored.3mf",
+        source_dir=_OWN_ASSETS_DIR,
+    ),
+    SampleModel(
         id="stanford-bunny",
         name="Stanford Bunny",
         description="A classic 3D-graphics test mesh.",
@@ -73,4 +92,5 @@ def get_sample(sample_id: str) -> SampleModel | None:
 
 
 def resolve_sample_path(sample: SampleModel) -> Path:
-    return settings.sample_models_dir / sample.filename
+    base = sample.source_dir if sample.source_dir is not None else settings.sample_models_dir
+    return base / sample.filename

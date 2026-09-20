@@ -149,6 +149,25 @@ def test_embedded_filament_colors_parsed_from_project_settings(tmp_path: Path):
     assert result.embedded_filament_colors == ["#000000", "#FFFF00"]
 
 
+def test_embedded_filament_names_parsed_from_project_settings(tmp_path: Path):
+    project_settings = json.dumps(
+        {
+            "filament_colour": ["#000000", "#FFFF00"],
+            "filament_settings_id": ["Bambu PLA Basic @BBL A1M", "Bambu PLA Basic @BBL A1M"],
+        }
+    )
+    path = _write_3mf(tmp_path, "named.3mf", model_settings=None, project_settings=project_settings)
+    result = inspect_3mf(path)
+    assert result.embedded_filament_names == ["Bambu PLA Basic @BBL A1M", "Bambu PLA Basic @BBL A1M"]
+
+
+def test_embedded_filament_names_empty_when_missing(tmp_path: Path):
+    project_settings = json.dumps({"filament_colour": ["#000000"]})
+    path = _write_3mf(tmp_path, "unnamed.3mf", model_settings=None, project_settings=project_settings)
+    result = inspect_3mf(path)
+    assert result.embedded_filament_names == []
+
+
 def test_paint_on_color_scenario_regression(tmp_path: Path):
     """The exact real-world shape that crashed OrcaSlicer (exit code -11):
     a single object whose model_settings.config only assigns it to

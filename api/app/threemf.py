@@ -269,27 +269,38 @@ def _parse_color_tree(
     return [_build_color_node(item_id, objects, id_extruders, filament_colors) for item_id in build_item_ids]
 
 
-def _parse_embedded_filament_colors(zf: zipfile.ZipFile) -> list[str]:
-    """The file's own author's filament_colour array from
-    Metadata/project_settings.config, if present -- one entry per filament
-    role the file was originally configured with (see module docstring for
-    why this is more reliable than the per-object extruder metadata
-    above). An entry can be an empty string (seen for genuinely
-    unconfigured slots) -- callers should treat that as "role exists, no
-    known color" rather than dropping it and losing the role count.
+def _string_list(data: dict, key: str) -> list[str]:
+    values = data.get(key)
+    if not isinstance(values, list):
+        return []
+    return [v if isinstance(v, str) else "" for v in values]
+
+
+def _parse_embedded_filament_info(zf: zipfile.ZipFile) -> tuple[list[str], list[str]]:
+    """The file's own author's filament_colour and filament_settings_id
+    arrays from Metadata/project_settings.config, if present -- one entry
+    per filament role the file was originally configured with (see module
+    docstring for why filament_colour is more reliable than the per-object
+    extruder metadata above). filament_settings_id is the actual saved
+    material name (e.g. "Bambu PLA Basic @BBL A1M") -- surfaced purely to
+    help a user match the file's intended material to one of their own,
+    never used to resolve a real profile itself. Either array can have an
+    empty-string entry (seen for genuinely unconfigured slots) -- callers
+    should treat that as "role exists, no known value" rather than
+    dropping it and losing the role count. The two arrays share the same
+    index space (confirmed against a real downloaded project file), but
+    are looked up independently in case a real file's lengths ever
+    disagree -- never assume one implies the other.
     """
     try:
         raw = zf.read(_PROJECT_SETTINGS_PATH)
     except KeyError:
-        return []
+        return [], []
     try:
         data = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
-        return []
-    colors = data.get("filament_colour")
-    if not isinstance(colors, list):
-        return []
-    return [c if isinstance(c, str) else "" for c in colors]
+        return [], []
+    return _string_list(data, "filament_colour"), _string_list(data, "filament_settings_id")
 
 
 def inspect_3mf(path: Path) -> ThreeMfInspection:
@@ -298,7 +309,7 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
     try:
         with zipfile.ZipFile(path) as zf:
             plates, extruder_indices, id_extruders = _parse_model_settings(zf)
-            embedded_filament_colors = _parse_embedded_filament_colors(zf)
+            embedded_filament_colors, embedded_filament_names = _parse_embedded_filament_info(zf)
             try:
                 color_tree = _parse_color_tree(zf, id_extruders, embedded_filament_colors)
             except Exception:  # noqa: BLE001 - the object-graph walk is the riskiest part of this module; never let it break the rest of the inspection
@@ -310,5 +321,6 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
         plates=plates or [PlateInfo(index=1)],
         extruder_indices=extruder_indices,
         embedded_filament_colors=embedded_filament_colors,
+        embedded_filament_names=embedded_filament_names,
         color_tree=color_tree,
     )

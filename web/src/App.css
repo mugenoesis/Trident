@@ -768,13 +768,14 @@
 .nozzle-assignment-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
   margin-top: 0.3rem;
 }
 
 .nozzle-assignment-row select {
   flex: 1;
-  min-width: 0;
+  min-width: 40%;
 }
 
 .nozzle-assignment-role-swatch {
@@ -789,7 +790,8 @@
 .nozzle-assignment-role-label {
   font-size: 0.8rem;
   color: var(--text-dim);
-  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .plate-picker-options {
