@@ -113,6 +113,25 @@ function defaultSlotColor(index: number): string {
   return DEFAULT_SLOT_COLORS[index % DEFAULT_SLOT_COLORS.length]
 }
 
+// One-click presets covering the filament colors people actually load
+// (black/white/gray included -- notably absent from DEFAULT_SLOT_COLORS
+// above, which only needs to be *distinct* per slot, not comprehensive).
+// The native <input type="color"> below still covers anything else.
+const COLOR_PRESETS = [
+  '#000000',
+  '#ffffff',
+  '#808080',
+  '#e0301e',
+  '#ff8c00',
+  '#ffd60a',
+  '#34c759',
+  '#00c2d1',
+  '#0a84ff',
+  '#af52de',
+  '#ff2d92',
+  '#8b5a2b',
+]
+
 // One slot per physical extruder/AMS slot -- length driven by the selected
 // machine profile's nozzle_diameter array (see handlePrinterChange below).
 // All fresh slots default to the same profile; the user can then pick
@@ -966,6 +985,21 @@ function MainApp({
                     onChange={(e) => handleFilamentSlotChange(i, { color: e.target.value })}
                     aria-label={`Slot ${i + 1} color`}
                   />
+                }
+                belowLabel={
+                  <div className="color-preset-row">
+                    {COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`color-preset-swatch${slot.color === c ? ' selected' : ''}`}
+                        style={{ background: c }}
+                        aria-label={c}
+                        title={c}
+                        onClick={() => handleFilamentSlotChange(i, { color: c })}
+                      />
+                    ))}
+                  </div>
                 }
               />
             ))}

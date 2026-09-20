@@ -741,6 +741,26 @@
   flex-shrink: 0;
 }
 
+.color-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: -0.2rem;
+}
+
+.color-preset-swatch {
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.color-preset-swatch.selected {
+  border: 2px solid var(--accent-hover);
+}
+
 .material-source-toggle .segmented-control {
   display: flex;
   border: 1px solid var(--panel-border);

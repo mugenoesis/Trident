@@ -19,6 +19,12 @@ interface FilamentSelectProps {
   // side, between slots -- anchoring it to the label keeps it visually
   // tied to the slot it actually belongs to at any width.
   accessory?: ReactNode
+  // A full-width row rendered below the label (App.tsx uses this for a
+  // row of one-click preset color swatches) -- kept separate from
+  // `accessory` since cramming several swatches into the same inline row
+  // as the label text would either overflow or force an awkward wrap on
+  // narrow screens.
+  belowLabel?: ReactNode
 }
 
 // Split out of PrinterSelect.tsx: material/filament choice is something you
@@ -34,6 +40,7 @@ export default function FilamentSelect({
   onFilamentChange,
   label = 'Material',
   accessory,
+  belowLabel,
 }: FilamentSelectProps) {
   const [filamentQuery, setFilamentQuery] = useState('')
 
@@ -71,6 +78,7 @@ export default function FilamentSelect({
           <span>{label}</span>
           {accessory}
         </span>
+        {belowLabel}
         <input
           type="text"
           placeholder={`Search ${filaments.length ? '' : 'materials'}…`}
