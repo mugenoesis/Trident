@@ -51,6 +51,7 @@ import SetupGate from './components/SetupGate'
 import Uploader from './components/Uploader'
 import Viewer from './components/Viewer'
 import type {
+  ColorNode,
   JobRecord,
   MaterialProfileRecord,
   PrinterConnection,
@@ -890,6 +891,23 @@ function MainApp({
   // needs more than one color (in which case a per-role mapping is
   // mandatory even on a printer with just one configured slot repeated).
   const showNozzleAssignment = filamentSlots.length > 1 || fileRoles.length > 1
+
+  // The 3D preview should show what will actually print -- once a role has
+  // a nozzle assigned, substitute that slot's own color for the file's
+  // original one; a role with no assignment yet keeps showing the file's
+  // color as a placeholder. Recomputed on every assignment change, which
+  // is what makes the preview update live as roles are picked.
+  const renderColorTree = useMemo(() => {
+    const substitute = (nodes: ColorNode[]): ColorNode[] =>
+      nodes.map((node) => {
+        if (node.children.length > 0) return { ...node, children: substitute(node.children) }
+        if (node.extruder === null) return node
+        const slotIdx = roleNozzleAssignments[node.extruder - 1]
+        const assignedColor = slotIdx !== null ? filamentSlots[slotIdx]?.color : undefined
+        return assignedColor ? { ...node, color: assignedColor } : node
+      })
+    return substitute(plateInfo?.color_tree ?? [])
+  }, [plateInfo, roleNozzleAssignments, filamentSlots])
   const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1
 
   const currentSignature = useMemo(
@@ -1015,7 +1033,7 @@ function MainApp({
                 fileName={file?.name ?? null}
                 uploadStatus={uploadStatus}
               />
-              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} colorTree={plateInfo?.color_tree} />
+              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} colorTree={renderColorTree} />
               {dimensions && (
                 <>
                   <div className="dimensions-readout">

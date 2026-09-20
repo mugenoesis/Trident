@@ -108,6 +108,13 @@ export interface ThreeMfInspection {
 
 export interface ColorNode {
   color: string | null
+  // This leaf's 1-based extruder/filament-role index (null for a
+  // composite, or a leaf with no resolvable extruder) -- `color` is that
+  // role's color as the file's own author set it; App.tsx uses this index
+  // (extruder - 1 == the role's position in embedded_filament_colors /
+  // roleNozzleAssignments) to substitute whichever color the user actually
+  // assigned that role to, once they've picked a nozzle for it.
+  extruder: number | null
   children: ColorNode[]
 }
 

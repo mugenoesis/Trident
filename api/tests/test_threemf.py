@@ -249,8 +249,10 @@ def test_color_tree_for_two_simple_leaf_objects(tmp_path: Path):
     result = inspect_3mf(path)
     assert len(result.color_tree) == 2
     assert result.color_tree[0].color == "#FF0000"
+    assert result.color_tree[0].extruder == 1
     assert result.color_tree[0].children == []
     assert result.color_tree[1].color == "#00FF00"
+    assert result.color_tree[1].extruder == 2
 
 
 def test_color_tree_for_composite_object_matches_real_orca_badge_shape(tmp_path: Path):
@@ -304,9 +306,41 @@ def test_color_tree_for_composite_object_matches_real_orca_badge_shape(tmp_path:
     assert len(result.color_tree) == 1
     top = result.color_tree[0]
     assert top.color is None  # composite -- color lives on its parts, not itself
+    assert top.extruder is None
     assert len(top.children) == 2
     assert top.children[0].color == "#0000FF"  # part 11 -> extruder 3
+    assert top.children[0].extruder == 3
     assert top.children[1].color == "#FFFF00"  # part 12 -> extruder 4
+    assert top.children[1].extruder == 4
+
+
+def test_color_tree_leaf_extruder_out_of_range_is_omitted(tmp_path: Path):
+    """An extruder index with no corresponding embedded_filament_colors
+    entry (e.g. the file references extruder 5 but only 2 colors were
+    saved) must not expose a bogus/out-of-bounds index for the frontend to
+    look up -- both color and extruder stay None for that leaf."""
+    root_model = """
+    <resources><object id="1" type="model"><mesh/></object></resources>
+    <build><item objectid="1"/></build>
+    """
+    model_settings = """
+    <config>
+      <object id="1"><metadata key="extruder" value="5"/></object>
+      <plate><metadata key="plater_id" value="1"/></plate>
+    </config>
+    """
+    project_settings = json.dumps({"filament_colour": ["#FF0000", "#00FF00"]})
+    path = _write_3mf_with_parts(
+        tmp_path,
+        "out_of_range.3mf",
+        root_model=root_model,
+        model_settings=model_settings,
+        project_settings=project_settings,
+    )
+    result = inspect_3mf(path)
+    assert len(result.color_tree) == 1
+    assert result.color_tree[0].color is None
+    assert result.color_tree[0].extruder is None
 
 
 def test_color_tree_empty_without_embedded_filament_colors(tmp_path: Path):

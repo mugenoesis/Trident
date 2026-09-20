@@ -251,7 +251,9 @@ def _build_color_node(
     color = None
     if extruder is not None and 1 <= extruder <= len(filament_colors):
         color = filament_colors[extruder - 1] or None
-    return ColorNode(color=color)
+    else:
+        extruder = None  # out of range or unresolvable -- don't expose a bogus index
+    return ColorNode(color=color, extruder=extruder)
 
 
 def _parse_color_tree(

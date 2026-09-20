@@ -107,6 +107,14 @@ class ColorNode(BaseModel):
     per-object/per-part color (not per-triangle paint)."""
 
     color: str | None = None
+    # This leaf's 1-based extruder/filament-role index (None for a
+    # composite, or a leaf with no resolvable extruder) -- `color` above is
+    # just that role's color as the file's own author set it; the frontend
+    # uses this index (extruder - 1 == the role's position in
+    # embedded_filament_colors, i.e. roleNozzleAssignments) to instead show
+    # whichever color the user actually assigned that role to, once they've
+    # picked a nozzle for it, without needing a second round-trip.
+    extruder: int | None = None
     children: list["ColorNode"] = Field(default_factory=list)
 
 
