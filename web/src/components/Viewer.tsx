@@ -5,11 +5,18 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import type { BedSize, Dimensions } from '../dimensions'
+import type { ColorNode } from '../types'
 
 interface ViewerProps {
   file: File | null
   onDimensions?: (dims: Dimensions | null) => void
   bedSize?: BedSize | null
+  // Per-object/part colors for a .3mf, in the exact tree shape 3MFLoader
+  // itself builds (see api/app/threemf.py) -- applied by walking the
+  // loaded Group in lockstep with this tree. Ignored for STL/DRC (which
+  // never produce a Group) or when empty/absent, in which case every mesh
+  // gets the same flat default color as before this existed.
+  colorTree?: ColorNode[]
 }
 
 // Basic model preview: not meant to be a full slicer viewport (no layer
@@ -17,7 +24,7 @@ interface ViewerProps {
 // object I uploaded" before slicing. Drag-to-rotate/zoom via OrbitControls
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
-export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
+export default function Viewer({ file, onDimensions, bedSize, colorTree }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -165,6 +172,42 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
       onDimensions?.({ x: size.x, y: size.y, z: size.z })
     }
 
+    // Colors a .3mf's loaded Group by walking it in lockstep with
+    // colorTree, which mirrors 3MFLoader's own build order exactly (see
+    // api/app/threemf.py) -- object3D.children[i] corresponds to
+    // nodes[i] at every level, whether that's a top-level <build><item>
+    // or a composite object's <components>. Bails to the flat default
+    // color for a whole subtree the moment the shapes stop lining up
+    // (wrong child count) rather than risk coloring the wrong mesh.
+    const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>()
+    const materialForColor = (hex: string) => {
+      const existing = coloredMaterials.get(hex)
+      if (existing) return existing
+      const created = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.05, roughness: 0.55 })
+      coloredMaterials.set(hex, created)
+      return created
+    }
+    const applyFlatMaterial = (object3D: THREE.Object3D, mat: THREE.Material) => {
+      object3D.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.material = mat
+      })
+    }
+    const applyColorTree = (object3D: THREE.Object3D, nodes: ColorNode[]) => {
+      const children = object3D.children
+      if (nodes.length !== children.length) {
+        applyFlatMaterial(object3D, material)
+        return
+      }
+      children.forEach((child, i) => {
+        const node = nodes[i]
+        if (node.children.length > 0) {
+          applyColorTree(child, node.children)
+        } else {
+          applyFlatMaterial(child, node.color ? materialForColor(node.color) : material)
+        }
+      })
+    }
+
     if (file) {
       const url = URL.createObjectURL(file)
       const lowerName = file.name.toLowerCase()
@@ -203,12 +246,15 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
               URL.revokeObjectURL(url)
               return
             }
-            // Deliberately overrides whatever per-object colors/materials
-            // the .3mf itself embeds -- geometry-only preview, not a render
-            // of the file's actual multi-material assignments.
-            group.traverse((child) => {
-              if (child instanceof THREE.Mesh) child.material = material
-            })
+            // Colors each object/part using colorTree when it's usable
+            // (see applyColorTree above); otherwise every mesh gets the
+            // same flat default color, same as before per-object color
+            // support existed.
+            if (colorTree && colorTree.length > 0) {
+              applyColorTree(group, colorTree)
+            } else {
+              applyFlatMaterial(group, material)
+            }
             scene.add(group)
             loadedObject = group
             finishLoad(group, new THREE.Box3().setFromObject(group))
@@ -303,7 +349,7 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
     // effect (camera resets too), which is an acceptable trade-off for
     // keeping one effect rather than splitting scene setup from plate
     // sizing.
-  }, [file, onDimensions, bedSize])
+  }, [file, onDimensions, bedSize, colorTree])
 
   return (
     <div className="viewer-wrap">

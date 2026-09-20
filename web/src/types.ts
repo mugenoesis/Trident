@@ -91,6 +91,19 @@ export interface ThreeMfInspection {
   // metadata misses entirely). An empty string means "role exists, no
   // known color" rather than "no role" -- length is what matters.
   embedded_filament_colors: string[]
+  // One entry per top-level object placed in the file (<build><item>
+  // order), mirroring the exact tree three.js's 3MFLoader itself builds
+  // (a composite object's Group children come from <components> in the
+  // same order) -- Viewer.tsx walks its rendered Object3D tree in
+  // lockstep with this to color each mesh. Empty when there's no per-
+  // object/part color info to place (covers plain files and ones whose
+  // color is only per-triangle paint, which isn't parsed server-side).
+  color_tree: ColorNode[]
+}
+
+export interface ColorNode {
+  color: string | null
+  children: ColorNode[]
 }
 
 // "unset": fresh install, no mode chosen yet -- behaves like "single"

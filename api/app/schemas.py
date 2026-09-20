@@ -95,6 +95,21 @@ class PlateInfo(BaseModel):
     thumbnail: str | None = None  # in-zip path; None if not present/not a .3mf
 
 
+class ColorNode(BaseModel):
+    """Mirrors the exact tree shape three.js's 3MFLoader builds in the
+    browser: one node per <build><item>/<component>, in the same order,
+    recursively -- a leaf (no children) carries this object/part's own
+    resolved color (from its assigned extruder + the file's
+    filament_colour array), a composite (a <components> object) carries
+    no color of its own, only children. The frontend walks its rendered
+    Object3D tree in lockstep with this same structure to color each mesh
+    -- see api/app/threemf.py's module docstring for why this only covers
+    per-object/per-part color (not per-triangle paint)."""
+
+    color: str | None = None
+    children: list["ColorNode"] = Field(default_factory=list)
+
+
 class ThreeMfInspection(BaseModel):
     plates: list[PlateInfo]
     extruder_indices: list[int] = Field(default_factory=list)
@@ -106,6 +121,11 @@ class ThreeMfInspection(BaseModel):
     # misses entirely). An empty string means "role exists, no known
     # color" rather than "no role" -- length is what matters.
     embedded_filament_colors: list[str] = Field(default_factory=list)
+    # One entry per top-level <build><item> (in file order); see ColorNode.
+    # Empty when the file has no per-object/part color info to offer (a
+    # non-3mf, a plain single-object file, or one whose color is only
+    # expressed as per-triangle paint, which isn't parsed here).
+    color_tree: list[ColorNode] = Field(default_factory=list)
 
 
 class AuthStatus(BaseModel):

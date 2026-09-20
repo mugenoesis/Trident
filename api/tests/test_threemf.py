@@ -24,6 +24,35 @@ def _write_3mf(
     return path
 
 
+_NS = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"'
+
+
+def _write_3mf_with_parts(
+    tmp_path: Path,
+    name: str,
+    *,
+    root_model: str,
+    model_settings: str | None = None,
+    project_settings: str | None = None,
+    extra_parts: dict[str, str] | None = None,
+) -> Path:
+    """Like _write_3mf, but with a real (namespaced) 3D/3dmodel.model
+    body, plus optional Production-Extension sub-part .model files at
+    3D/Objects/<key> -- for color_tree tests, which need genuine <object>/
+    <components>/<build> structure, not the "<model/>" placeholder above.
+    """
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("3D/3dmodel.model", f"<model {_NS}>{root_model}</model>")
+        for filename, body in (extra_parts or {}).items():
+            zf.writestr(f"3D/Objects/{filename}", f"<model {_NS}>{body}</model>")
+        if model_settings is not None:
+            zf.writestr(_MODEL_SETTINGS_PATH, model_settings)
+        if project_settings is not None:
+            zf.writestr(_PROJECT_SETTINGS_PATH, project_settings)
+    return path
+
+
 def test_no_model_settings_config_falls_back_to_single_plate(tmp_path: Path):
     path = _write_3mf(tmp_path, "plain.3mf", model_settings=None)
     result = inspect_3mf(path)
@@ -167,3 +196,135 @@ def test_non_list_filament_colour_gives_empty_embedded_colors(tmp_path: Path):
     path = _write_3mf(tmp_path, "odd.3mf", model_settings=None, project_settings=project_settings)
     result = inspect_3mf(path)
     assert result.embedded_filament_colors == []
+
+
+def test_color_tree_for_two_simple_leaf_objects(tmp_path: Path):
+    """Two independent top-level objects (no composites), each assigned a
+    different extruder -- the simple case, one ColorNode per <build><item>,
+    each a leaf with its own resolved color."""
+    root_model = """
+    <resources>
+      <object id="1" type="model"><mesh/></object>
+      <object id="2" type="model"><mesh/></object>
+    </resources>
+    <build>
+      <item objectid="1"/>
+      <item objectid="2"/>
+    </build>
+    """
+    model_settings = """
+    <config>
+      <object id="1"><metadata key="extruder" value="1"/></object>
+      <object id="2"><metadata key="extruder" value="2"/></object>
+      <plate><metadata key="plater_id" value="1"/></plate>
+    </config>
+    """
+    project_settings = json.dumps({"filament_colour": ["#FF0000", "#00FF00"]})
+    path = _write_3mf_with_parts(
+        tmp_path,
+        "two_leaves.3mf",
+        root_model=root_model,
+        model_settings=model_settings,
+        project_settings=project_settings,
+    )
+    result = inspect_3mf(path)
+    assert len(result.color_tree) == 2
+    assert result.color_tree[0].color == "#FF0000"
+    assert result.color_tree[0].children == []
+    assert result.color_tree[1].color == "#00FF00"
+
+
+def test_color_tree_for_composite_object_matches_real_orca_badge_shape(tmp_path: Path):
+    """Reproduces the exact shape confirmed against the real bundled
+    OrcaBadge.3mf sample: a single top-level composite object referencing
+    2 parts in a separate Production-Extension sub-.model file (linked via
+    <component objectid="Y">, matching Metadata/model_settings.config's
+    <part id="Y">), each part independently colored."""
+    root_model = """
+    <resources>
+      <object id="10" type="model">
+        <components>
+          <component objectid="11"/>
+          <component objectid="12"/>
+        </components>
+      </object>
+    </resources>
+    <build>
+      <item objectid="10"/>
+    </build>
+    """
+    sub_model = """
+    <resources>
+      <object id="11" type="model"><mesh/></object>
+      <object id="12" type="model"><mesh/></object>
+    </resources>
+    <build/>
+    """
+    model_settings = """
+    <config>
+      <object id="10">
+        <metadata key="extruder" value="1"/>
+        <part id="11"><metadata key="extruder" value="3"/></part>
+        <part id="12"><metadata key="extruder" value="4"/></part>
+      </object>
+      <plate><metadata key="plater_id" value="1"/></plate>
+    </config>
+    """
+    project_settings = json.dumps(
+        {"filament_colour": ["#000000", "#111111", "#0000FF", "#FFFF00"]}
+    )
+    path = _write_3mf_with_parts(
+        tmp_path,
+        "badge.3mf",
+        root_model=root_model,
+        model_settings=model_settings,
+        project_settings=project_settings,
+        extra_parts={"badge_parts.model": sub_model},
+    )
+    result = inspect_3mf(path)
+    assert len(result.color_tree) == 1
+    top = result.color_tree[0]
+    assert top.color is None  # composite -- color lives on its parts, not itself
+    assert len(top.children) == 2
+    assert top.children[0].color == "#0000FF"  # part 11 -> extruder 3
+    assert top.children[1].color == "#FFFF00"  # part 12 -> extruder 4
+
+
+def test_color_tree_empty_without_embedded_filament_colors(tmp_path: Path):
+    """Per-object extruder metadata alone (no project_settings.config)
+    isn't enough to resolve real colors -- color_tree stays empty rather
+    than guessing at colors that were never actually confirmed."""
+    root_model = """
+    <resources><object id="1" type="model"><mesh/></object></resources>
+    <build><item objectid="1"/></build>
+    """
+    model_settings = """
+    <config>
+      <object id="1"><metadata key="extruder" value="1"/></object>
+      <plate><metadata key="plater_id" value="1"/></plate>
+    </config>
+    """
+    path = _write_3mf_with_parts(
+        tmp_path, "no_colors.3mf", root_model=root_model, model_settings=model_settings
+    )
+    result = inspect_3mf(path)
+    assert result.color_tree == []
+
+
+def test_color_tree_empty_when_build_section_missing(tmp_path: Path):
+    model_settings = """
+    <config>
+      <object id="1"><metadata key="extruder" value="1"/></object>
+      <plate><metadata key="plater_id" value="1"/></plate>
+    </config>
+    """
+    project_settings = json.dumps({"filament_colour": ["#FF0000"]})
+    path = _write_3mf_with_parts(
+        tmp_path,
+        "no_build.3mf",
+        root_model="<resources><object id=\"1\" type=\"model\"><mesh/></object></resources>",
+        model_settings=model_settings,
+        project_settings=project_settings,
+    )
+    result = inspect_3mf(path)
+    assert result.color_tree == []

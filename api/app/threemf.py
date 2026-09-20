@@ -40,6 +40,21 @@ when present.
 A plain/generic .3mf from another tool may have none of this -- every
 function here must degrade to "1 implicit plate, no known material split"
 on anything missing or malformed, never raise.
+
+color_tree (for coloring the 3D preview) takes this one step further:
+BambuStudio/OrcaSlicer's "Production Extension" 3MFs split a composite
+object's parts across separate 3D/Objects/*.model files, referenced via
+<components><component objectid="Y" p:path="...">. That "Y" is the SAME
+id as the corresponding Metadata/model_settings.config <part id="Y">
+carrying that part's own extruder assignment -- and three.js's 3MFLoader
+resolves every .model part's objects into one flat, id-keyed map,
+building a Group whose children mirror <build><item>/<components>
+order exactly. _parse_object_graph mirrors that same resolution so a
+frontend can walk its rendered Object3D tree in lockstep with color_tree
+and apply the right color to each mesh. This only covers per-object/
+per-part color assignment, not per-triangle "paint on" coloring (a
+separate, proprietary, per-triangle mesh property this module does not
+parse) -- a file using only that will get an empty color_tree.
 """
 from __future__ import annotations
 
@@ -48,10 +63,21 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .schemas import PlateInfo, ThreeMfInspection
+from .schemas import ColorNode, PlateInfo, ThreeMfInspection
 
 _MODEL_SETTINGS_PATH = "Metadata/model_settings.config"
 _PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
+
+# The 3MF core spec's default namespace -- every element in 3D/*.model
+# files (unlike Metadata/model_settings.config, which uses no namespace at
+# all) lives in it, so tag lookups there need the {ns} prefix even though
+# attributes (id, objectid, ...) don't.
+_3MF_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+
+
+def _tag(name: str) -> str:
+    return f"{{{_3MF_NS}}}{name}"
+
 
 _SINGLE_IMPLICIT_PLATE = ThreeMfInspection(plates=[PlateInfo(index=1)])
 
@@ -110,16 +136,137 @@ def _parse_extruder_indices(root: ET.Element) -> list[int]:
     return sorted(indices)
 
 
-def _parse_model_settings(zf: zipfile.ZipFile) -> tuple[list[PlateInfo], list[int]]:
+def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
+    """Maps every object id AND part id to its assigned extruder index --
+    a composite object's <part id="Y"> (Metadata/model_settings.config)
+    shares its id space with that same part's id as a standalone <object>
+    in a Production-Extension sub-.model file, referenced via
+    <component objectid="Y"> (see module docstring) -- so one flat mapping
+    keyed by either kind of id is all a color-tree walk needs.
+    """
+    result: dict[str, int] = {}
+    for object_elem in root.findall("object"):
+        obj_id = object_elem.get("id")
+        try:
+            meta = _metadata_dict(object_elem)
+            raw = meta.get("extruder")
+            if obj_id and raw is not None:
+                result[obj_id] = int(raw)
+        except Exception:  # noqa: BLE001 - skip this object's metadata, keep going
+            pass
+        for part_elem in object_elem.findall("part"):
+            part_id = part_elem.get("id")
+            try:
+                part_meta = _metadata_dict(part_elem)
+                raw = part_meta.get("extruder")
+                if part_id and raw is not None:
+                    result[part_id] = int(raw)
+            except Exception:  # noqa: BLE001
+                pass
+    return result
+
+
+def _parse_model_settings(zf: zipfile.ZipFile) -> tuple[list[PlateInfo], list[int], dict[str, int]]:
     try:
         raw = zf.read(_MODEL_SETTINGS_PATH)
     except KeyError:
-        return [], []
+        return [], [], {}
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
-        return [], []
-    return _parse_plates(root), _parse_extruder_indices(root)
+        return [], [], {}
+    return _parse_plates(root), _parse_extruder_indices(root), _parse_id_extruders(root)
+
+
+def _parse_object_graph(zf: zipfile.ZipFile) -> tuple[dict[str, list[str] | None], list[str]]:
+    """Reconstructs the exact object/component tree three.js's 3MFLoader
+    builds, from every .model part in the zip (the root 3D/3dmodel.model
+    plus any Production-Extension sub-parts under 3D/Objects/) -- three.js
+    resolves objects by id globally across every part file into one flat
+    map (confirmed against its own source: buildObjects() iterates every
+    parsed .model file and populates a single `objects` dict keyed by
+    id), so this mirrors that instead of trying to follow each
+    <component p:path="..."> reference individually.
+
+    Returns (objects, build_item_ids): `objects[id]` is a list of child
+    object ids (in <components> order) for a composite, or None for a
+    leaf mesh object; `build_item_ids` is the root file's <build><item>
+    order -- three.js's top-level Group's children, positionally, are
+    exactly `[objects[id] for id in build_item_ids]`.
+    """
+    objects: dict[str, list[str] | None] = {}
+    build_item_ids: list[str] = []
+
+    for name in zf.namelist():
+        if not name.lower().endswith(".model"):
+            continue
+        try:
+            root = ET.fromstring(zf.read(name))
+        except (ET.ParseError, KeyError):
+            continue
+
+        for object_elem in root.iter(_tag("object")):
+            obj_id = object_elem.get("id")
+            if not obj_id:
+                continue
+            components_elem = object_elem.find(_tag("components"))
+            if components_elem is not None:
+                child_ids = [
+                    c.get("objectid")
+                    for c in components_elem.findall(_tag("component"))
+                    if c.get("objectid")
+                ]
+                objects[obj_id] = child_ids  # type: ignore[assignment]
+            else:
+                objects.setdefault(obj_id, None)
+
+        build_elem = root.find(_tag("build"))
+        if build_elem is not None:
+            item_ids = [item.get("objectid") for item in build_elem.findall(_tag("item")) if item.get("objectid")]
+            if item_ids:
+                build_item_ids = item_ids  # type: ignore[assignment]
+
+    return objects, build_item_ids
+
+
+_MAX_COMPONENT_DEPTH = 20  # guards against a malformed/cyclic <components> reference chain
+
+
+def _build_color_node(
+    object_id: str,
+    objects: dict[str, list[str] | None],
+    id_extruders: dict[str, int],
+    filament_colors: list[str],
+    depth: int = 0,
+) -> ColorNode:
+    children_ids = objects.get(object_id) if depth < _MAX_COMPONENT_DEPTH else None
+    if children_ids:
+        return ColorNode(
+            children=[
+                _build_color_node(child_id, objects, id_extruders, filament_colors, depth + 1)
+                for child_id in children_ids
+            ]
+        )
+    extruder = id_extruders.get(object_id)
+    color = None
+    if extruder is not None and 1 <= extruder <= len(filament_colors):
+        color = filament_colors[extruder - 1] or None
+    return ColorNode(color=color)
+
+
+def _parse_color_tree(
+    zf: zipfile.ZipFile, id_extruders: dict[str, int], filament_colors: list[str]
+) -> list[ColorNode]:
+    """Best-effort -- returns [] (meaning "nothing to color, use the
+    default flat color") on anything missing/malformed, or when there's
+    simply no per-object/part extruder+color info to place onto the tree.
+    """
+    if not id_extruders or not filament_colors:
+        return []
+    objects, build_item_ids = _parse_object_graph(zf)
+    if not build_item_ids:
+        return []
+    return [_build_color_node(item_id, objects, id_extruders, filament_colors) for item_id in build_item_ids]
 
 
 def _parse_embedded_filament_colors(zf: zipfile.ZipFile) -> list[str]:
@@ -150,8 +297,12 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
     material split on any missing/malformed/unreadable input."""
     try:
         with zipfile.ZipFile(path) as zf:
-            plates, extruder_indices = _parse_model_settings(zf)
+            plates, extruder_indices, id_extruders = _parse_model_settings(zf)
             embedded_filament_colors = _parse_embedded_filament_colors(zf)
+            try:
+                color_tree = _parse_color_tree(zf, id_extruders, embedded_filament_colors)
+            except Exception:  # noqa: BLE001 - the object-graph walk is the riskiest part of this module; never let it break the rest of the inspection
+                color_tree = []
     except (OSError, zipfile.BadZipFile):
         return _SINGLE_IMPLICIT_PLATE
 
@@ -159,4 +310,5 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
         plates=plates or [PlateInfo(index=1)],
         extruder_indices=extruder_indices,
         embedded_filament_colors=embedded_filament_colors,
+        color_tree=color_tree,
     )

@@ -992,7 +992,7 @@ function MainApp({
                 fileName={file?.name ?? null}
                 uploadStatus={uploadStatus}
               />
-              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} />
+              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} colorTree={plateInfo?.color_tree} />
               {dimensions && (
                 <>
                   <div className="dimensions-readout">

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from .. import threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ModelUploadResponse, PlateInfo, ThreeMfInspection
+from ..schemas import ColorNode, ModelUploadResponse, PlateInfo, ThreeMfInspection
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -63,6 +63,7 @@ def finalize_new_model(
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
+            meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
         except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
             pass
     _meta_path(model_id).write_text(json.dumps(meta))
@@ -191,6 +192,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
             plates=[PlateInfo(**p) for p in meta["plates"]],
             extruder_indices=meta.get("extruder_indices", []),
             embedded_filament_colors=meta.get("embedded_filament_colors", []),
+            color_tree=[ColorNode(**c) for c in meta.get("color_tree", [])],
         )
 
     model_path = resolve_model_path(model_id)
@@ -200,6 +202,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
+            meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
             _meta_path(model_id).write_text(json.dumps(meta))
         except OSError:
             pass  # cache write is best-effort, not a source of truth
