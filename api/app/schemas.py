@@ -18,6 +18,12 @@ class ModelUploadResponse(BaseModel):
     filename: str
 
 
+class SampleModelSummary(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
 class ProfileSummary(BaseModel):
     vendor: str
     kind: str  # "machine" | "process" | "filament"

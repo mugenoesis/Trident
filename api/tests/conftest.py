@@ -17,6 +17,17 @@ os.environ.setdefault("ORCA_API_PRINTERS_DB_PATH", str(_base / "output" / "print
 os.environ.setdefault("ORCA_API_PROFILES_DIR", str(_base / "profiles"))
 os.environ.setdefault("ORCA_API_ORCASLICER_DATADIR", str(_base / "datadir"))
 os.environ.setdefault("ORCA_API_ORCASLICER_BIN", "orca-slicer-not-installed-in-tests")
+os.environ.setdefault("ORCA_API_SAMPLE_MODELS_DIR", str(_base / "sample_models"))
+
+# Stand-ins for the real vendor/orcaslicer/resources/handy_models files
+# (not available in this test environment) -- test_sample_models.py's
+# fixtures need actual files at the catalog's expected filenames for
+# is_file()/copyfile() to succeed. Content is irrelevant; only the
+# filename and presence matter here.
+_sample_models_dir = Path(os.environ["ORCA_API_SAMPLE_MODELS_DIR"])
+_sample_models_dir.mkdir(parents=True, exist_ok=True)
+for _fixture_filename in ("3DBenchy.drc", "OrcaCube_v2.drc", "OrcaBadge.3mf", "Stanford_Bunny.drc"):
+    (_sample_models_dir / _fixture_filename).write_bytes(b"fake sample model bytes")
 
 
 @pytest.fixture()

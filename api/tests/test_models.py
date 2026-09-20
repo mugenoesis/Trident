@@ -27,6 +27,21 @@ def test_resolve_model_original_name_missing_returns_none():
     assert resolve_model_original_name("no-such-model-id") is None
 
 
+def test_get_model_file_returns_original_bytes(client):
+    model_id = client.post(
+        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
+    ).json()["model_id"]
+
+    resp = client.get(f"/models/{model_id}/file")
+    assert resp.status_code == 200
+    assert resp.content == b"fake stl bytes"
+    assert 'filename="cube.stl"' in resp.headers["content-disposition"]
+
+
+def test_get_model_file_404s_for_unknown_model(client):
+    assert client.get("/models/does-not-exist/file").status_code == 404
+
+
 def test_plates_endpoint_synthetic_single_plate_for_non_3mf(client):
     model_id = client.post(
         "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}

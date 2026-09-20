@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from . import profiles as profiles_module
 from .cleanup import run_cleanup_loop
 from .config import settings
-from .routers import auth, jobs, models, printers, profiles, source
+from .routers import auth, jobs, models, printers, profiles, sample_models, source
 
 
 @asynccontextmanager
@@ -50,6 +50,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(models.router)
+app.include_router(sample_models.router)
 app.include_router(profiles.router)
 app.include_router(jobs.router)
 app.include_router(printers.router)

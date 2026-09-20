@@ -7,6 +7,7 @@ import {
   deleteJob,
   deleteMaterialProfile,
   deletePrinter,
+  downloadModelFile,
   duplicateMaterialProfile,
   getJob,
   getModelPlates,
@@ -16,6 +17,8 @@ import {
   listMaterialProfiles,
   listPrinters,
   listProfiles,
+  listSampleModels,
+  loadSampleModel,
   sendToPrinter,
   updateMaterialProfile,
   updatePrinter,
@@ -54,6 +57,7 @@ import type {
   PrinterRecord,
   PrinterUpdateRequest,
   ProfileSummary,
+  SampleModelSummary,
   SettingDef,
   ThreeMfInspection,
 } from './types'
@@ -181,6 +185,7 @@ function MainApp({
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [sampleModels, setSampleModels] = useState<SampleModelSummary[]>([])
 
   const [file, setFile] = useState<File | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
@@ -317,6 +322,12 @@ function MainApp({
         setPrintersLoaded(true)
       })
       .catch(() => setPrintersLoaded(true))
+
+    listSampleModels()
+      .then(setSampleModels)
+      .catch(() => {
+        /* the settings menu's sample-model list is a nice-to-have; ignore failures */
+      })
   }, [])
 
   const applyMaterialProfile = useCallback((material: MaterialProfileRecord) => {
@@ -382,6 +393,40 @@ function MainApp({
           .catch(() => setPlateInfo(null))
       })
       .catch(() => setUploadStatus('error'))
+  }, [])
+
+  // Loads one of the built-in sample models (SettingsMenu's "Load a sample
+  // model…") instead of a local upload. The model is created server-side
+  // (routers/sample_models.py copies the bundled file into a fresh
+  // model_id), so unlike handleFileSelected there's no File object already
+  // in hand -- re-fetch the bytes into one via GET /models/{id}/file so the
+  // rest of the app (viewer preview, scale-to-fit) works exactly the same
+  // as it does for a local upload.
+  const handleLoadSample = useCallback((sampleId: string) => {
+    setFile(null)
+    setModelId(null)
+    setUploadStatus('uploading')
+    setScaleToastDismissed(false)
+    setViewMode('model')
+    setPlateInfo(null)
+    setPlateIndex(null)
+    setMaterialSource('slots')
+    return loadSampleModel(sampleId)
+      .then((res) => {
+        setModelId(res.model_id)
+        getModelPlates(res.model_id)
+          .then(setPlateInfo)
+          .catch(() => setPlateInfo(null))
+        return downloadModelFile(res.model_id)
+      })
+      .then((downloaded) => {
+        setFile(downloaded)
+        setUploadStatus('done')
+      })
+      .catch((err: Error) => {
+        setUploadStatus('error')
+        throw err
+      })
   }, [])
 
   // Stable reference: Viewer's effect depends on this, and an inline arrow
@@ -816,6 +861,8 @@ function MainApp({
           onSwitchToSingle={onSwitchToSingle}
           onCreateUser={onCreateUser}
           onLogout={onLogout}
+          sampleModels={sampleModels}
+          onLoadSample={handleLoadSample}
         />
       </header>
 

@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import type { BedSize, Dimensions } from '../dimensions'
 
 interface ViewerProps {
@@ -68,6 +69,9 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
     let ceiling: THREE.Mesh | null = null
     let animationId = 0
     let disposed = false
+    // Only instantiated for a .drc file (below) -- holds a worker pool that
+    // needs explicit disposal, unlike the other loaders here.
+    let dracoLoader: DRACOLoader | null = null
 
     // A muted blue-gray blended into the dark background too easily. A
     // saturated, warm color (like a printed-plastic filament) reads clearly
@@ -163,7 +167,33 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
 
     if (file) {
       const url = URL.createObjectURL(file)
-      const isThreeMf = file.name.toLowerCase().endsWith('.3mf')
+      const lowerName = file.name.toLowerCase()
+      const isThreeMf = lowerName.endsWith('.3mf')
+      const isDrc = lowerName.endsWith('.drc')
+
+      // Shared by the STL and DRC branches below: both loaders hand back a
+      // single BufferGeometry (unlike 3MFLoader's Group), so wrapping it in
+      // a Mesh + edge outline + auto-frame is identical either way.
+      const handleGeometry = (geometry: THREE.BufferGeometry) => {
+        if (disposed) return
+        geometry.computeVertexNormals()
+        geometry.computeBoundingBox()
+
+        const mesh = new THREE.Mesh(geometry, material)
+        scene.add(mesh)
+        loadedObject = mesh
+
+        // Edge lines make flat-shaded faces read as a solid shape instead
+        // of a smear of color, especially for simple/low-poly models.
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(geometry, 30),
+          new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
+        )
+        mesh.add(edges)
+
+        finishLoad(mesh, geometry.boundingBox!)
+        URL.revokeObjectURL(url)
+      }
 
       if (isThreeMf) {
         new ThreeMFLoader().load(
@@ -190,30 +220,25 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
             URL.revokeObjectURL(url)
           },
         )
+      } else if (isDrc) {
+        // No setDecoderPath() call needed -- DRACOLoader's own default
+        // decoder paths are computed relative to its own module URL
+        // (`new URL(..., import.meta.url)`), which Vite resolves and
+        // bundles as ordinary same-origin build assets, no CDN involved.
+        dracoLoader = new DRACOLoader()
+        dracoLoader.load(
+          url,
+          handleGeometry,
+          undefined,
+          (err) => {
+            console.error('Failed to load DRC for preview', err)
+            URL.revokeObjectURL(url)
+          },
+        )
       } else {
         new STLLoader().load(
           url,
-          (geometry) => {
-            if (disposed) return
-            geometry.computeVertexNormals()
-            geometry.computeBoundingBox()
-
-            const mesh = new THREE.Mesh(geometry, material)
-            scene.add(mesh)
-            loadedObject = mesh
-
-            // Edge lines make flat-shaded faces read as a solid shape
-            // instead of a smear of color, especially for simple/low-poly
-            // models.
-            const edges = new THREE.LineSegments(
-              new THREE.EdgesGeometry(geometry, 30),
-              new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
-            )
-            mesh.add(edges)
-
-            finishLoad(mesh, geometry.boundingBox!)
-            URL.revokeObjectURL(url)
-          },
+          handleGeometry,
           undefined,
           (err) => {
             console.error('Failed to load STL for preview', err)
@@ -247,6 +272,10 @@ export default function Viewer({ file, onDimensions, bedSize }: ViewerProps) {
       cancelAnimationFrame(animationId)
       resizeObserver.disconnect()
       controls.dispose()
+      // Terminates DRACOLoader's decode worker pool -- the other loaders
+      // here don't spin up any background workers, so only this one needs
+      // an explicit dispose.
+      dracoLoader?.dispose()
       // Handles both a lone STL Mesh (with its LineSegments edges child)
       // and a 3MF Group of several meshes -- traverse visits the root
       // object too, so this covers the single-mesh case without a

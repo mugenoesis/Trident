@@ -12,6 +12,7 @@ import type {
   PrinterUpdateRequest,
   ProfileDetail,
   ProfileSummary,
+  SampleModelSummary,
   SettingsSchema,
   ThreeMfInspection,
 } from './types'
@@ -64,6 +65,31 @@ export async function uploadModel(file: File): Promise<ModelUploadResponse> {
   const form = new FormData()
   form.append('file', file)
   return request('/models', { method: 'POST', body: form })
+}
+
+export function listSampleModels(): Promise<SampleModelSummary[]> {
+  return request('/sample-models')
+}
+
+export function loadSampleModel(sampleId: string): Promise<ModelUploadResponse> {
+  return request(`/sample-models/${encodeURIComponent(sampleId)}/load`, { method: 'POST' })
+}
+
+// Re-fetches a model's original bytes into a browser-side File -- needed
+// for a sample model (loaded server-side, so the browser never held the
+// bytes the way it does for a local upload) to get the same 3D preview an
+// upload gets. The filename comes from Content-Disposition so a sample's
+// display name (e.g. "3DBenchy") round-trips into the File's own name.
+export async function downloadModelFile(modelId: string): Promise<File> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelId)}/file`, {
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  const filename = match?.[1] ?? modelId
+  const blob = await res.blob()
+  return new File([blob], filename)
 }
 
 export function getModelPlates(modelId: string): Promise<ThreeMfInspection> {

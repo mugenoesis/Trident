@@ -31,6 +31,12 @@ export interface ModelUploadResponse {
   filename: string
 }
 
+export interface SampleModelSummary {
+  id: string
+  name: string
+  description: string
+}
+
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
 export interface JobProgress {

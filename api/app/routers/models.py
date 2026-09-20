@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from .. import threemf
 from ..auth import require_user
@@ -41,6 +42,33 @@ def _read_meta(model_id: str) -> dict | None:
         return None
 
 
+def finalize_new_model(
+    model_id: str, suffix: str, dest: Path, original_name: str, owner_user_id: str
+) -> ModelUploadResponse:
+    """Writes the sidecar meta (+ .3mf plate/material inspection, best
+    effort) for a model file that's already been written to `dest` --
+    shared by the upload route below and the sample-model loader
+    (routers/sample_models.py), which copies a bundled file to the same
+    place instead of streaming an upload."""
+    meta_dir = settings.models_dir / _META_DIRNAME
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "filename": original_name,
+        "owner_user_id": owner_user_id,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if suffix == ".3mf":
+        try:
+            inspection = threemf.inspect_3mf(dest)
+            meta["plates"] = [p.model_dump() for p in inspection.plates]
+            meta["extruder_indices"] = inspection.extruder_indices
+        except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
+            pass
+    _meta_path(model_id).write_text(json.dumps(meta))
+
+    return ModelUploadResponse(model_id=model_id, filename=original_name)
+
+
 @router.post("", response_model=ModelUploadResponse)
 async def upload_model(file: UploadFile, current: User = Depends(require_user)) -> ModelUploadResponse:
     suffix = Path(file.filename or "").suffix.lower()
@@ -65,23 +93,22 @@ async def upload_model(file: UploadFile, current: User = Depends(require_user)) 
             out.write(chunk)
 
     original_name = file.filename or dest.name
-    meta_dir = settings.models_dir / _META_DIRNAME
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "filename": original_name,
-        "owner_user_id": current.id,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if suffix == ".3mf":
-        try:
-            inspection = threemf.inspect_3mf(dest)
-            meta["plates"] = [p.model_dump() for p in inspection.plates]
-            meta["extruder_indices"] = inspection.extruder_indices
-        except Exception:  # noqa: BLE001 - a parse bug must never fail the upload itself
-            pass
-    _meta_path(model_id).write_text(json.dumps(meta))
+    return finalize_new_model(model_id, suffix, dest, original_name, current.id)
 
-    return ModelUploadResponse(model_id=model_id, filename=original_name)
+
+@router.get("/{model_id}/file")
+def get_model_file(model_id: str, current: User = Depends(require_user)) -> FileResponse:
+    """The original model bytes, for the frontend to re-fetch into a
+    browser-side File/Blob it never had itself -- notably a sample model
+    loaded server-side (routers/sample_models.py) via POST /sample-models/
+    {id}/load, which returns a model_id but no bytes the browser already
+    holds the way a local upload does."""
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    path = resolve_model_path(model_id)
+    original_name = resolve_model_original_name(model_id) or path.name
+    return FileResponse(path, media_type="application/octet-stream", filename=original_name)
 
 
 @router.get("/{model_id}/plates", response_model=ThreeMfInspection)

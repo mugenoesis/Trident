@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Baked-in, read-only profile catalog (vendor/orcaslicer/resources/profiles).
     profiles_dir: Path = Path("/opt/orcaslicer/resources/profiles")
 
+    # Baked-in sample models bundled with OrcaSlicer itself (a curated
+    # subset is exposed via GET /sample-models -- see api/app/sample_models.py).
+    sample_models_dir: Path = Path("/opt/orcaslicer/resources/handy_models")
+
     # Writable --datadir (presets/cache), distinct from profiles_dir.
     orcaslicer_datadir: Path = Path("/data/orcaslicer-datadir")
 
