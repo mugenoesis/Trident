@@ -86,8 +86,17 @@ export async function downloadModelFile(modelId: string): Promise<File> {
   })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   const disposition = res.headers.get('Content-Disposition') ?? ''
-  const match = /filename="?([^"]+)"?/.exec(disposition)
-  const filename = match?.[1] ?? modelId
+  // Starlette's FileResponse only uses the plain filename="..." form when
+  // the name needs no encoding -- any name with a space (every bundled
+  // sample model except "3DBenchy") gets the RFC 5987 filename*=UTF-8''
+  // <percent-encoded> form instead, which must be decodeURIComponent'd,
+  // not read literally as if it were the plain form. Missing this meant
+  // every multi-word sample silently fell back to using the bare model_id
+  // (no extension) as its filename, which made the viewer misdetect it as
+  // a plain STL and feed raw 3MF/Draco bytes into STLLoader.
+  const encodedMatch = /filename\*=[^']*''([^;]+)/i.exec(disposition)
+  const plainMatch = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = encodedMatch ? decodeURIComponent(encodedMatch[1]) : (plainMatch?.[1] ?? modelId)
   const blob = await res.blob()
   return new File([blob], filename)
 }
