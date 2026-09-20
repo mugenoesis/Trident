@@ -154,6 +154,39 @@ function slotCountFromMachineData(data: Record<string, unknown> | undefined): nu
   return Array.isArray(nozzleDiameter) && nozzleDiameter.length > 0 ? nozzleDiameter.length : 1
 }
 
+// Confirmed via direct CLI testing against a real toolchanger printer
+// (Snapmaker U1 0.4+0.6 nozzle): its own bundled process profile's default
+// bridge_line_width exceeds 0.6mm-nozzle validation ("Bridge line width
+// must not exceed nozzle diameter: 0.600000"), failing *every* slice
+// against that machine regardless of which physical nozzle is actually
+// used -- a pre-existing bug in the catalog's own data, not anything to
+// do with which materials/nozzle a job picks. Clamping to the smallest
+// configured nozzle whenever a machine mixes diameters sidesteps it.
+function parsedNozzleDiameters(data: Record<string, unknown> | undefined): number[] {
+  const raw = data?.nozzle_diameter
+  if (!Array.isArray(raw)) return []
+  return raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+}
+
+// One entry per filament role the uploaded file itself needs -- e.g. a
+// plain STL is always exactly one anonymous role, a 2-color painted 3mf
+// is two roles with real original colors. `color` is the file's own
+// author's color for that role when known (from Metadata/project_settings
+// .config's filament_colour, which catches paint-on/per-triangle color
+// assignments that per-object extruder metadata misses entirely -- see
+// api/app/threemf.py) -- null when genuinely unknown.
+interface FileRole {
+  color: string | null
+}
+
+function fileRolesFromInspection(info: ThreeMfInspection | null): FileRole[] {
+  if (info?.embedded_filament_colors.length) {
+    return info.embedded_filament_colors.map((c) => ({ color: c || null }))
+  }
+  const count = info?.extruder_indices.length || 1
+  return Array.from({ length: count }, () => ({ color: null }))
+}
+
 export default function App() {
   const auth = useAuth()
 
@@ -216,21 +249,27 @@ function MainApp({
   const [processName, setProcessName] = useState('')
   const [filamentSlots, setFilamentSlots] = useState<FilamentSlot[]>(buildFilamentSlots(1, ''))
   const [bedSize, setBedSize] = useState<BedSize | null>(null)
+  // The selected machine's nozzle_diameter values (see parsedNozzleDiameters
+  // above) -- used at slice time to work around a real catalog bug where a
+  // mixed-diameter toolchanger's own process profile fails validation.
+  const [nozzleDiameters, setNozzleDiameters] = useState<number[]>([])
 
   // Premade multi-plate/multi-material .3mf support: parsed once per upload
   // (see handleFileSelected), always present (a synthetic single implicit
-  // plate for non-3mf uploads) so the plate picker/materials-source toggle
+  // plate for non-3mf uploads) so the plate picker/nozzle-assignment UI
   // below can render unconditionally off its shape.
   const [plateInfo, setPlateInfo] = useState<ThreeMfInspection | null>(null)
   const [plateIndex, setPlateIndex] = useState<number | null>(null)
-  // 'slots': send the configured filamentSlots to OrcaSlicer (remaps the
-  // file's own per-object assignments onto them when 2+ distinct profiles
-  // are given). 'embedded': send none at all, so the file's own baked-in
-  // per-slot materials are used exactly as authored. Passing exactly one
-  // profile against a genuinely multi-material file silently flattens it
-  // (see the footgun warning below) -- this toggle exists specifically to
-  // make that an explicit choice rather than an accident.
-  const [materialSource, setMaterialSource] = useState<'slots' | 'embedded'>('slots')
+  // Which of the printer's configured filamentSlots (by index) supplies
+  // each "role" (color/material) the uploaded file itself needs -- see
+  // fileRoles below. null means "not chosen yet". Sending a mismatched
+  // filament count relative to what the file actually needs (previously:
+  // always all of filamentSlots, regardless of file need) is a confirmed
+  // OrcaSlicer CLI crash trigger (exit code -11) against a real downloaded
+  // multi-color model whose file only needed 2 roles but got 4 filaments
+  // -- this explicit per-role mapping is what keeps the sent count exactly
+  // matching what the file needs, chosen from real catalog-backed slots.
+  const [roleNozzleAssignments, setRoleNozzleAssignments] = useState<(number | null)[]>([0])
 
   const [scaleToastDismissed, setScaleToastDismissed] = useState(false)
   const [scaling, setScaling] = useState(false)
@@ -397,7 +436,6 @@ function MainApp({
     setViewMode('model')
     setPlateInfo(null)
     setPlateIndex(null)
-    setMaterialSource('slots')
     uploadModel(selected)
       .then((res) => {
         setModelId(res.model_id)
@@ -405,8 +443,8 @@ function MainApp({
         // Always fetch (even for non-3mf uploads): the endpoint always
         // returns a shape (a synthetic single implicit plate for anything
         // that isn't a .3mf with real plate metadata), so the plate
-        // picker/materials-source toggle never need a separate "is this
-        // even a 3mf" branch.
+        // picker/nozzle-assignment UI never need a separate "is this even
+        // a 3mf" branch.
         getModelPlates(res.model_id)
           .then(setPlateInfo)
           .catch(() => setPlateInfo(null))
@@ -429,7 +467,6 @@ function MainApp({
     setViewMode('model')
     setPlateInfo(null)
     setPlateIndex(null)
-    setMaterialSource('slots')
     return loadSampleModel(sampleId)
       .then((res) => {
         setModelId(res.model_id)
@@ -485,6 +522,7 @@ function MainApp({
       setProcessName('')
       setFilamentSlots(buildFilamentSlots(1, ''))
       setBedSize(null)
+      setNozzleDiameters([])
       setScaleToastDismissed(false)
       setSelectedPrinterId(null)
       setViewMode('model')
@@ -544,10 +582,12 @@ function MainApp({
           setProcessName(process)
           setFilamentSlots(buildFilamentSlots(slotCountFromMachineData(detail.data), filament))
           setBedSize(parseBedSize(detail.data))
+          setNozzleDiameters(parsedNozzleDiameters(detail.data))
         })
         .catch(() => {
           setProcessName(firstOfKind('process'))
           setFilamentSlots(buildFilamentSlots(1, firstOfKind('filament')))
+          setNozzleDiameters([])
         })
     },
     [vendor, profiles],
@@ -559,6 +599,7 @@ function MainApp({
     setProcessName('')
     setFilamentSlots(buildFilamentSlots(1, ''))
     setBedSize(null)
+    setNozzleDiameters([])
     setSelectedPrinterId(null)
     setViewMode('model')
   }, [])
@@ -617,6 +658,15 @@ function MainApp({
     )
     setScaleToastDismissed(false)
     setViewMode('model')
+    setNozzleDiameters([])
+    // The one piece a saved printer record doesn't snapshot itself: the
+    // machine profile's actual nozzle_diameter values (only needed at
+    // slice time, for the bridge_line_width safety clamp above) --
+    // fetched fresh rather than blocking the otherwise-synchronous restore
+    // above on it.
+    getProfileDetail(printer.vendor, 'machine', printer.machine_profile)
+      .then((detail) => setNozzleDiameters(parsedNozzleDiameters(detail.data)))
+      .catch(() => setNozzleDiameters([]))
   }, [])
 
   const handleSavePrinter = useCallback(
@@ -783,20 +833,40 @@ function MainApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentJob?.id, currentJob?.status])
 
-  // 'embedded' means "respect this .3mf's own baked-in per-slot materials
-  // as authored" -- send none at all (cli_runner.py already treats an empty
-  // list as "omit --load-filaments"). Otherwise send the configured slots;
-  // when the file is genuinely multi-material (extruder_indices.length > 1)
-  // this needs 2+ distinct profiles to avoid OrcaSlicer's collapse-to-one-
-  // material behavior -- see the footgun warning below.
+  const fileRoles = useMemo(() => fileRolesFromInspection(plateInfo), [plateInfo])
+
+  // Resets whenever a new file's roles are known -- a single-role file
+  // (the common case: a plain STL, or a .3mf with no detected
+  // multi-material info) defaults to the printer's first configured slot
+  // so a plain single-color print needs no extra step, same as before
+  // this feature existed; overridable via the nozzle-assignment UI below.
+  // A genuinely multi-role file starts fully unassigned instead -- there's
+  // no safe default mapping to guess (guessing wrong here is exactly what
+  // crashed the CLI once already), so slicing stays blocked until every
+  // role has an explicit, deliberate choice.
+  useEffect(() => {
+    setRoleNozzleAssignments(fileRoles.length === 1 ? [0] : fileRoles.map(() => null))
+  }, [fileRoles])
+
+  const allRolesAssigned = roleNozzleAssignments.every(
+    (slotIdx) => slotIdx !== null && filamentSlots[slotIdx]?.profile,
+  )
+  // Exactly one filament per file role, chosen from the printer's real,
+  // catalog-backed configured slots -- never more or fewer than the file
+  // actually needs (confirmed via direct testing against a real downloaded
+  // multi-color model: sending a mismatched count, e.g. all 4 configured
+  // slots for a file that only needs 2, crashes the OrcaSlicer CLI outright
+  // rather than failing gracefully).
   const effectiveFilamentProfiles = useMemo(
-    () => (materialSource === 'embedded' ? [] : filamentSlots.map((s) => s.profile)),
-    [materialSource, filamentSlots],
+    () => roleNozzleAssignments.map((slotIdx) => (slotIdx !== null ? (filamentSlots[slotIdx]?.profile ?? '') : '')),
+    [roleNozzleAssignments, filamentSlots],
   )
 
-  const showMaterialSourceToggle = (plateInfo?.extruder_indices.length ?? 0) > 0
-  const showMultiMaterialFootgunWarning =
-    (plateInfo?.extruder_indices.length ?? 0) > 1 && effectiveFilamentProfiles.length === 1
+  // Only worth showing when there's an actual choice to make: either the
+  // printer has more than one nozzle to pick from, or the file itself
+  // needs more than one color (in which case a per-role mapping is
+  // mandatory even on a printer with just one configured slot repeated).
+  const showNozzleAssignment = filamentSlots.length > 1 || fileRoles.length > 1
   const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1
 
   const currentSignature = useMemo(
@@ -821,12 +891,12 @@ function MainApp({
   // picker exists (see plan: pre-slice picker, not slice-everything).
   const plateChosenIfNeeded = !showPlatePicker || plateIndex !== null
   const canSlice =
-    Boolean(modelId && printerName && processName && filamentSlotsFilled) &&
+    Boolean(modelId && printerName && processName && allRolesAssigned) &&
     plateChosenIfNeeded &&
     !alreadySliced
 
   const handleSlice = useCallback(() => {
-    if (!modelId || !printerName || !processName || !filamentSlotsFilled || !plateChosenIfNeeded) return
+    if (!modelId || !printerName || !processName || !allRolesAssigned || !plateChosenIfNeeded) return
     setSlicing(true)
     setViewMode('model')
     setLastSlicedSignature(currentSignature)
@@ -843,6 +913,17 @@ function MainApp({
     if (quickSettings.enable_support === '1') {
       overrides.support_type = quickSettings.support_type
       overrides.support_buildplate_only = quickSettings.support_buildplate_only
+    }
+    // Confirmed via direct CLI testing: a mixed-diameter toolchanger's own
+    // bundled process profile can fail slicing outright ("Bridge line
+    // width must not exceed nozzle diameter") because its default
+    // bridge_line_width was sized for its smaller nozzle but validated
+    // against its largest -- clamp to the smallest configured nozzle
+    // whenever there's genuine diameter variation, unless the user has
+    // already set this explicitly via Advanced settings.
+    const uniqueNozzleDiameters = new Set(nozzleDiameters)
+    if (uniqueNozzleDiameters.size > 1 && !('bridge_line_width' in advancedOverrides)) {
+      overrides.bridge_line_width = String(Math.min(...nozzleDiameters))
     }
     createJob({
       model_id: modelId,
@@ -861,12 +942,13 @@ function MainApp({
     modelId,
     printerName,
     processName,
-    filamentSlotsFilled,
+    allRolesAssigned,
     plateChosenIfNeeded,
     effectiveFilamentProfiles,
     plateIndex,
     quickSettings,
     advancedOverrides,
+    nozzleDiameters,
     currentSignature,
   ])
 
@@ -921,6 +1003,45 @@ function MainApp({
               )}
               {showPlatePicker && plateInfo && (
                 <PlatePicker plates={plateInfo.plates} plateIndex={plateIndex} onChange={setPlateIndex} />
+              )}
+              {modelId && showNozzleAssignment && (
+                <div className="field-group nozzle-assignment">
+                  <span>
+                    {fileRoles.length > 1
+                      ? 'This file uses multiple colors -- assign each to a nozzle'
+                      : 'Which nozzle should print this?'}
+                  </span>
+                  {fileRoles.map((role, roleIdx) => (
+                    <div className="nozzle-assignment-row" key={roleIdx}>
+                      {fileRoles.length > 1 && (
+                        <>
+                          <span
+                            className="nozzle-assignment-role-swatch"
+                            style={role.color ? { background: role.color } : undefined}
+                            title={role.color ?? 'Unknown color'}
+                          />
+                          <span className="nozzle-assignment-role-label">Color {roleIdx + 1}</span>
+                        </>
+                      )}
+                      <select
+                        value={roleNozzleAssignments[roleIdx] ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value === '' ? null : Number(e.target.value)
+                          setRoleNozzleAssignments((prev) => prev.map((v, i) => (i === roleIdx ? value : v)))
+                        }}
+                      >
+                        <option value="" disabled>
+                          Choose a nozzle…
+                        </option>
+                        {filamentSlots.map((slot, slotIdx) => (
+                          <option key={slotIdx} value={slotIdx}>
+                            {`Slot ${slotIdx + 1}${slot.profile ? ` — ${slot.profile}` : ''}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -1003,35 +1124,6 @@ function MainApp({
                 }
               />
             ))}
-            {showMaterialSourceToggle && (
-              <div className="field-group material-source-toggle">
-                <span>Materials for this file</span>
-                <div className="segmented-control">
-                  <button
-                    type="button"
-                    className={materialSource === 'slots' ? 'active' : ''}
-                    onClick={() => setMaterialSource('slots')}
-                  >
-                    Use my slot materials
-                  </button>
-                  <button
-                    type="button"
-                    className={materialSource === 'embedded' ? 'active' : ''}
-                    onClick={() => setMaterialSource('embedded')}
-                  >
-                    Use this file&rsquo;s built-in materials
-                  </button>
-                </div>
-              </div>
-            )}
-            {showMultiMaterialFootgunWarning && (
-              <div className="banner-warning">
-                This file uses multiple materials internally. Slicing with a single material profile
-                will flatten them onto one filament and disable the wipe tower. Switch to &ldquo;Use
-                this file&rsquo;s built-in materials&rdquo;, or configure more than one material slot,
-                to keep them separate.
-              </div>
-            )}
             <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
           </details>
 

@@ -761,35 +761,35 @@
   border: 2px solid var(--accent-hover);
 }
 
-.material-source-toggle .segmented-control {
+.nozzle-assignment {
+  text-align: left;
+}
+
+.nozzle-assignment-row {
   display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.nozzle-assignment-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.nozzle-assignment-role-swatch {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  border-radius: 4px;
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  overflow: hidden;
-  width: fit-content;
+  background: var(--panel-bg);
 }
 
-.material-source-toggle .segmented-control button {
-  background: none;
-  border: none;
-  border-radius: 0;
-  padding: 0.4rem 0.7rem;
-  font-size: 0.85rem;
+.nozzle-assignment-role-label {
+  font-size: 0.8rem;
   color: var(--text-dim);
-}
-
-.material-source-toggle .segmented-control button.active {
-  background: var(--accent);
-  color: white;
-}
-
-.banner-warning {
-  background: #3a301a;
-  color: var(--warning);
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  margin-bottom: 0.5rem;
+  white-space: nowrap;
 }
 
 .plate-picker-options {

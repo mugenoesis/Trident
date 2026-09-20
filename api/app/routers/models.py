@@ -62,6 +62,7 @@ def finalize_new_model(
             inspection = threemf.inspect_3mf(dest)
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
+            meta["embedded_filament_colors"] = inspection.embedded_filament_colors
         except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
             pass
     _meta_path(model_id).write_text(json.dumps(meta))
@@ -189,6 +190,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
         return ThreeMfInspection(
             plates=[PlateInfo(**p) for p in meta["plates"]],
             extruder_indices=meta.get("extruder_indices", []),
+            embedded_filament_colors=meta.get("embedded_filament_colors", []),
         )
 
     model_path = resolve_model_path(model_id)
@@ -197,12 +199,13 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
         try:
             meta["plates"] = [p.model_dump() for p in inspection.plates]
             meta["extruder_indices"] = inspection.extruder_indices
+            meta["embedded_filament_colors"] = inspection.embedded_filament_colors
             _meta_path(model_id).write_text(json.dumps(meta))
         except OSError:
             pass  # cache write is best-effort, not a source of truth
         return inspection
 
-    return ThreeMfInspection(plates=[PlateInfo(index=1)], extruder_indices=[])
+    return ThreeMfInspection(plates=[PlateInfo(index=1)])
 
 
 def resolve_model_uploaded_at(model_id: str) -> datetime | None:

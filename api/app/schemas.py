@@ -98,6 +98,14 @@ class PlateInfo(BaseModel):
 class ThreeMfInspection(BaseModel):
     plates: list[PlateInfo]
     extruder_indices: list[int] = Field(default_factory=list)
+    # The file's own author's filament_colour array (Metadata/
+    # project_settings.config), one entry per filament role the file was
+    # originally configured with -- more reliable than extruder_indices
+    # for detecting real multi-material intent (catches paint-on/
+    # per-triangle color assignments that per-object extruder metadata
+    # misses entirely). An empty string means "role exists, no known
+    # color" rather than "no role" -- length is what matters.
+    embedded_filament_colors: list[str] = Field(default_factory=list)
 
 
 class AuthStatus(BaseModel):

@@ -1,17 +1,26 @@
+import json
 import zipfile
 from pathlib import Path
 
 from app.threemf import inspect_3mf
 
 _MODEL_SETTINGS_PATH = "Metadata/model_settings.config"
+_PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
 
 
-def _write_3mf(tmp_path: Path, name: str, model_settings: str | None) -> Path:
+def _write_3mf(
+    tmp_path: Path,
+    name: str,
+    model_settings: str | None,
+    project_settings: str | None = None,
+) -> Path:
     path = tmp_path / name
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("3D/3dmodel.model", "<model/>")  # minimal, never actually read
         if model_settings is not None:
             zf.writestr(_MODEL_SETTINGS_PATH, model_settings)
+        if project_settings is not None:
+            zf.writestr(_PROJECT_SETTINGS_PATH, project_settings)
     return path
 
 
@@ -102,3 +111,59 @@ def test_zero_plate_elements_falls_back_to_single_implicit_plate(tmp_path: Path)
     assert len(result.plates) == 1
     assert result.plates[0].index == 1
     assert result.extruder_indices == [1]
+
+
+def test_embedded_filament_colors_parsed_from_project_settings(tmp_path: Path):
+    project_settings = json.dumps({"filament_colour": ["#000000", "#FFFF00"]})
+    path = _write_3mf(tmp_path, "colored.3mf", model_settings=None, project_settings=project_settings)
+    result = inspect_3mf(path)
+    assert result.embedded_filament_colors == ["#000000", "#FFFF00"]
+
+
+def test_paint_on_color_scenario_regression(tmp_path: Path):
+    """The exact real-world shape that crashed OrcaSlicer (exit code -11):
+    a single object whose model_settings.config only assigns it to
+    extruder 1 (per-object metadata has no idea about per-triangle paint
+    data), while project_settings.config's filament_colour reveals the
+    file genuinely uses 2 filament roles. embedded_filament_colors must
+    surface that second role even though extruder_indices misses it --
+    this is the whole reason project_settings.config is consulted at all.
+    """
+    model_settings = """
+    <config>
+      <object id="1">
+        <metadata key="extruder" value="1"/>
+      </object>
+      <plate>
+        <metadata key="plater_id" value="1"/>
+      </plate>
+    </config>
+    """
+    project_settings = json.dumps(
+        {"filament_colour": ["#000000", "#FFFF00"], "default_filament_colour": ["", ""]}
+    )
+    path = _write_3mf(tmp_path, "bee.3mf", model_settings=model_settings, project_settings=project_settings)
+    result = inspect_3mf(path)
+    assert result.extruder_indices == [1]
+    assert result.embedded_filament_colors == ["#000000", "#FFFF00"]
+
+
+def test_missing_project_settings_config_gives_empty_embedded_colors(tmp_path: Path):
+    path = _write_3mf(tmp_path, "no_project_settings.3mf", model_settings="<config/>")
+    result = inspect_3mf(path)
+    assert result.embedded_filament_colors == []
+
+
+def test_malformed_project_settings_config_gives_empty_embedded_colors(tmp_path: Path):
+    path = _write_3mf(
+        tmp_path, "malformed_project_settings.3mf", model_settings=None, project_settings="{not valid json"
+    )
+    result = inspect_3mf(path)
+    assert result.embedded_filament_colors == []
+
+
+def test_non_list_filament_colour_gives_empty_embedded_colors(tmp_path: Path):
+    project_settings = json.dumps({"filament_colour": "not-a-list"})
+    path = _write_3mf(tmp_path, "odd.3mf", model_settings=None, project_settings=project_settings)
+    result = inspect_3mf(path)
+    assert result.embedded_filament_colors == []

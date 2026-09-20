@@ -1,4 +1,5 @@
-"""Best-effort .3mf zip/XML inspection for the pre-slice plate picker.
+"""Best-effort .3mf zip/XML inspection for the pre-slice plate picker and
+per-role material/nozzle assignment.
 
 A project .3mf's Metadata/model_settings.config (an Orca/Bambu convention,
 not the 3MF standard -- confirmed against vendor/orcaslicer's own writer,
@@ -21,12 +22,28 @@ element per model object, each carrying <metadata key=.../> children:
       </plate>
     </config>
 
+This per-object "extruder" metadata is NOT the only (or most reliable) way
+a .3mf can express multi-material intent, though -- confirmed against a
+real downloaded multi-color model that crashed the CLI (exit code -11):
+the object-level metadata above only ever said "extruder 1" for its
+single object, even though the file's Metadata/project_settings.config
+(a separate, flat JSON file -- Bambu Studio/OrcaSlicer's own "what was
+configured when this project was saved" dump) had `"filament_colour":
+["#000000", "#FFFF00"]`, i.e. two real filament roles, painted onto that
+one object per-triangle rather than assigned per-object. That JSON file's
+filament_colour array length is the authoritative "how many filament
+roles does this file actually need" signal -- it catches paint-on/
+per-triangle color assignments that the XML above misses entirely, and
+gives real original colors for free. Preferred over extruder_indices
+when present.
+
 A plain/generic .3mf from another tool may have none of this -- every
 function here must degrade to "1 implicit plate, no known material split"
 on anything missing or malformed, never raise.
 """
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -34,8 +51,9 @@ from xml.etree import ElementTree as ET
 from .schemas import PlateInfo, ThreeMfInspection
 
 _MODEL_SETTINGS_PATH = "Metadata/model_settings.config"
+_PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
 
-_SINGLE_IMPLICIT_PLATE = ThreeMfInspection(plates=[PlateInfo(index=1)], extruder_indices=[])
+_SINGLE_IMPLICIT_PLATE = ThreeMfInspection(plates=[PlateInfo(index=1)])
 
 
 def _metadata_dict(elem: ET.Element) -> dict[str, str]:
@@ -92,26 +110,53 @@ def _parse_extruder_indices(root: ET.Element) -> list[int]:
     return sorted(indices)
 
 
+def _parse_model_settings(zf: zipfile.ZipFile) -> tuple[list[PlateInfo], list[int]]:
+    try:
+        raw = zf.read(_MODEL_SETTINGS_PATH)
+    except KeyError:
+        return [], []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return [], []
+    return _parse_plates(root), _parse_extruder_indices(root)
+
+
+def _parse_embedded_filament_colors(zf: zipfile.ZipFile) -> list[str]:
+    """The file's own author's filament_colour array from
+    Metadata/project_settings.config, if present -- one entry per filament
+    role the file was originally configured with (see module docstring for
+    why this is more reliable than the per-object extruder metadata
+    above). An entry can be an empty string (seen for genuinely
+    unconfigured slots) -- callers should treat that as "role exists, no
+    known color" rather than dropping it and losing the role count.
+    """
+    try:
+        raw = zf.read(_PROJECT_SETTINGS_PATH)
+    except KeyError:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return []
+    colors = data.get("filament_colour")
+    if not isinstance(colors, list):
+        return []
+    return [c if isinstance(c, str) else "" for c in colors]
+
+
 def inspect_3mf(path: Path) -> ThreeMfInspection:
     """Never raises -- degrades to a single implicit plate with no known
     material split on any missing/malformed/unreadable input."""
     try:
         with zipfile.ZipFile(path) as zf:
-            try:
-                raw = zf.read(_MODEL_SETTINGS_PATH)
-            except KeyError:
-                return _SINGLE_IMPLICIT_PLATE
+            plates, extruder_indices = _parse_model_settings(zf)
+            embedded_filament_colors = _parse_embedded_filament_colors(zf)
     except (OSError, zipfile.BadZipFile):
         return _SINGLE_IMPLICIT_PLATE
 
-    try:
-        root = ET.fromstring(raw)
-    except ET.ParseError:
-        return _SINGLE_IMPLICIT_PLATE
-
-    plates = _parse_plates(root)
-    if not plates:
-        plates = [PlateInfo(index=1)]
-    extruder_indices = _parse_extruder_indices(root)
-
-    return ThreeMfInspection(plates=plates, extruder_indices=extruder_indices)
+    return ThreeMfInspection(
+        plates=plates or [PlateInfo(index=1)],
+        extruder_indices=extruder_indices,
+        embedded_filament_colors=embedded_filament_colors,
+    )

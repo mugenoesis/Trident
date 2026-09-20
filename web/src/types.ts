@@ -84,6 +84,13 @@ export interface PlateInfo {
 export interface ThreeMfInspection {
   plates: PlateInfo[]
   extruder_indices: number[]
+  // The file's own author's filament_colour array, one entry per filament
+  // role the file was originally configured with -- more reliable than
+  // extruder_indices for detecting real multi-material intent (catches
+  // paint-on/per-triangle color assignments that per-object extruder
+  // metadata misses entirely). An empty string means "role exists, no
+  // known color" rather than "no role" -- length is what matters.
+  embedded_filament_colors: string[]
 }
 
 // "unset": fresh install, no mode chosen yet -- behaves like "single"
