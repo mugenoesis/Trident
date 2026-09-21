@@ -1246,10 +1246,21 @@ function MainApp({
     // its own; a single-nozzle printer shares one physical hotend across
     // every material slot, so one global value applies to all of them (see
     // the Material section below).
+    // nozzle_diameter (coFloats) and nozzle_type (coEnums) both deserialize
+    // as COMMA-separated on this CLI -- confirmed directly against
+    // libslic3r/Config.hpp's ConfigOptionFloatsTempl/ConfigOptionEnumsGenericTempl
+    // ::deserialize, which both split on ',' (only a plain coStrings field,
+    // e.g. filament_type, is genuinely semicolon-separated). A semicolon-
+    // joined value doesn't error for nozzle_diameter -- istream's `>>` for a
+    // double just silently stops at the first ';' -- so this previously
+    // went undetected: sending "0.4;0.4;0.6;0.6" silently collapsed to a
+    // single-element nozzle_diameter of just 0.4, discarding every value
+    // after the first semicolon. Confirmed via direct CLI testing that a
+    // comma-joined value round-trips correctly as the full array.
     if (isMultiHeadPrinter) {
       const diameters = filamentSlots.map((s) => s.nozzleDiameter)
       if (diameters.every((d) => Number.isFinite(d) && d > 0)) {
-        overrides.nozzle_diameter = diameters.join(';')
+        overrides.nozzle_diameter = diameters.join(',')
         // Confirmed via direct CLI testing: a mixed-diameter toolchanger's
         // own bundled process profile can fail slicing outright ("Bridge
         // line width must not exceed nozzle diameter") because its default
@@ -1261,20 +1272,13 @@ function MainApp({
           overrides.bridge_line_width = String(Math.min(...diameters))
         }
       }
-      // nozzle_type (coEnums) deserializes as COMMA-separated on this CLI --
-      // confirmed directly against libslic3r/Config.hpp's
-      // ConfigOptionEnumsGenericTempl::deserialize, which splits on ',' (a
-      // genuine inconsistency with nozzle_diameter/most other array
-      // overrides, which are semicolon-separated per ConfigOptionVector's
-      // own convention) -- and via direct CLI testing (a semicolon-joined
-      // value fails with "Invalid value for option --nozzle-type").
       if (filamentSlots.some((s) => s.nozzleType && s.nozzleType !== 'undefine')) {
         overrides.nozzle_type = filamentSlots.map((s) => s.nozzleType || 'undefine').join(',')
       }
     } else {
       const dia = Number(globalNozzleDiameter)
       if (globalNozzleDiameter.trim() !== '' && Number.isFinite(dia) && dia > 0) {
-        overrides.nozzle_diameter = Array(filamentSlots.length || 1).fill(dia).join(';')
+        overrides.nozzle_diameter = Array(filamentSlots.length || 1).fill(dia).join(',')
       }
       if (globalNozzleType && globalNozzleType !== 'undefine') {
         overrides.nozzle_type = Array(filamentSlots.length || 1).fill(globalNozzleType).join(',')
