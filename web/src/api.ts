@@ -181,8 +181,13 @@ export function switchToSingle(): Promise<AuthStatus> {
 export function updateLastSelection(
   printerId: string | null,
   materialId: string | null,
+  settingsProfileId: string | null,
 ): Promise<AuthStatus> {
-  return putJson('/auth/last-selection', { printer_id: printerId, material_id: materialId })
+  return putJson('/auth/last-selection', {
+    printer_id: printerId,
+    material_id: materialId,
+    settings_profile_id: settingsProfileId,
+  })
 }
 
 export function listPrinters(): Promise<PrinterRecord[]> {

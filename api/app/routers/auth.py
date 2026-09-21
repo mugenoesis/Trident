@@ -46,6 +46,7 @@ def _status(mode: str, user: User | None) -> AuthStatus:
         username=user.username,
         last_printer_id=user.last_printer_id,
         last_material_id=user.last_material_id,
+        last_settings_profile_id=user.last_settings_profile_id,
     )
 
 
@@ -95,7 +96,8 @@ def switch_to_multi(body: SwitchToMultiRequest, response: Response) -> AuthStatu
     # Sets credentials directly on the existing local-user row rather than
     # migrating data to a new id -- that row already owns everything
     # created while in single-user mode (including its last_printer_id/
-    # last_material_id, which carry over unchanged since it's the same row).
+    # last_material_id/last_settings_profile_id, which carry over unchanged
+    # since it's the same row).
     local = user_store.get_or_create_local_user()
     user_store.set_credentials(local.id, username=body.username, password_hash=hash_password(body.password))
     user_store.set_auth_mode("multi")
@@ -147,9 +149,15 @@ def logout(response: Response) -> dict[str, bool]:
 
 @router.put("/last-selection", response_model=AuthStatus)
 def update_last_selection(body: LastSelectionRequest, current: User = Depends(require_user)) -> AuthStatus:
-    """Remembers the printer/material profile last selected, so App.tsx can
-    restore them as the default next time this account opens the site."""
-    user_store.set_last_selection(current.id, printer_id=body.printer_id, material_id=body.material_id)
+    """Remembers the printer/material/settings profile last selected, so
+    App.tsx can restore them as the default next time this account opens
+    the site."""
+    user_store.set_last_selection(
+        current.id,
+        printer_id=body.printer_id,
+        material_id=body.material_id,
+        settings_profile_id=body.settings_profile_id,
+    )
     updated = user_store.get_user(current.id)
     assert updated is not None
     return _status(user_store.get_auth_mode(), updated)

@@ -43,8 +43,8 @@ export function useAuth() {
   )
   const switchToSingle = useCallback(() => apiSwitchToSingle().then(setStatus), [])
   const updateLastSelection = useCallback(
-    (printerId: string | null, materialId: string | null) =>
-      apiUpdateLastSelection(printerId, materialId).then(setStatus),
+    (printerId: string | null, materialId: string | null, settingsProfileId: string | null) =>
+      apiUpdateLastSelection(printerId, materialId, settingsProfileId).then(setStatus),
     [],
   )
 

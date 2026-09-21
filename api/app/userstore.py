@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     last_printer_id TEXT,
     last_material_id TEXT,
+    last_settings_profile_id TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS app_config (
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS app_config (
 # no-op against an already-existing table, so these need an explicit
 # migration for DBs created before they existed (same pattern as
 # jobstore.py's user_id column).
-_MIGRATED_COLUMNS = ("last_printer_id", "last_material_id")
+_MIGRATED_COLUMNS = ("last_printer_id", "last_material_id", "last_settings_profile_id")
 
 
 def _now() -> str:
@@ -58,6 +59,7 @@ class User:
     username: str | None
     last_printer_id: str | None = None
     last_material_id: str | None = None
+    last_settings_profile_id: str | None = None
 
 
 class UserStore:
@@ -142,21 +144,31 @@ class UserStore:
     def get_user(self, user_id: str) -> User | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, username, last_printer_id, last_material_id FROM users WHERE id = ?",
+                "SELECT id, username, last_printer_id, last_material_id, last_settings_profile_id "
+                "FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         return self._row_to_user(row) if row else None
 
-    def set_last_selection(self, user_id: str, *, printer_id: str | None, material_id: str | None) -> None:
-        """Remembers the printer/material profile last selected, so they
-        come back as the default next time this user opens the site --
+    def set_last_selection(
+        self,
+        user_id: str,
+        *,
+        printer_id: str | None,
+        material_id: str | None,
+        settings_profile_id: str | None,
+    ) -> None:
+        """Remembers the printer/material/settings profile last selected, so
+        they come back as the default next time this user opens the site --
         always set together (a full replace), since the frontend re-sends
-        both fields together on every selection change, and material_id
-        without its owning printer_id would be meaningless to restore."""
+        all three fields together on every selection change, and
+        material_id/settings_profile_id without their owning printer_id
+        would be meaningless to restore."""
         with self._connect() as conn:
             conn.execute(
-                "UPDATE users SET last_printer_id = ?, last_material_id = ? WHERE id = ?",
-                (printer_id, material_id, user_id),
+                "UPDATE users SET last_printer_id = ?, last_material_id = ?, "
+                "last_settings_profile_id = ? WHERE id = ?",
+                (printer_id, material_id, settings_profile_id, user_id),
             )
 
     @staticmethod
@@ -166,6 +178,7 @@ class UserStore:
             username=row["username"],
             last_printer_id=row["last_printer_id"],
             last_material_id=row["last_material_id"],
+            last_settings_profile_id=row["last_settings_profile_id"],
         )
 
     def collapse_to_single_user(self) -> None:
@@ -197,8 +210,8 @@ class UserStore:
         username doesn't exist or has no password set yet."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, username, password_hash, last_printer_id, last_material_id "
-                "FROM users WHERE username = ?",
+                "SELECT id, username, password_hash, last_printer_id, last_material_id, "
+                "last_settings_profile_id FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
         if not row or not row["password_hash"]:

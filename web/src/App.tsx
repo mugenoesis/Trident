@@ -296,7 +296,11 @@ interface MainAppProps {
   onSwitchToSingle: () => Promise<unknown>
   onCreateUser: (username: string, password: string) => Promise<unknown>
   onLogout: () => Promise<unknown>
-  onUpdateLastSelection: (printerId: string | null, materialId: string | null) => Promise<unknown>
+  onUpdateLastSelection: (
+    printerId: string | null,
+    materialId: string | null,
+    settingsProfileId: string | null,
+  ) => Promise<unknown>
 }
 
 function MainApp({
@@ -361,18 +365,22 @@ function MainApp({
   const [settingsProfiles, setSettingsProfiles] = useState<SettingsProfileRecord[]>([])
   const [selectedSettingsProfileId, setSelectedSettingsProfileId] = useState<string | null>(null)
 
-  // Restoring the account's last-selected printer/material (see the mount
-  // and material-list effects below) is an async, two-step process --
-  // printers load first, then (if a printer was restored) its materials.
-  // `restorationDone` gates the persist-on-change effect further down so it
-  // can't fire with a half-restored state (printer set, material still
-  // null) and overwrite the correct persisted material_id with null before
-  // the second step finishes. `pendingLastMaterialId` is consumed exactly
-  // once -- it's only meaningful for that first, restored materials fetch,
-  // not any later manual printer switch.
+  // Restoring the account's last-selected printer/material/settings profile
+  // (see the mount and material-/settings-list effects below) is an async,
+  // two-step process -- printers load first, then (if a printer was
+  // restored) its materials and settings profiles, in parallel.
+  // `restorationDone`/`settingsRestorationDone` gate the persist-on-change
+  // effect further down so it can't fire with a half-restored state
+  // (printer set, material/settings profile still null) and overwrite the
+  // correct persisted id with null before that second step finishes.
+  // `pendingLastMaterialId`/`pendingLastSettingsProfileId` are each
+  // consumed exactly once -- only meaningful for that first, restored
+  // fetch, not any later manual printer switch.
   const [restorationDone, setRestorationDone] = useState(false)
+  const [settingsRestorationDone, setSettingsRestorationDone] = useState(false)
   const [printersLoaded, setPrintersLoaded] = useState(false)
   const pendingLastMaterialId = useRef(authStatus.last_material_id)
+  const pendingLastSettingsProfileId = useRef(authStatus.last_settings_profile_id)
 
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
@@ -559,8 +567,8 @@ function MainApp({
       .finally(() => setRestorationDone(true))
   }, [selectedPrinterId, applyMaterialProfile])
 
-  // Same idea for settings profiles -- independent of the materials fetch
-  // above (no last-selection restore for this one; not part of AuthStatus).
+  // Same idea for settings profiles, restored independently of materials
+  // (a different id in AuthStatus, applied via its own pending ref).
   useEffect(() => {
     if (!selectedPrinterId) {
       setSettingsProfiles([])
@@ -569,9 +577,16 @@ function MainApp({
     }
     setSelectedSettingsProfileId(null)
     listSettingsProfiles(selectedPrinterId)
-      .then(setSettingsProfiles)
+      .then((list) => {
+        setSettingsProfiles(list)
+        const pendingId = pendingLastSettingsProfileId.current
+        pendingLastSettingsProfileId.current = null
+        const match = pendingId ? list.find((p) => p.id === pendingId) : undefined
+        if (match) applySettingsProfile(match)
+      })
       .catch(() => setSettingsProfiles([]))
-  }, [selectedPrinterId])
+      .finally(() => setSettingsRestorationDone(true))
+  }, [selectedPrinterId, applySettingsProfile])
 
   const handleFileSelected = useCallback((selected: File) => {
     setFile(selected)
@@ -925,25 +940,34 @@ function MainApp({
       : undefined
     if (match) {
       applySavedPrinter(match)
-      // Restoring a material (if any) happens once this printer's
-      // materials list loads -- see the effect above, which also marks
-      // restorationDone when it settles.
+      // Restoring a material/settings profile (if any) happens once this
+      // printer's materials/settings-profiles lists load -- see the two
+      // effects above, which mark restorationDone/settingsRestorationDone
+      // when they settle.
     } else {
       setRestorationDone(true)
+      setSettingsRestorationDone(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printersLoaded])
 
-  // Persists the current printer/material selection as the account's
-  // default for next time -- but not until the initial restoration (above)
-  // has fully settled, or this would race it: e.g. save (printerId, null)
-  // right after the printer restores but before its material does, then
-  // lose to a slower-finishing restore, permanently wiping the persisted
-  // material_id.
+  // Persists the current printer/material/settings-profile selection as the
+  // account's default for next time -- but not until the initial
+  // restoration (above) has fully settled on both fronts, or this would
+  // race it: e.g. save (printerId, null, null) right after the printer
+  // restores but before its material/settings profile does, then lose to a
+  // slower-finishing restore, permanently wiping the persisted id.
   useEffect(() => {
-    if (!restorationDone) return
-    onUpdateLastSelection(selectedPrinterId, selectedMaterialId).catch(() => {})
-  }, [selectedPrinterId, selectedMaterialId, restorationDone, onUpdateLastSelection])
+    if (!restorationDone || !settingsRestorationDone) return
+    onUpdateLastSelection(selectedPrinterId, selectedMaterialId, selectedSettingsProfileId).catch(() => {})
+  }, [
+    selectedPrinterId,
+    selectedMaterialId,
+    selectedSettingsProfileId,
+    restorationDone,
+    settingsRestorationDone,
+    onUpdateLastSelection,
+  ])
 
   const handleSaveMaterial = useCallback(
     (name: string) => {

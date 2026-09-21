@@ -24,18 +24,20 @@ def test_userstore_set_last_selection_roundtrip(tmp_path):
     user = store.get_or_create_local_user()
     assert user.last_printer_id is None
 
-    store.set_last_selection(user.id, printer_id="p1", material_id="m1")
+    store.set_last_selection(user.id, printer_id="p1", material_id="m1", settings_profile_id="s1")
     fetched = store.get_user(user.id)
     assert fetched is not None
     assert fetched.last_printer_id == "p1"
     assert fetched.last_material_id == "m1"
+    assert fetched.last_settings_profile_id == "s1"
 
 
 def test_userstore_migrates_db_missing_last_selection_columns(tmp_path):
     import sqlite3
 
     db_path = tmp_path / "users.sqlite3"
-    # Simulate a DB created before last_printer_id/last_material_id existed.
+    # Simulate a DB created before last_printer_id/last_material_id/
+    # last_settings_profile_id existed.
     conn = sqlite3.connect(db_path)
     conn.execute(
         "CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE, "
@@ -52,7 +54,7 @@ def test_userstore_migrates_db_missing_last_selection_columns(tmp_path):
     user = store.get_user("local")
     assert user is not None
     assert user.last_printer_id is None
-    store.set_last_selection("local", printer_id="p1", material_id=None)
+    store.set_last_selection("local", printer_id="p1", material_id=None, settings_profile_id=None)
     assert store.get_user("local").last_printer_id == "p1"  # type: ignore[union-attr]
 
 
@@ -79,6 +81,7 @@ def test_setup_single_mode(client):
         "username": None,
         "last_printer_id": None,
         "last_material_id": None,
+        "last_settings_profile_id": None,
     }
 
     # Can't set up twice.
@@ -98,6 +101,7 @@ def test_setup_multi_mode_and_login_roundtrip(client):
         "username": "alice",
         "last_printer_id": None,
         "last_material_id": None,
+        "last_settings_profile_id": None,
     }
     # The setup response sets a session cookie -- confirm status reflects it.
     assert client.get("/auth/status").json()["logged_in"] is True
@@ -229,6 +233,7 @@ def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, mon
         "username": None,
         "last_printer_id": None,
         "last_material_id": None,
+        "last_settings_profile_id": None,
     }
 
     # No login prompt of any kind afterward, and both accounts' jobs survive
@@ -239,6 +244,7 @@ def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, mon
         "username": None,
         "last_printer_id": None,
         "last_material_id": None,
+        "last_settings_profile_id": None,
     }
     job_ids = {j["id"] for j in client.get("/jobs").json()}
     assert job_ids == {alice_job, bob_job}
@@ -252,39 +258,53 @@ def test_last_selection_persists_across_status_checks(client):
     client.post("/auth/setup", json={"mode": "single"})
 
     updated = client.put(
-        "/auth/last-selection", json={"printer_id": "printer-abc", "material_id": "material-xyz"}
+        "/auth/last-selection",
+        json={"printer_id": "printer-abc", "material_id": "material-xyz", "settings_profile_id": "settings-123"},
     )
     assert updated.status_code == 200
     assert updated.json()["last_printer_id"] == "printer-abc"
     assert updated.json()["last_material_id"] == "material-xyz"
+    assert updated.json()["last_settings_profile_id"] == "settings-123"
 
     # Reflected on a later status check, not just the update response --
     # this is what App.tsx actually reads on page load.
     status = client.get("/auth/status").json()
     assert status["last_printer_id"] == "printer-abc"
     assert status["last_material_id"] == "material-xyz"
+    assert status["last_settings_profile_id"] == "settings-123"
 
 
 def test_last_selection_can_be_cleared(client):
     client.post("/auth/setup", json={"mode": "single"})
-    client.put("/auth/last-selection", json={"printer_id": "printer-abc", "material_id": "material-xyz"})
+    client.put(
+        "/auth/last-selection",
+        json={"printer_id": "printer-abc", "material_id": "material-xyz", "settings_profile_id": "settings-123"},
+    )
 
-    cleared = client.put("/auth/last-selection", json={"printer_id": None, "material_id": None})
+    cleared = client.put(
+        "/auth/last-selection", json={"printer_id": None, "material_id": None, "settings_profile_id": None}
+    )
     assert cleared.json()["last_printer_id"] is None
     assert cleared.json()["last_material_id"] is None
+    assert cleared.json()["last_settings_profile_id"] is None
 
 
 def test_last_selection_carries_over_switch_to_multi(client):
     client.post("/auth/setup", json={"mode": "single"})
-    client.put("/auth/last-selection", json={"printer_id": "printer-abc", "material_id": None})
+    client.put(
+        "/auth/last-selection",
+        json={"printer_id": "printer-abc", "material_id": None, "settings_profile_id": "settings-123"},
+    )
 
     switched = client.post("/auth/switch-to-multi", json={"username": "alice", "password": "hunter22"})
     assert switched.json()["last_printer_id"] == "printer-abc"
+    assert switched.json()["last_settings_profile_id"] == "settings-123"
 
     # And on a fresh login later (e.g. from a different device).
     client.post("/auth/logout")
     logged_in = client.post("/auth/login", json={"username": "alice", "password": "hunter22"})
     assert logged_in.json()["last_printer_id"] == "printer-abc"
+    assert logged_in.json()["last_settings_profile_id"] == "settings-123"
 
 
 def test_last_selection_is_per_user(client):
