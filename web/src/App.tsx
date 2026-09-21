@@ -1237,8 +1237,15 @@ function MainApp({
           overrides.bridge_line_width = String(Math.min(...diameters))
         }
       }
+      // nozzle_type (coEnums) deserializes as COMMA-separated on this CLI --
+      // confirmed directly against libslic3r/Config.hpp's
+      // ConfigOptionEnumsGenericTempl::deserialize, which splits on ',' (a
+      // genuine inconsistency with nozzle_diameter/most other array
+      // overrides, which are semicolon-separated per ConfigOptionVector's
+      // own convention) -- and via direct CLI testing (a semicolon-joined
+      // value fails with "Invalid value for option --nozzle-type").
       if (filamentSlots.some((s) => s.nozzleType && s.nozzleType !== 'undefine')) {
-        overrides.nozzle_type = filamentSlots.map((s) => s.nozzleType || 'undefine').join(';')
+        overrides.nozzle_type = filamentSlots.map((s) => s.nozzleType || 'undefine').join(',')
       }
     } else {
       const dia = Number(globalNozzleDiameter)
@@ -1246,7 +1253,7 @@ function MainApp({
         overrides.nozzle_diameter = Array(filamentSlots.length || 1).fill(dia).join(';')
       }
       if (globalNozzleType && globalNozzleType !== 'undefine') {
-        overrides.nozzle_type = Array(filamentSlots.length || 1).fill(globalNozzleType).join(';')
+        overrides.nozzle_type = Array(filamentSlots.length || 1).fill(globalNozzleType).join(',')
       }
     }
     createJob({
