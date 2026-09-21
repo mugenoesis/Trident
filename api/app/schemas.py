@@ -182,10 +182,11 @@ class UserCreateRequest(BaseModel):
 
 
 class MaterialProfileCreateRequest(BaseModel):
+    """A material profile is filament choice only -- print-quality settings
+    live separately in a SettingsProfile (see below), so the two can be
+    saved/loaded/combined independently."""
+
     name: str
-    quick_settings: dict[str, str] = Field(default_factory=dict)
-    advanced_overrides: dict[str, str] = Field(default_factory=dict)
-    process_profile: str | None = None
     # One entry per physical extruder/AMS slot, index-aligned with
     # filament_colors. None (vs. an empty list) means "this material profile
     # doesn't touch filament choice", matching the old scalar's None.
@@ -196,13 +197,10 @@ class MaterialProfileCreateRequest(BaseModel):
 class MaterialProfileUpdateRequest(BaseModel):
     """A field left out entirely is left unchanged (see routers/printers.py's
     `model_dump(exclude_unset=True)`) -- used both for a plain rename
-    ({"name": ...}) and "update mode" (overwriting the saved settings with
-    the current ones: {"quick_settings": ..., "advanced_overrides": ...})."""
+    ({"name": ...}) and "update mode" (overwriting the saved filament
+    choice with the current one)."""
 
     name: str | None = None
-    quick_settings: dict[str, str] | None = None
-    advanced_overrides: dict[str, str] | None = None
-    process_profile: str | None = None
     filament_profiles: list[str] | None = None
     filament_colors: list[str] | None = None
 
@@ -211,11 +209,39 @@ class MaterialProfileRecord(BaseModel):
     id: str
     printer_id: str
     name: str
+    filament_profiles: list[str] | None = None
+    filament_colors: list[str] | None = None
+    created_at: str
+
+
+class SettingsProfileCreateRequest(BaseModel):
+    """A settings profile is print-quality settings only (no filament
+    choice) -- the counterpart to MaterialProfileCreateRequest, saved/loaded
+    independently so the same materials can be reused across different
+    quality presets and vice versa."""
+
+    name: str
+    quick_settings: dict[str, str] = Field(default_factory=dict)
+    advanced_overrides: dict[str, str] = Field(default_factory=dict)
+    process_profile: str | None = None
+
+
+class SettingsProfileUpdateRequest(BaseModel):
+    """Same left-out-means-unchanged convention as MaterialProfileUpdateRequest."""
+
+    name: str | None = None
+    quick_settings: dict[str, str] | None = None
+    advanced_overrides: dict[str, str] | None = None
+    process_profile: str | None = None
+
+
+class SettingsProfileRecord(BaseModel):
+    id: str
+    printer_id: str
+    name: str
     quick_settings: dict[str, str]
     advanced_overrides: dict[str, str]
     process_profile: str | None = None
-    filament_profiles: list[str] | None = None
-    filament_colors: list[str] | None = None
     created_at: str
 
 

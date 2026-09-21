@@ -30,8 +30,8 @@ interface FilamentSelectProps {
 // Split out of PrinterSelect.tsx: material/filament choice is something you
 // reasonably want to change on its own (swap PLA for PETG) without having
 // to dig into "Printer settings" (vendor/printer/process), which auto-
-// collapses once a saved printer is picked -- this lives in "Quick
-// settings" instead, which is exactly where a per-job tweak like this
+// collapses once a saved printer is picked -- this lives in the "Material"
+// section instead, which is exactly where a per-job tweak like this
 // belongs.
 export default function FilamentSelect({
   profiles,

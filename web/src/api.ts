@@ -13,6 +13,9 @@ import type {
   ProfileDetail,
   ProfileSummary,
   SampleModelSummary,
+  SettingsProfileCreateRequest,
+  SettingsProfileRecord,
+  SettingsProfileUpdateRequest,
   SettingsSchema,
   ThreeMfInspection,
 } from './types'
@@ -236,6 +239,36 @@ export function duplicateMaterialProfile(
 
 export function deleteMaterialProfile(printerId: string, materialId: string): Promise<{ ok: boolean }> {
   return request(`/printers/${printerId}/materials/${materialId}`, { method: 'DELETE' })
+}
+
+export function listSettingsProfiles(printerId: string): Promise<SettingsProfileRecord[]> {
+  return request(`/printers/${printerId}/settings-profiles`)
+}
+
+export function createSettingsProfile(
+  printerId: string,
+  req: SettingsProfileCreateRequest,
+): Promise<SettingsProfileRecord> {
+  return postJson(`/printers/${printerId}/settings-profiles`, req)
+}
+
+export function updateSettingsProfile(
+  printerId: string,
+  profileId: string,
+  req: SettingsProfileUpdateRequest,
+): Promise<SettingsProfileRecord> {
+  return putJson(`/printers/${printerId}/settings-profiles/${profileId}`, req)
+}
+
+export function duplicateSettingsProfile(
+  printerId: string,
+  profileId: string,
+): Promise<SettingsProfileRecord> {
+  return postJson(`/printers/${printerId}/settings-profiles/${profileId}/duplicate`, {})
+}
+
+export function deleteSettingsProfile(printerId: string, profileId: string): Promise<{ ok: boolean }> {
+  return request(`/printers/${printerId}/settings-profiles/${profileId}`, { method: 'DELETE' })
 }
 
 export function sendToPrinter(

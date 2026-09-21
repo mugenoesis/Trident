@@ -14,6 +14,9 @@ from ..schemas import (
     PrinterRecord,
     PrinterUpdateRequest,
     SendToPrinterRequest,
+    SettingsProfileCreateRequest,
+    SettingsProfileRecord,
+    SettingsProfileUpdateRequest,
     TestConnectionRequest,
 )
 from ..userstore import User
@@ -128,6 +131,65 @@ def delete_material(
 ) -> dict[str, bool]:
     _get_owned_material(printer_id, material_id, current)
     store.delete_material(material_id)
+    return {"ok": True}
+
+
+@router.get("/{printer_id}/settings-profiles", response_model=list[SettingsProfileRecord])
+def list_settings_profiles(
+    printer_id: str, current: User = Depends(require_user)
+) -> list[SettingsProfileRecord]:
+    _get_owned_printer(printer_id, current)
+    return store.list_settings_profiles(printer_id)
+
+
+@router.post("/{printer_id}/settings-profiles", response_model=SettingsProfileRecord)
+def create_settings_profile(
+    printer_id: str, body: SettingsProfileCreateRequest, current: User = Depends(require_user)
+) -> SettingsProfileRecord:
+    _get_owned_printer(printer_id, current)
+    return store.create_settings_profile(printer_id=printer_id, user_id=current.id, **body.model_dump())
+
+
+def _get_owned_settings_profile(printer_id: str, profile_id: str, current: User) -> SettingsProfileRecord:
+    _get_owned_printer(printer_id, current)
+    profile = store.get_settings_profile(profile_id)
+    if profile is None or profile.printer_id != printer_id:
+        raise HTTPException(status_code=404, detail="Settings profile not found")
+    return profile
+
+
+@router.put("/{printer_id}/settings-profiles/{profile_id}", response_model=SettingsProfileRecord)
+def update_settings_profile(
+    printer_id: str,
+    profile_id: str,
+    body: SettingsProfileUpdateRequest,
+    current: User = Depends(require_user),
+) -> SettingsProfileRecord:
+    """Covers both a plain rename and "update mode" (overwrite the saved
+    settings with whatever's currently dialed in) -- same request shape,
+    the frontend just chooses which fields to include."""
+    _get_owned_settings_profile(printer_id, profile_id, current)
+    updated = store.update_settings_profile(profile_id, **body.model_dump(exclude_unset=True))
+    assert updated is not None  # just confirmed the profile exists above
+    return updated
+
+
+@router.post("/{printer_id}/settings-profiles/{profile_id}/duplicate", response_model=SettingsProfileRecord)
+def duplicate_settings_profile(
+    printer_id: str, profile_id: str, current: User = Depends(require_user)
+) -> SettingsProfileRecord:
+    _get_owned_settings_profile(printer_id, profile_id, current)
+    duplicated = store.duplicate_settings_profile(profile_id, user_id=current.id)
+    assert duplicated is not None  # just confirmed the profile exists above
+    return duplicated
+
+
+@router.delete("/{printer_id}/settings-profiles/{profile_id}")
+def delete_settings_profile(
+    printer_id: str, profile_id: str, current: User = Depends(require_user)
+) -> dict[str, bool]:
+    _get_owned_settings_profile(printer_id, profile_id, current)
+    store.delete_settings_profile(profile_id)
     return {"ok": True}
 
 

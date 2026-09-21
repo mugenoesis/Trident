@@ -189,13 +189,12 @@ export interface PrinterUpdateRequest {
   printhost_password?: string
 }
 
+// Filament choice only -- print-quality settings live separately in a
+// SettingsProfileRecord, saved/loaded independently (see below).
 export interface MaterialProfileRecord {
   id: string
   printer_id: string
   name: string
-  quick_settings: Record<string, string>
-  advanced_overrides: Record<string, string>
-  process_profile: string | null
   filament_profiles: string[] | null
   filament_colors: string[] | null
   created_at: string
@@ -203,21 +202,42 @@ export interface MaterialProfileRecord {
 
 export interface MaterialProfileCreateRequest {
   name: string
-  quick_settings: Record<string, string>
-  advanced_overrides: Record<string, string>
-  process_profile: string | null
   filament_profiles: string[] | null
   filament_colors: string[] | null
 }
 
 // A key left out entirely means "don't change" (see api/app/schemas.py's
 // MaterialProfileUpdateRequest) -- used for both a plain rename ({name})
-// and "update mode" (overwrite the saved settings: {quick_settings, ...}).
+// and "update mode" (overwrite the saved filament choice).
 export interface MaterialProfileUpdateRequest {
+  name?: string
+  filament_profiles?: string[] | null
+  filament_colors?: string[] | null
+}
+
+// The counterpart to MaterialProfileRecord: print-quality settings only, no
+// filament choice, so the same materials can be reused across quality
+// presets and vice versa.
+export interface SettingsProfileRecord {
+  id: string
+  printer_id: string
+  name: string
+  quick_settings: Record<string, string>
+  advanced_overrides: Record<string, string>
+  process_profile: string | null
+  created_at: string
+}
+
+export interface SettingsProfileCreateRequest {
+  name: string
+  quick_settings: Record<string, string>
+  advanced_overrides: Record<string, string>
+  process_profile: string | null
+}
+
+export interface SettingsProfileUpdateRequest {
   name?: string
   quick_settings?: Record<string, string>
   advanced_overrides?: Record<string, string>
   process_profile?: string | null
-  filament_profiles?: string[] | null
-  filament_colors?: string[] | null
 }

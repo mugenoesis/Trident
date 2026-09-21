@@ -97,14 +97,19 @@ def test_delete_printer_cascades_material_profiles(tmp_path: Path):
         printer_id=printer.id,
         user_id="alice",
         name="PLA",
-        quick_settings={"layer_height": "0.2"},
-        advanced_overrides={},
-        process_profile=None,
         filament_profiles=None,
+    )
+    settings_profile = db.create_settings_profile(
+        printer_id=printer.id,
+        user_id="alice",
+        name="Fine",
+        quick_settings={"layer_height": "0.12"},
+        advanced_overrides={},
     )
     db.delete_printer(printer.id)
     assert db.get_printer(printer.id) is None
     assert db.get_material(material.id) is None
+    assert db.get_settings_profile(settings_profile.id) is None
 
 
 def test_material_profile_roundtrip(tmp_path: Path):
@@ -114,16 +119,11 @@ def test_material_profile_roundtrip(tmp_path: Path):
         printer_id=printer.id,
         user_id="alice",
         name="PETG",
-        quick_settings={"layer_height": "0.24", "sparse_infill_density": "25"},
-        advanced_overrides={"cool_plate_temp": "70"},
-        process_profile="0.24mm Draft @BBL A1",
         filament_profiles=["Bambu PETG HF @BBL A1"],
         filament_colors=["#ffffff"],
     )
     fetched = db.get_material(material.id)
     assert fetched is not None
-    assert fetched.quick_settings == {"layer_height": "0.24", "sparse_infill_density": "25"}
-    assert fetched.advanced_overrides == {"cool_plate_temp": "70"}
     assert fetched.filament_profiles == ["Bambu PETG HF @BBL A1"]
     assert fetched.filament_colors == ["#ffffff"]
 
@@ -136,9 +136,6 @@ def _material(db: PrinterStore, printer_id: str, **overrides):
         printer_id=printer_id,
         user_id="alice",
         name="PLA",
-        quick_settings={"layer_height": "0.2"},
-        advanced_overrides={},
-        process_profile=None,
         filament_profiles=None,
     )
     fields.update(overrides)
@@ -148,39 +145,39 @@ def _material(db: PrinterStore, printer_id: str, **overrides):
 def test_update_material_rename_only(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     printer = db.create_printer(user_id="alice", **_printer_fields())
-    material = _material(db, printer.id)
+    material = _material(db, printer.id, filament_profiles=["Generic PLA"])
 
     updated = db.update_material(material.id, name="PLA Renamed")
     assert updated is not None
     assert updated.name == "PLA Renamed"
-    assert updated.quick_settings == {"layer_height": "0.2"}  # untouched
+    assert updated.filament_profiles == ["Generic PLA"]  # untouched
 
 
-def test_update_material_overwrites_settings(tmp_path: Path):
+def test_update_material_overwrites_filament_choice(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     printer = db.create_printer(user_id="alice", **_printer_fields())
-    material = _material(db, printer.id)
+    material = _material(db, printer.id, filament_profiles=["Generic PLA"], filament_colors=["#ffffff"])
 
     updated = db.update_material(
         material.id,
-        quick_settings={"layer_height": "0.28"},
-        advanced_overrides={"cool_plate_temp": "60"},
+        filament_profiles=["Generic PETG"],
+        filament_colors=["#00ff00"],
     )
     assert updated is not None
     assert updated.name == "PLA"  # untouched
-    assert updated.quick_settings == {"layer_height": "0.28"}
-    assert updated.advanced_overrides == {"cool_plate_temp": "60"}
+    assert updated.filament_profiles == ["Generic PETG"]
+    assert updated.filament_colors == ["#00ff00"]
 
 
 def test_duplicate_material_increments_name(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     printer = db.create_printer(user_id="alice", **_printer_fields())
-    original = _material(db, printer.id, name="PLA", quick_settings={"layer_height": "0.2"})
+    original = _material(db, printer.id, name="PLA", filament_profiles=["Generic PLA"])
 
     dup1 = db.duplicate_material(original.id, user_id="alice")
     assert dup1 is not None
     assert dup1.name == "PLA (2)"
-    assert dup1.quick_settings == {"layer_height": "0.2"}
+    assert dup1.filament_profiles == ["Generic PLA"]
     assert dup1.id != original.id
 
     dup2 = db.duplicate_material(original.id, user_id="alice")
@@ -196,6 +193,104 @@ def test_duplicate_material_increments_name(tmp_path: Path):
 def test_duplicate_missing_material_returns_none(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     assert db.duplicate_material("does-not-exist", user_id="alice") is None
+
+
+def _settings_profile(db: PrinterStore, printer_id: str, **overrides):
+    fields = dict(
+        printer_id=printer_id,
+        user_id="alice",
+        name="Standard",
+        quick_settings={"layer_height": "0.2"},
+        advanced_overrides={},
+        process_profile=None,
+    )
+    fields.update(overrides)
+    return db.create_settings_profile(**fields)
+
+
+def test_settings_profile_roundtrip(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    profile = db.create_settings_profile(
+        printer_id=printer.id,
+        user_id="alice",
+        name="Fine detail",
+        quick_settings={"layer_height": "0.12", "sparse_infill_density": "25"},
+        advanced_overrides={"cool_plate_temp": "70"},
+        process_profile="0.12mm Fine @BBL A1",
+    )
+    fetched = db.get_settings_profile(profile.id)
+    assert fetched is not None
+    assert fetched.quick_settings == {"layer_height": "0.12", "sparse_infill_density": "25"}
+    assert fetched.advanced_overrides == {"cool_plate_temp": "70"}
+    assert fetched.process_profile == "0.12mm Fine @BBL A1"
+
+    profiles = db.list_settings_profiles(printer.id)
+    assert [p.id for p in profiles] == [profile.id]
+
+
+def test_update_settings_profile_rename_only(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    profile = _settings_profile(db, printer.id)
+
+    updated = db.update_settings_profile(profile.id, name="Standard Renamed")
+    assert updated is not None
+    assert updated.name == "Standard Renamed"
+    assert updated.quick_settings == {"layer_height": "0.2"}  # untouched
+
+
+def test_update_settings_profile_overwrites_settings(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    profile = _settings_profile(db, printer.id)
+
+    updated = db.update_settings_profile(
+        profile.id,
+        quick_settings={"layer_height": "0.28"},
+        advanced_overrides={"cool_plate_temp": "60"},
+    )
+    assert updated is not None
+    assert updated.name == "Standard"  # untouched
+    assert updated.quick_settings == {"layer_height": "0.28"}
+    assert updated.advanced_overrides == {"cool_plate_temp": "60"}
+
+
+def test_duplicate_settings_profile_increments_name(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    original = _settings_profile(db, printer.id, name="Standard")
+
+    dup1 = db.duplicate_settings_profile(original.id, user_id="alice")
+    assert dup1 is not None
+    assert dup1.name == "Standard (2)"
+    assert dup1.quick_settings == {"layer_height": "0.2"}
+    assert dup1.id != original.id
+
+
+def test_duplicate_missing_settings_profile_returns_none(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    assert db.duplicate_settings_profile("does-not-exist", user_id="alice") is None
+
+
+def test_settings_profiles_are_independent_of_material_profiles(tmp_path: Path):
+    """The whole point of the split: a material profile and a settings
+    profile on the same printer don't share or clobber each other's data."""
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(user_id="alice", **_printer_fields())
+    material = db.create_material(
+        printer_id=printer.id, user_id="alice", name="PLA", filament_profiles=["Generic PLA"]
+    )
+    settings_profile = db.create_settings_profile(
+        printer_id=printer.id,
+        user_id="alice",
+        name="Fine",
+        quick_settings={"layer_height": "0.12"},
+        advanced_overrides={},
+    )
+    assert not hasattr(material, "quick_settings")
+    assert db.list_materials(printer.id) == [material]
+    assert db.list_settings_profiles(printer.id) == [settings_profile]
 
 
 def test_printer_supports_multiple_filament_slots(tmp_path: Path):

@@ -4,11 +4,14 @@ import {
   createJob,
   createMaterialProfile,
   createPrinter,
+  createSettingsProfile,
   deleteJob,
   deleteMaterialProfile,
   deletePrinter,
+  deleteSettingsProfile,
   downloadModelFile,
   duplicateMaterialProfile,
+  duplicateSettingsProfile,
   getJob,
   getModelPlates,
   getProfileDetail,
@@ -18,10 +21,12 @@ import {
   listPrinters,
   listProfiles,
   listSampleModels,
+  listSettingsProfiles,
   loadSampleModel,
   sendToPrinter,
   updateMaterialProfile,
   updatePrinter,
+  updateSettingsProfile,
   uploadModel,
 } from './api'
 import {
@@ -44,6 +49,7 @@ import QuickSettings, {
   type QuickSettingsValues,
 } from './components/QuickSettings'
 import SavedPrinters from './components/SavedPrinters'
+import SavedProfilePicker from './components/SavedProfilePicker'
 import ScaleControls from './components/ScaleControls'
 import SendToPrinterControl from './components/SendToPrinterControl'
 import SettingsMenu from './components/SettingsMenu'
@@ -60,6 +66,7 @@ import type {
   ProfileSummary,
   SampleModelSummary,
   SettingDef,
+  SettingsProfileRecord,
   ThreeMfInspection,
 } from './types'
 import { useAuth } from './useAuth'
@@ -87,6 +94,7 @@ function computeSliceSignature(
   plateIndex: number | null,
   quickSettings: QuickSettingsValues,
   advancedOverrides: Record<string, string>,
+  nozzleSettingsSignature: string,
 ): string {
   return JSON.stringify({
     modelId,
@@ -96,12 +104,42 @@ function computeSliceSignature(
     plateIndex,
     quickSettings: sortedEntries(quickSettings as unknown as Record<string, unknown>),
     advancedOverrides: sortedEntries(advancedOverrides),
+    nozzleSettingsSignature,
   })
 }
 
 interface FilamentSlot {
   profile: string
   color: string
+  // OrcaSlicer models both as per-extruder-variant settings (confirmed:
+  // vendor/orcaslicer/src/libslic3r/PrintConfig.cpp defines nozzle_type as
+  // an array indexed by extruder, same as nozzle_diameter). Only exposed
+  // per-slot in the UI for a genuine multi-head printer -- a single-nozzle
+  // printer (AMS-style) uses one shared globalNozzleDiameter/globalNozzleType
+  // instead, since every slot feeds the same physical hotend.
+  nozzleDiameter: number
+  nozzleType: string
+}
+
+// A printer's multi-material/AMS capability can go well past what any one
+// bundled catalog profile happens to define -- the user explicitly wants to
+// start from whatever printer/process profile fits their machine's process
+// settings and manually dial in however many physical heads/AMS slots they
+// actually have, rather than being limited to (or having to work around a
+// mismatch with) a specific catalog SKU's assumed head count.
+const MAX_FILAMENT_SLOTS = 16
+
+const NOZZLE_TYPE_LABELS: Record<string, string> = {
+  undefine: 'Unspecified',
+  hardened_steel: 'Hardened steel',
+  stainless_steel: 'Stainless steel',
+  tungsten_carbide: 'Tungsten carbide',
+  brass: 'Brass',
+}
+const FALLBACK_NOZZLE_TYPES = Object.keys(NOZZLE_TYPE_LABELS)
+
+function nozzleTypeLabel(value: string): string {
+  return NOZZLE_TYPE_LABELS[value] ?? value
 }
 
 // Cycled by index when a fresh slot is added (picking a printer with more
@@ -149,26 +187,24 @@ function colorLabel(hex: string): string {
   return COLOR_NAME_BY_HEX.get(hex.toLowerCase()) ?? hex
 }
 
-// One slot per physical extruder/AMS slot -- length driven by the selected
-// machine profile's nozzle_diameter array (see handlePrinterChange below).
-// All fresh slots default to the same profile; the user can then pick
-// something different per slot.
-function buildFilamentSlots(count: number, defaultProfile: string): FilamentSlot[] {
+// One slot per physical extruder/AMS slot -- the user controls the count
+// directly (starts at 1, "+"/"-" in the Material section; see
+// addFilamentSlot/removeFilamentSlot below) rather than it being derived
+// from the selected machine profile. nozzleDiameters/nozzleTypes (the
+// catalog's own per-extruder-variant values, when known) just seed sensible
+// defaults for freshly-built slots -- the user can edit any of it per slot.
+function buildFilamentSlots(
+  count: number,
+  defaultProfile: string,
+  nozzleDiameters: number[] = [],
+  nozzleTypes: string[] = [],
+): FilamentSlot[] {
   return Array.from({ length: Math.max(1, count) }, (_, i) => ({
     profile: defaultProfile,
     color: defaultSlotColor(i),
+    nozzleDiameter: nozzleDiameters[i] ?? nozzleDiameters[nozzleDiameters.length - 1] ?? 0.4,
+    nozzleType: nozzleTypes[i] ?? nozzleTypes[nozzleTypes.length - 1] ?? 'undefine',
   }))
-}
-
-// nozzle_diameter's array length is the reliable signal for physical
-// extruder/AMS-slot count (confirmed against the vendored OrcaSlicer
-// catalog: Bambu X1C -- one nozzle behind an AMS -- has length 1; Snapmaker
-// U1/Dual, genuine independent extruders, have length 2+). Default to 1 for
-// any machine profile that doesn't have it, isn't an array, or is empty --
-// never block on an unrecognized shape.
-function slotCountFromMachineData(data: Record<string, unknown> | undefined): number {
-  const nozzleDiameter = data?.nozzle_diameter
-  return Array.isArray(nozzleDiameter) && nozzleDiameter.length > 0 ? nozzleDiameter.length : 1
 }
 
 // Confirmed via direct CLI testing against a real toolchanger printer
@@ -183,6 +219,19 @@ function parsedNozzleDiameters(data: Record<string, unknown> | undefined): numbe
   const raw = data?.nozzle_diameter
   if (!Array.isArray(raw)) return []
   return raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+}
+
+// A catalog leaf sometimes writes this as a single string rather than an
+// array when every nozzle is the same type (confirmed: Snapmaker U1's own
+// leaf profiles do this, unlike their nozzle_diameter, which is always a
+// real per-slot array) -- broadcast a bare string as a one-element array so
+// buildFilamentSlots' "repeat the last value" fallback still seeds every
+// slot with it correctly.
+function parsedNozzleTypes(data: Record<string, unknown> | undefined): string[] {
+  const raw = data?.nozzle_type
+  if (Array.isArray(raw)) return raw.map((v) => String(v))
+  if (typeof raw === 'string' && raw) return [raw]
+  return []
 }
 
 // One entry per filament role the uploaded file itself needs -- e.g. a
@@ -273,31 +322,14 @@ function MainApp({
   const [processName, setProcessName] = useState('')
   const [filamentSlots, setFilamentSlots] = useState<FilamentSlot[]>(buildFilamentSlots(1, ''))
   const [bedSize, setBedSize] = useState<BedSize | null>(null)
-  // The selected machine's nozzle_diameter values (see parsedNozzleDiameters
-  // above) -- used at slice time to work around a real catalog bug where a
-  // mixed-diameter toolchanger's own process profile fails validation.
+  // The selected machine's own nozzle_diameter/nozzle_type values (see
+  // parsedNozzleDiameters/parsedNozzleTypes above) -- used only to seed
+  // sensible defaults (freshly built/added slots, the global control below)
+  // and to clamp bridge_line_width; never sent to OrcaSlicer directly.
   const [nozzleDiameters, setNozzleDiameters] = useState<number[]>([])
-  // Some catalog toolchanger profiles (confirmed: Snapmaker U1 "0.4+0.6
-  // nozzle") assume a specific mix of physical nozzle sizes across heads
-  // that not everyone's real machine matches -- e.g. all 4 heads actually
-  // fitted with 0.4mm nozzles, not 2x0.4mm + 2x0.6mm. Rather than picking a
-  // less-capable single-nozzle profile (losing multi-material entirely),
-  // this lets the user correct nozzle_diameter to their real, uniform size
-  // at slice time -- confirmed via direct CLI testing that overriding it
-  // (e.g. --nozzle-diameter="0.4;0.4;0.4;0.4") slices correctly, since the
-  // machine's own base template already supports a uniform-diameter
-  // configuration; the catalog leaf profile just picked one specific real
-  // hardware kit as its default. Empty means "don't override".
-  const [nozzleDiameterOverride, setNozzleDiameterOverride] = useState('')
-  const mixedNozzleDiameters = new Set(nozzleDiameters).size > 1
-
-  // Clears whenever the underlying machine's own nozzle_diameter data
-  // changes (i.e. whenever the printer/vendor selection changes) -- an
-  // override for one machine's mismatch shouldn't silently carry over to
-  // a different one.
-  useEffect(() => {
-    setNozzleDiameterOverride('')
-  }, [nozzleDiameters])
+  const [nozzleTypes, setNozzleTypes] = useState<string[]>([])
+  const [globalNozzleDiameter, setGlobalNozzleDiameter] = useState('')
+  const [globalNozzleType, setGlobalNozzleType] = useState('undefine')
 
   // Premade multi-plate/multi-material .3mf support: parsed once per upload
   // (see handleFileSelected), always present (a synthetic single implicit
@@ -323,6 +355,11 @@ function MainApp({
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null)
   const [materials, setMaterials] = useState<MaterialProfileRecord[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null)
+  // Independent from materials -- see SettingsProfileRecord: print-quality
+  // settings only, saved/loaded separately so the same materials can be
+  // reused across quality presets and vice versa.
+  const [settingsProfiles, setSettingsProfiles] = useState<SettingsProfileRecord[]>([])
+  const [selectedSettingsProfileId, setSelectedSettingsProfileId] = useState<string | null>(null)
 
   // Restoring the account's last-selected printer/material (see the mount
   // and material-list effects below) is an async, two-step process --
@@ -367,16 +404,35 @@ function MainApp({
 
   const selectedPrinter = printers.find((p) => p.id === selectedPrinterId) ?? null
   const selectedMaterial = materials.find((m) => m.id === selectedMaterialId) ?? null
+  const selectedSettingsProfile = settingsProfiles.find((p) => p.id === selectedSettingsProfileId) ?? null
 
-  // Collapsed by default once a saved printer/material is actually picked
-  // (nothing left to configure), expanded otherwise. Only *changes* to the
-  // selection force the collapse state -- toggling the <details> manually
-  // afterward (e.g. to peek at or tweak a selected profile) sticks until
-  // the selection changes again, rather than snapping back on every render.
+  // Whether this machine has multiple independent physical nozzles/heads,
+  // each of which can carry a different size/type (a genuine toolchanger,
+  // e.g. Snapmaker U1) vs. one shared nozzle feeding every material slot
+  // (AMS-style, e.g. Bambu X1C) -- derived from nozzle_diameter's own array
+  // length, the one per-extruder-variant field every catalog machine leaf
+  // profile reliably sets directly. Deliberately NOT derived from
+  // single_extruder_multi_material: that field is typically only set on a
+  // shared ancestor template (confirmed: neither Snapmaker U1 variant nor
+  // most Bambu machines set it on their own leaf file), and this backend
+  // never flattens `inherits` chains (see api/app/profiles.py) -- so it's
+  // absent from detail.data for almost every real machine, which would
+  // silently default every printer to "single nozzle" and break the exact
+  // multi-head case this control exists for.
+  const isMultiHeadPrinter = nozzleDiameters.length > 1
+
+  // Collapsed by default once a saved printer/material/settings profile is
+  // actually picked (nothing left to configure), expanded otherwise. Only
+  // *changes* to the selection force the collapse state -- toggling the
+  // <details> manually afterward (e.g. to peek at or tweak a selected
+  // profile) sticks until the selection changes again, rather than
+  // snapping back on every render.
   const [printerSettingsOpen, setPrinterSettingsOpen] = useState(!selectedPrinterId)
-  const [quickSettingsOpen, setQuickSettingsOpen] = useState(!selectedMaterialId)
+  const [materialSectionOpen, setMaterialSectionOpen] = useState(!selectedMaterialId)
+  const [settingsSectionOpen, setSettingsSectionOpen] = useState(!selectedSettingsProfileId)
   useEffect(() => setPrinterSettingsOpen(!selectedPrinterId), [selectedPrinterId])
-  useEffect(() => setQuickSettingsOpen(!selectedMaterialId), [selectedMaterialId])
+  useEffect(() => setMaterialSectionOpen(!selectedMaterialId), [selectedMaterialId])
+  useEffect(() => setSettingsSectionOpen(!selectedSettingsProfileId), [selectedSettingsProfileId])
 
   const handleSendToPrinter = useCallback(
     (jobId: string, startPrint: boolean) => {
@@ -433,19 +489,49 @@ function MainApp({
       })
   }, [])
 
+  // Read via refs (not state) inside applyMaterialProfile below, so that
+  // callback's identity stays stable regardless of when the catalog's own
+  // nozzle data happens to arrive -- applySavedPrinter fetches it
+  // asynchronously *after* already setting selectedPrinterId, and this
+  // callback's identity is itself a dependency of the materials-fetch
+  // effect further down; if it changed later (state instead of a ref), that
+  // effect would re-fire, refetch materials, and wipe out a just-restored
+  // material selection out from under the user.
+  const nozzleDiametersRef = useRef<number[]>([])
+  const nozzleTypesRef = useRef<string[]>([])
+  useEffect(() => {
+    nozzleDiametersRef.current = nozzleDiameters
+  }, [nozzleDiameters])
+  useEffect(() => {
+    nozzleTypesRef.current = nozzleTypes
+  }, [nozzleTypes])
+
   const applyMaterialProfile = useCallback((material: MaterialProfileRecord) => {
     setSelectedMaterialId(material.id)
-    setQuickSettings((prev) => ({ ...prev, ...material.quick_settings }))
-    setAdvancedOverrides(material.advanced_overrides)
-    if (material.process_profile) setProcessName(material.process_profile)
     if (material.filament_profiles && material.filament_profiles.length > 0) {
-      setFilamentSlots(
-        material.filament_profiles.map((profile, i) => ({
+      // A material profile doesn't save nozzle diameter/type (those are a
+      // property of the physical printer/head, not the material) -- keep
+      // whatever's already dialed in per slot where possible, falling back
+      // to the catalog's own defaults for any newly-appearing slot.
+      const diameters = nozzleDiametersRef.current
+      const types = nozzleTypesRef.current
+      setFilamentSlots((prev) =>
+        material.filament_profiles!.map((profile, i) => ({
           profile,
           color: material.filament_colors?.[i] ?? defaultSlotColor(i),
+          nozzleDiameter: prev[i]?.nozzleDiameter ?? diameters[i] ?? diameters[diameters.length - 1] ?? 0.4,
+          nozzleType: prev[i]?.nozzleType ?? types[i] ?? types[types.length - 1] ?? 'undefine',
         })),
       )
     }
+    setViewMode('model')
+  }, [])
+
+  const applySettingsProfile = useCallback((profile: SettingsProfileRecord) => {
+    setSelectedSettingsProfileId(profile.id)
+    setQuickSettings((prev) => ({ ...prev, ...profile.quick_settings }))
+    setAdvancedOverrides(profile.advanced_overrides)
+    if (profile.process_profile) setProcessName(profile.process_profile)
     setViewMode('model')
   }, [])
 
@@ -472,6 +558,20 @@ function MainApp({
       .catch(() => setMaterials([]))
       .finally(() => setRestorationDone(true))
   }, [selectedPrinterId, applyMaterialProfile])
+
+  // Same idea for settings profiles -- independent of the materials fetch
+  // above (no last-selection restore for this one; not part of AuthStatus).
+  useEffect(() => {
+    if (!selectedPrinterId) {
+      setSettingsProfiles([])
+      setSelectedSettingsProfileId(null)
+      return
+    }
+    setSelectedSettingsProfileId(null)
+    listSettingsProfiles(selectedPrinterId)
+      .then(setSettingsProfiles)
+      .catch(() => setSettingsProfiles([]))
+  }, [selectedPrinterId])
 
   const handleFileSelected = useCallback((selected: File) => {
     setFile(selected)
@@ -568,6 +668,9 @@ function MainApp({
       setFilamentSlots(buildFilamentSlots(1, ''))
       setBedSize(null)
       setNozzleDiameters([])
+      setNozzleTypes([])
+      setGlobalNozzleDiameter('')
+      setGlobalNozzleType('undefine')
       setScaleToastDismissed(false)
       setSelectedPrinterId(null)
       setViewMode('model')
@@ -624,15 +727,26 @@ function MainApp({
               : Array.isArray(defaultFilament) && typeof defaultFilament[0] === 'string'
                 ? defaultFilament[0]
                 : firstOfKind('filament')
+          const diameters = parsedNozzleDiameters(detail.data)
+          const types = parsedNozzleTypes(detail.data)
           setProcessName(process)
-          setFilamentSlots(buildFilamentSlots(slotCountFromMachineData(detail.data), filament))
+          // Always exactly 1 slot on a fresh printer/vendor pick -- the user
+          // adds more via the "+" control in the Material section
+          // (addFilamentSlot below) rather than it being derived from
+          // whatever slot count this specific catalog profile happens to
+          // define.
+          setFilamentSlots(buildFilamentSlots(1, filament, diameters, types))
           setBedSize(parseBedSize(detail.data))
-          setNozzleDiameters(parsedNozzleDiameters(detail.data))
+          setNozzleDiameters(diameters)
+          setNozzleTypes(types)
+          setGlobalNozzleDiameter(diameters[0] != null ? String(diameters[0]) : '')
+          setGlobalNozzleType(types[0] ?? 'undefine')
         })
         .catch(() => {
           setProcessName(firstOfKind('process'))
           setFilamentSlots(buildFilamentSlots(1, firstOfKind('filament')))
           setNozzleDiameters([])
+          setNozzleTypes([])
         })
     },
     [vendor, profiles],
@@ -645,6 +759,9 @@ function MainApp({
     setFilamentSlots(buildFilamentSlots(1, ''))
     setBedSize(null)
     setNozzleDiameters([])
+    setNozzleTypes([])
+    setGlobalNozzleDiameter('')
+    setGlobalNozzleType('undefine')
     setSelectedPrinterId(null)
     setViewMode('model')
   }, [])
@@ -659,6 +776,31 @@ function MainApp({
 
   const handleFilamentSlotChange = useCallback((index: number, patch: Partial<FilamentSlot>) => {
     setFilamentSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)))
+    setViewMode('model')
+  }, [])
+
+  // A fresh slot's nozzle diameter/type defaults from the last existing
+  // slot (adding a physical head is usually adding one similar to what you
+  // already have) -- fully editable afterward either way.
+  const addFilamentSlot = useCallback(() => {
+    setFilamentSlots((prev) => {
+      if (prev.length >= MAX_FILAMENT_SLOTS) return prev
+      const last = prev[prev.length - 1]
+      return [
+        ...prev,
+        {
+          profile: '',
+          color: defaultSlotColor(prev.length),
+          nozzleDiameter: last?.nozzleDiameter ?? 0.4,
+          nozzleType: last?.nozzleType ?? 'undefine',
+        },
+      ]
+    })
+    setViewMode('model')
+  }, [])
+
+  const removeFilamentSlot = useCallback((index: number) => {
+    setFilamentSlots((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev))
     setViewMode('model')
   }, [])
 
@@ -693,6 +835,8 @@ function MainApp({
         ? printer.filament_profiles.map((profile, i) => ({
             profile,
             color: printer.filament_colors[i] ?? defaultSlotColor(i),
+            nozzleDiameter: 0.4,
+            nozzleType: 'undefine',
           }))
         : buildFilamentSlots(1, ''),
     )
@@ -704,14 +848,34 @@ function MainApp({
     setScaleToastDismissed(false)
     setViewMode('model')
     setNozzleDiameters([])
-    // The one piece a saved printer record doesn't snapshot itself: the
-    // machine profile's actual nozzle_diameter values (only needed at
-    // slice time, for the bridge_line_width safety clamp above) --
-    // fetched fresh rather than blocking the otherwise-synchronous restore
-    // above on it.
+    setNozzleTypes([])
+    setGlobalNozzleDiameter('')
+    setGlobalNozzleType('undefine')
+    // The pieces a saved printer record doesn't snapshot itself: the
+    // machine profile's actual nozzle_diameter/nozzle_type values (only
+    // needed at slice time) -- fetched fresh rather than blocking the
+    // otherwise-synchronous restore above on it, then backfilled onto the
+    // just-restored slots.
     getProfileDetail(printer.vendor, 'machine', printer.machine_profile)
-      .then((detail) => setNozzleDiameters(parsedNozzleDiameters(detail.data)))
-      .catch(() => setNozzleDiameters([]))
+      .then((detail) => {
+        const diameters = parsedNozzleDiameters(detail.data)
+        const types = parsedNozzleTypes(detail.data)
+        setNozzleDiameters(diameters)
+        setNozzleTypes(types)
+        setGlobalNozzleDiameter(diameters[0] != null ? String(diameters[0]) : '')
+        setGlobalNozzleType(types[0] ?? 'undefine')
+        setFilamentSlots((prev) =>
+          prev.map((slot, i) => ({
+            ...slot,
+            nozzleDiameter: diameters[i] ?? diameters[diameters.length - 1] ?? slot.nozzleDiameter,
+            nozzleType: types[i] ?? types[types.length - 1] ?? slot.nozzleType,
+          })),
+        )
+      })
+      .catch(() => {
+        setNozzleDiameters([])
+        setNozzleTypes([])
+      })
   }, [])
 
   const handleSavePrinter = useCallback(
@@ -786,9 +950,6 @@ function MainApp({
       if (!selectedPrinterId) return Promise.reject(new Error('Select a saved printer first'))
       return createMaterialProfile(selectedPrinterId, {
         name,
-        quick_settings: quickSettings as unknown as Record<string, string>,
-        advanced_overrides: advancedOverrides,
-        process_profile: processName || null,
         filament_profiles: filamentSlots.map((s) => s.profile),
         filament_colors: filamentSlots.map((s) => s.color),
       }).then((material) => {
@@ -796,7 +957,7 @@ function MainApp({
         setSelectedMaterialId(material.id)
       })
     },
-    [selectedPrinterId, quickSettings, advancedOverrides, processName, filamentSlots],
+    [selectedPrinterId, filamentSlots],
   )
 
   const handleDeleteMaterial = useCallback(
@@ -821,15 +982,12 @@ function MainApp({
       return Promise.reject(new Error('Select a material profile first'))
     }
     return updateMaterialProfile(selectedPrinterId, selectedMaterialId, {
-      quick_settings: quickSettings as unknown as Record<string, string>,
-      advanced_overrides: advancedOverrides,
-      process_profile: processName || null,
       filament_profiles: filamentSlots.map((s) => s.profile),
       filament_colors: filamentSlots.map((s) => s.color),
     }).then((material) => {
       setMaterials((prev) => prev.map((m) => (m.id === material.id ? material : m)))
     })
-  }, [selectedPrinterId, selectedMaterialId, quickSettings, advancedOverrides, processName, filamentSlots])
+  }, [selectedPrinterId, selectedMaterialId, filamentSlots])
 
   const handleRenameMaterial = useCallback(
     (id: string, name: string) => {
@@ -847,6 +1005,72 @@ function MainApp({
       duplicateMaterialProfile(selectedPrinterId, id)
         .then((material) => setMaterials((prev) => [...prev, material]))
         .catch((err: Error) => alert(`Failed to duplicate material profile: ${err.message}`))
+    },
+    [selectedPrinterId],
+  )
+
+  const handleSaveSettingsProfile = useCallback(
+    (name: string) => {
+      if (!selectedPrinterId) return Promise.reject(new Error('Select a saved printer first'))
+      return createSettingsProfile(selectedPrinterId, {
+        name,
+        quick_settings: quickSettings as unknown as Record<string, string>,
+        advanced_overrides: advancedOverrides,
+        process_profile: processName || null,
+      }).then((profile) => {
+        setSettingsProfiles((prev) => [...prev, profile])
+        setSelectedSettingsProfileId(profile.id)
+      })
+    },
+    [selectedPrinterId, quickSettings, advancedOverrides, processName],
+  )
+
+  const handleDeleteSettingsProfile = useCallback(
+    (id: string) => {
+      if (!selectedPrinterId) return
+      deleteSettingsProfile(selectedPrinterId, id)
+        .then(() => {
+          setSettingsProfiles((prev) => prev.filter((p) => p.id !== id))
+          setSelectedSettingsProfileId((prev) => (prev === id ? null : prev))
+        })
+        .catch((err: Error) => alert(`Failed to delete settings profile: ${err.message}`))
+    },
+    [selectedPrinterId],
+  )
+
+  const handleDeselectSettingsProfile = useCallback(() => setSelectedSettingsProfileId(null), [])
+
+  // "Update mode": overwrites the already-selected settings profile with
+  // whatever's currently dialed in, instead of creating a new one.
+  const handleUpdateSettingsProfile = useCallback(() => {
+    if (!selectedPrinterId || !selectedSettingsProfileId) {
+      return Promise.reject(new Error('Select a settings profile first'))
+    }
+    return updateSettingsProfile(selectedPrinterId, selectedSettingsProfileId, {
+      quick_settings: quickSettings as unknown as Record<string, string>,
+      advanced_overrides: advancedOverrides,
+      process_profile: processName || null,
+    }).then((profile) => {
+      setSettingsProfiles((prev) => prev.map((p) => (p.id === profile.id ? profile : p)))
+    })
+  }, [selectedPrinterId, selectedSettingsProfileId, quickSettings, advancedOverrides, processName])
+
+  const handleRenameSettingsProfile = useCallback(
+    (id: string, name: string) => {
+      if (!selectedPrinterId) return Promise.reject(new Error('No printer selected'))
+      return updateSettingsProfile(selectedPrinterId, id, { name }).then((profile) => {
+        setSettingsProfiles((prev) => prev.map((p) => (p.id === profile.id ? profile : p)))
+      })
+    },
+    [selectedPrinterId],
+  )
+
+  const handleDuplicateSettingsProfile = useCallback(
+    (id: string) => {
+      if (!selectedPrinterId) return
+      duplicateSettingsProfile(selectedPrinterId, id)
+        .then((profile) => setSettingsProfiles((prev) => [...prev, profile]))
+        .catch((err: Error) => alert(`Failed to duplicate settings profile: ${err.message}`))
     },
     [selectedPrinterId],
   )
@@ -931,6 +1155,13 @@ function MainApp({
   }, [plateInfo, roleNozzleAssignments, filamentSlots])
   const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1
 
+  // Part of the slice signature (below) so a nozzle diameter/type edit
+  // counts as "you changed something" the same way any other slice-
+  // affecting setting does.
+  const nozzleSettingsSignature = isMultiHeadPrinter
+    ? JSON.stringify(filamentSlots.map((s) => [s.nozzleDiameter, s.nozzleType]))
+    : JSON.stringify({ globalNozzleDiameter, globalNozzleType })
+
   const currentSignature = useMemo(
     () =>
       computeSliceSignature(
@@ -941,8 +1172,18 @@ function MainApp({
         plateIndex,
         quickSettings,
         advancedOverrides,
+        nozzleSettingsSignature,
       ),
-    [modelId, printerName, processName, effectiveFilamentProfiles, plateIndex, quickSettings, advancedOverrides],
+    [
+      modelId,
+      printerName,
+      processName,
+      effectiveFilamentProfiles,
+      plateIndex,
+      quickSettings,
+      advancedOverrides,
+      nozzleSettingsSignature,
+    ],
   )
   // Only a *successful* prior slice blocks re-slicing -- a failed job with
   // unchanged settings should still be retryable (e.g. a transient error).
@@ -976,32 +1217,36 @@ function MainApp({
       overrides.support_type = quickSettings.support_type
       overrides.support_buildplate_only = quickSettings.support_buildplate_only
     }
-    const parsedNozzleOverride = Number(nozzleDiameterOverride)
-    const hasNozzleOverride =
-      nozzleDiameterOverride.trim() !== '' && Number.isFinite(parsedNozzleOverride) && parsedNozzleOverride > 0
-    if (hasNozzleOverride) {
-      // The user has confirmed their real, uniform nozzle size -- correct
-      // every head to match (confirmed via direct CLI testing this slices
-      // correctly: the machine's own base template already supports a
-      // uniform-diameter configuration, the catalog leaf profile just
-      // picked one specific real hardware kit as its default) and clamp
-      // bridge_line_width to that same real value.
-      overrides.nozzle_diameter = Array(nozzleDiameters.length || 1).fill(parsedNozzleOverride).join(';')
-      if (!('bridge_line_width' in advancedOverrides)) {
-        overrides.bridge_line_width = String(parsedNozzleOverride)
+    // Nozzle diameter & type: a genuine multi-head printer (isMultiHeadPrinter)
+    // can have a different nozzle installed per head, so each slot carries
+    // its own; a single-nozzle printer shares one physical hotend across
+    // every material slot, so one global value applies to all of them (see
+    // the Material section below).
+    if (isMultiHeadPrinter) {
+      const diameters = filamentSlots.map((s) => s.nozzleDiameter)
+      if (diameters.every((d) => Number.isFinite(d) && d > 0)) {
+        overrides.nozzle_diameter = diameters.join(';')
+        // Confirmed via direct CLI testing: a mixed-diameter toolchanger's
+        // own bundled process profile can fail slicing outright ("Bridge
+        // line width must not exceed nozzle diameter") because its default
+        // bridge_line_width was sized for its smaller nozzle but validated
+        // against its largest -- clamp to the smallest configured nozzle
+        // whenever there's genuine diameter variation, unless the user has
+        // already set this explicitly via Advanced settings.
+        if (new Set(diameters).size > 1 && !('bridge_line_width' in advancedOverrides)) {
+          overrides.bridge_line_width = String(Math.min(...diameters))
+        }
+      }
+      if (filamentSlots.some((s) => s.nozzleType && s.nozzleType !== 'undefine')) {
+        overrides.nozzle_type = filamentSlots.map((s) => s.nozzleType || 'undefine').join(';')
       }
     } else {
-      // Confirmed via direct CLI testing: a mixed-diameter toolchanger's
-      // own bundled process profile can fail slicing outright ("Bridge
-      // line width must not exceed nozzle diameter") because its default
-      // bridge_line_width was sized for its smaller nozzle but validated
-      // against its largest -- clamp to the smallest configured nozzle
-      // whenever there's genuine diameter variation and the user hasn't
-      // corrected it above, unless they've already set this explicitly
-      // via Advanced settings.
-      const uniqueNozzleDiameters = new Set(nozzleDiameters)
-      if (uniqueNozzleDiameters.size > 1 && !('bridge_line_width' in advancedOverrides)) {
-        overrides.bridge_line_width = String(Math.min(...nozzleDiameters))
+      const dia = Number(globalNozzleDiameter)
+      if (globalNozzleDiameter.trim() !== '' && Number.isFinite(dia) && dia > 0) {
+        overrides.nozzle_diameter = Array(filamentSlots.length || 1).fill(dia).join(';')
+      }
+      if (globalNozzleType && globalNozzleType !== 'undefine') {
+        overrides.nozzle_type = Array(filamentSlots.length || 1).fill(globalNozzleType).join(';')
       }
     }
     createJob({
@@ -1027,8 +1272,10 @@ function MainApp({
     plateIndex,
     quickSettings,
     advancedOverrides,
-    nozzleDiameters,
-    nozzleDiameterOverride,
+    filamentSlots,
+    isMultiHeadPrinter,
+    globalNozzleDiameter,
+    globalNozzleType,
     currentSignature,
   ])
 
@@ -1131,7 +1378,7 @@ function MainApp({
         </section>
 
         <section className="panel panel-settings">
-          <h2>Printer &amp; material</h2>
+          <h2>Printer, material &amp; settings</h2>
           <SavedPrinters
             printers={printers}
             selectedPrinterId={selectedPrinterId}
@@ -1140,15 +1387,6 @@ function MainApp({
             onSavePrinter={handleSavePrinter}
             onUpdatePrinter={handleUpdatePrinter}
             onDeletePrinter={handleDeletePrinter}
-            materials={materials}
-            selectedMaterialId={selectedMaterialId}
-            onSelectMaterial={applyMaterialProfile}
-            onDeselectMaterial={handleDeselectMaterial}
-            onSaveMaterial={handleSaveMaterial}
-            onUpdateMaterial={handleUpdateMaterial}
-            onRenameMaterial={handleRenameMaterial}
-            onDuplicateMaterial={handleDuplicateMaterial}
-            onDeleteMaterial={handleDeleteMaterial}
           />
           <details
             className="settings-collapsible"
@@ -1165,65 +1403,162 @@ function MainApp({
               onPrinterChange={handlePrinterChange}
               onProcessChange={handleProcessChange}
             />
-            {mixedNozzleDiameters && (
-              <div className="field-group nozzle-diameter-correction">
+          </details>
+
+          <details
+            className="settings-collapsible"
+            open={materialSectionOpen}
+            onToggle={(e) => setMaterialSectionOpen(e.currentTarget.open)}
+          >
+            <summary>Material{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
+            {!isMultiHeadPrinter && (
+              <div className="field-group nozzle-diameter-global">
                 <label>
-                  This profile assumes mixed nozzle sizes ({nozzleDiameters.map((d) => `${d}mm`).join(', ')}). If
-                  every head on your printer is actually the same size, enter it here to correct it:
+                  Nozzle diameter (mm)
                   <input
                     type="number"
                     step="0.1"
                     min="0"
                     placeholder="e.g. 0.4"
-                    value={nozzleDiameterOverride}
-                    onChange={(e) => setNozzleDiameterOverride(e.target.value)}
+                    value={globalNozzleDiameter}
+                    onChange={(e) => setGlobalNozzleDiameter(e.target.value)}
                   />
                 </label>
+                <label>
+                  Nozzle type
+                  <select value={globalNozzleType} onChange={(e) => setGlobalNozzleType(e.target.value)}>
+                    {(schema.find((s) => s.key === 'nozzle_type')?.enum_values ?? FALLBACK_NOZZLE_TYPES).map(
+                      (t) => (
+                        <option key={t} value={t}>
+                          {nozzleTypeLabel(t)}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
               </div>
+            )}
+            {filamentSlots.map((slot, i) => (
+              <div className="filament-slot-row" key={i}>
+                <FilamentSelect
+                  profiles={profiles}
+                  vendor={vendor}
+                  filamentName={slot.profile}
+                  onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
+                  label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
+                  accessory={
+                    <input
+                      type="color"
+                      className="filament-slot-color-input"
+                      value={slot.color}
+                      onChange={(e) => handleFilamentSlotChange(i, { color: e.target.value })}
+                      aria-label={`Slot ${i + 1} color`}
+                    />
+                  }
+                  belowLabel={
+                    <div className="color-preset-row">
+                      {COLOR_PRESETS.map(({ hex, name }) => (
+                        <button
+                          key={hex}
+                          type="button"
+                          className={`color-preset-swatch${slot.color === hex ? ' selected' : ''}`}
+                          style={{ background: hex }}
+                          aria-label={name}
+                          title={name}
+                          onClick={() => handleFilamentSlotChange(i, { color: hex })}
+                        />
+                      ))}
+                    </div>
+                  }
+                />
+                {isMultiHeadPrinter && (
+                  <div className="field-group nozzle-diameter-per-slot">
+                    <label>
+                      {`Slot ${i + 1} nozzle diameter (mm)`}
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={slot.nozzleDiameter}
+                        onChange={(e) =>
+                          handleFilamentSlotChange(i, { nozzleDiameter: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      {`Slot ${i + 1} nozzle type`}
+                      <select
+                        value={slot.nozzleType}
+                        onChange={(e) => handleFilamentSlotChange(i, { nozzleType: e.target.value })}
+                      >
+                        {(schema.find((s) => s.key === 'nozzle_type')?.enum_values ?? FALLBACK_NOZZLE_TYPES).map(
+                          (t) => (
+                            <option key={t} value={t}>
+                              {nozzleTypeLabel(t)}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                {filamentSlots.length > 1 && (
+                  <button
+                    type="button"
+                    className="link-button danger-text filament-slot-remove"
+                    onClick={() => removeFilamentSlot(i)}
+                    aria-label={`Remove slot ${i + 1}`}
+                  >
+                    ✕ Remove slot
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              className="link-button filament-slot-add"
+              onClick={addFilamentSlot}
+              disabled={filamentSlots.length >= MAX_FILAMENT_SLOTS}
+            >
+              + Add material slot
+            </button>
+            {selectedPrinterId && (
+              <SavedProfilePicker
+                label="material profile"
+                profiles={materials}
+                selectedId={selectedMaterialId}
+                onSelect={applyMaterialProfile}
+                onDeselect={handleDeselectMaterial}
+                onSave={handleSaveMaterial}
+                onUpdate={handleUpdateMaterial}
+                onRename={handleRenameMaterial}
+                onDuplicate={handleDuplicateMaterial}
+                onDelete={handleDeleteMaterial}
+              />
             )}
           </details>
 
           <details
             className="settings-collapsible"
-            open={quickSettingsOpen}
-            onToggle={(e) => setQuickSettingsOpen(e.currentTarget.open)}
+            open={settingsSectionOpen}
+            onToggle={(e) => setSettingsSectionOpen(e.currentTarget.open)}
           >
-            <summary>Quick settings{selectedMaterial ? ` (${selectedMaterial.name})` : ''}</summary>
-            {filamentSlots.map((slot, i) => (
-              <FilamentSelect
-                key={i}
-                profiles={profiles}
-                vendor={vendor}
-                filamentName={slot.profile}
-                onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
-                label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
-                accessory={
-                  <input
-                    type="color"
-                    className="filament-slot-color-input"
-                    value={slot.color}
-                    onChange={(e) => handleFilamentSlotChange(i, { color: e.target.value })}
-                    aria-label={`Slot ${i + 1} color`}
-                  />
-                }
-                belowLabel={
-                  <div className="color-preset-row">
-                    {COLOR_PRESETS.map(({ hex, name }) => (
-                      <button
-                        key={hex}
-                        type="button"
-                        className={`color-preset-swatch${slot.color === hex ? ' selected' : ''}`}
-                        style={{ background: hex }}
-                        aria-label={name}
-                        title={name}
-                        onClick={() => handleFilamentSlotChange(i, { color: hex })}
-                      />
-                    ))}
-                  </div>
-                }
-              />
-            ))}
+            <summary>Settings{selectedSettingsProfile ? ` (${selectedSettingsProfile.name})` : ''}</summary>
             <QuickSettings schema={schema} values={quickSettings} onChange={handleQuickSettingsChange} />
+            {selectedPrinterId && (
+              <SavedProfilePicker
+                label="settings profile"
+                profiles={settingsProfiles}
+                selectedId={selectedSettingsProfileId}
+                onSelect={applySettingsProfile}
+                onDeselect={handleDeselectSettingsProfile}
+                onSave={handleSaveSettingsProfile}
+                onUpdate={handleUpdateSettingsProfile}
+                onRename={handleRenameSettingsProfile}
+                onDuplicate={handleDuplicateSettingsProfile}
+                onDelete={handleDeleteSettingsProfile}
+              />
+            )}
           </details>
 
           <AdvancedSettings

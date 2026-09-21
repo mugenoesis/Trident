@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { testConnectionDetails, testPrinterConnection } from '../api'
-import type { MaterialProfileRecord, PrintHostType, PrinterRecord, PrinterUpdateRequest } from '../types'
+import type { PrintHostType, PrinterRecord, PrinterUpdateRequest } from '../types'
 
 interface ConnectionFields {
   host_type: PrintHostType | null
@@ -18,16 +18,6 @@ interface SavedPrintersProps {
   onSavePrinter: (name: string, connection: ConnectionFields) => Promise<unknown>
   onUpdatePrinter: (id: string, body: PrinterUpdateRequest) => Promise<unknown>
   onDeletePrinter: (id: string) => void
-
-  materials: MaterialProfileRecord[]
-  selectedMaterialId: string | null
-  onSelectMaterial: (material: MaterialProfileRecord) => void
-  onDeselectMaterial: () => void
-  onSaveMaterial: (name: string) => Promise<unknown>
-  onUpdateMaterial: () => Promise<unknown>
-  onRenameMaterial: (id: string, name: string) => Promise<unknown>
-  onDuplicateMaterial: (id: string) => void
-  onDeleteMaterial: (id: string) => void
 }
 
 // Shared by the create-printer form (testing connection details before the
@@ -170,81 +160,12 @@ function PrinterSettingsForm({
   )
 }
 
-// One row in "Manage material profiles": name (or an inline rename input),
-// Rename/Duplicate/Delete.
-function MaterialManageRow({
-  material,
-  onRename,
-  onDuplicate,
-  onDelete,
-}: {
-  material: MaterialProfileRecord
-  onRename: (id: string, name: string) => Promise<unknown>
-  onDuplicate: (id: string) => void
-  onDelete: (id: string) => void
-}) {
-  const [renaming, setRenaming] = useState(false)
-  const [name, setName] = useState(material.name)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const submitRename = (e: React.FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    onRename(material.id, name)
-      .then(() => setRenaming(false))
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setBusy(false))
-  }
-
-  if (renaming) {
-    return (
-      <li>
-        <form className="rename-form" onSubmit={submitRename}>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-          <button type="submit" disabled={busy || !name}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            className="link-button"
-            disabled={busy}
-            onClick={() => {
-              setRenaming(false)
-              setName(material.name)
-              setError(null)
-            }}
-          >
-            Cancel
-          </button>
-          {error && <span className="job-error">{error}</span>}
-        </form>
-      </li>
-    )
-  }
-
-  return (
-    <li>
-      <span>{material.name}</span>
-      <button type="button" className="link-button" onClick={() => setRenaming(true)}>
-        Rename
-      </button>
-      <button type="button" className="link-button" onClick={() => onDuplicate(material.id)}>
-        Duplicate
-      </button>
-      <button type="button" className="link-button job-delete" onClick={() => onDelete(material.id)}>
-        Delete
-      </button>
-    </li>
-  )
-}
-
 // Sits above PrinterSelect: pick a saved printer to instantly restore
 // vendor/printer/process/filament/bed-size (no network round-trip -- see
 // App.tsx's applySavedPrinter), or save the current selection as a new one.
-// Once a saved printer is picked, a second row does the same for that
-// printer's material profiles (quick+advanced settings snapshots).
+// Material profiles and settings profiles are separate, independently
+// saveable concepts once a printer is selected -- see SavedProfilePicker,
+// rendered from App.tsx's "Material"/"Settings" sections, not here.
 export default function SavedPrinters({
   printers,
   selectedPrinterId,
@@ -253,15 +174,6 @@ export default function SavedPrinters({
   onSavePrinter,
   onUpdatePrinter,
   onDeletePrinter,
-  materials,
-  selectedMaterialId,
-  onSelectMaterial,
-  onDeselectMaterial,
-  onSaveMaterial,
-  onUpdateMaterial,
-  onRenameMaterial,
-  onDuplicateMaterial,
-  onDeleteMaterial,
 }: SavedPrintersProps) {
   const [savingPrinter, setSavingPrinter] = useState(false)
   const [printerName, setPrinterName] = useState('')
@@ -274,14 +186,6 @@ export default function SavedPrinters({
   const [printerBusy, setPrinterBusy] = useState(false)
 
   const [editingPrinterId, setEditingPrinterId] = useState<string | null>(null)
-
-  const [savingMaterial, setSavingMaterial] = useState(false)
-  const [materialName, setMaterialName] = useState('')
-  const [materialError, setMaterialError] = useState<string | null>(null)
-  const [materialBusy, setMaterialBusy] = useState(false)
-
-  const [updateBusy, setUpdateBusy] = useState(false)
-  const [updateDone, setUpdateDone] = useState(false)
 
   const resetPrinterForm = () => {
     setSavingPrinter(false)
@@ -309,30 +213,6 @@ export default function SavedPrinters({
       .catch((err: Error) => setPrinterError(err.message))
       .finally(() => setPrinterBusy(false))
   }
-
-  const submitMaterial = (e: React.FormEvent) => {
-    e.preventDefault()
-    setMaterialBusy(true)
-    setMaterialError(null)
-    onSaveMaterial(materialName)
-      .then(() => {
-        setSavingMaterial(false)
-        setMaterialName('')
-      })
-      .catch((err: Error) => setMaterialError(err.message))
-      .finally(() => setMaterialBusy(false))
-  }
-
-  const runUpdateMaterial = () => {
-    setUpdateBusy(true)
-    setUpdateDone(false)
-    onUpdateMaterial()
-      .then(() => setUpdateDone(true))
-      .catch((err: Error) => alert(`Failed to update material profile: ${err.message}`))
-      .finally(() => setUpdateBusy(false))
-  }
-
-  const selectedMaterial = materials.find((m) => m.id === selectedMaterialId) ?? null
 
   return (
     <div className="saved-printers">
@@ -462,88 +342,6 @@ export default function SavedPrinters({
             ))}
           </ul>
         </details>
-      )}
-
-      {selectedPrinterId && (
-        <div className="material-profiles">
-          <div className="field-group">
-            <label>
-              Material profile
-              <select
-                value={selectedMaterialId ?? ''}
-                onChange={(e) => {
-                  const material = materials.find((m) => m.id === e.target.value)
-                  if (material) onSelectMaterial(material)
-                  else onDeselectMaterial()
-                }}
-              >
-                <option value="">— choose a material profile —</option>
-                {materials.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {selectedMaterial && (
-            <div className="material-update-actions">
-              <button type="button" className="preview-button" disabled={updateBusy} onClick={runUpdateMaterial}>
-                {updateBusy ? 'Updating…' : `Update "${selectedMaterial.name}"`}
-              </button>
-              {updateDone && <span className="job-hint">Updated.</span>}
-            </div>
-          )}
-
-          {!savingMaterial ? (
-            <button type="button" className="link-button" onClick={() => setSavingMaterial(true)}>
-              {selectedMaterial ? 'Save as new profile…' : 'Save current settings as a material profile…'}
-            </button>
-          ) : (
-            <form className="auth-form" onSubmit={submitMaterial}>
-              <label>
-                Name (e.g. "PLA", "PETG")
-                <input value={materialName} onChange={(e) => setMaterialName(e.target.value)} autoFocus />
-              </label>
-              <div className="auth-form-actions">
-                <button type="submit" disabled={materialBusy || !materialName}>
-                  {materialBusy ? 'Saving…' : 'Save material profile'}
-                </button>
-                <button
-                  type="button"
-                  className="link-button"
-                  disabled={materialBusy}
-                  onClick={() => {
-                    setSavingMaterial(false)
-                    setMaterialName('')
-                    setMaterialError(null)
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-              {materialError && <div className="job-error">{materialError}</div>}
-            </form>
-          )}
-
-          {materials.length > 0 && (
-            <details className="job-history">
-              <summary>Manage material profiles ({materials.length})</summary>
-              <ul>
-                {materials.map((m) => (
-                  <MaterialManageRow
-                    key={m.id}
-                    material={m}
-                    onRename={onRenameMaterial}
-                    onDuplicate={onDuplicateMaterial}
-                    onDelete={onDeleteMaterial}
-                  />
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
       )}
     </div>
   )

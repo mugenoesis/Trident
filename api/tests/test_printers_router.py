@@ -67,11 +67,7 @@ def test_material_profile_crud(client):
 
     created = client.post(
         f"/printers/{printer_id}/materials",
-        json={
-            "name": "PLA",
-            "quick_settings": {"layer_height": "0.2"},
-            "advanced_overrides": {},
-        },
+        json={"name": "PLA", "filament_profiles": ["Generic PLA"], "filament_colors": ["#ffffff"]},
     )
     assert created.status_code == 200
     material_id = created.json()["id"]
@@ -85,7 +81,7 @@ def test_material_profile_crud(client):
 
 
 def _material_body(**overrides):
-    body = dict(name="PLA", quick_settings={"layer_height": "0.2"}, advanced_overrides={})
+    body = dict(name="PLA", filament_profiles=["Generic PLA"], filament_colors=["#ffffff"])
     body.update(overrides)
     return body
 
@@ -98,7 +94,7 @@ def test_rename_material_profile(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["name"] == "PLA v2"
-    assert body["quick_settings"] == {"layer_height": "0.2"}  # untouched
+    assert body["filament_profiles"] == ["Generic PLA"]  # untouched
 
 
 def test_update_material_filament_slots(client):
@@ -115,21 +111,6 @@ def test_update_material_filament_slots(client):
     assert body["filament_colors"] == ["#111111", "#222222"]
 
 
-def test_update_mode_overwrites_material_settings(client):
-    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
-    material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
-
-    resp = client.put(
-        f"/printers/{printer_id}/materials/{material_id}",
-        json={"quick_settings": {"layer_height": "0.3"}, "advanced_overrides": {"x": "1"}},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["name"] == "PLA"  # untouched
-    assert body["quick_settings"] == {"layer_height": "0.3"}
-    assert body["advanced_overrides"] == {"x": "1"}
-
-
 def test_duplicate_material_profile(client):
     printer_id = client.post("/printers", json=_printer_body()).json()["id"]
     material_id = client.post(f"/printers/{printer_id}/materials", json=_material_body()).json()["id"]
@@ -139,7 +120,7 @@ def test_duplicate_material_profile(client):
     dup = resp.json()
     assert dup["name"] == "PLA (2)"
     assert dup["id"] != material_id
-    assert dup["quick_settings"] == {"layer_height": "0.2"}
+    assert dup["filament_profiles"] == ["Generic PLA"]
 
     listed = client.get(f"/printers/{printer_id}/materials").json()
     assert {m["name"] for m in listed} == {"PLA", "PLA (2)"}
@@ -156,6 +137,95 @@ def test_material_actions_404_for_another_users_printer(client):
 
     assert client.put(f"/printers/{printer_id}/materials/{material_id}", json={"name": "x"}).status_code == 404
     assert client.post(f"/printers/{printer_id}/materials/{material_id}/duplicate").status_code == 404
+
+
+def _settings_profile_body(**overrides):
+    body = dict(name="Standard", quick_settings={"layer_height": "0.2"}, advanced_overrides={})
+    body.update(overrides)
+    return body
+
+
+def test_settings_profile_crud(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+
+    created = client.post(f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body())
+    assert created.status_code == 200
+    profile_id = created.json()["id"]
+
+    listed = client.get(f"/printers/{printer_id}/settings-profiles")
+    assert [p["id"] for p in listed.json()] == [profile_id]
+
+    deleted = client.delete(f"/printers/{printer_id}/settings-profiles/{profile_id}")
+    assert deleted.status_code == 200
+    assert client.get(f"/printers/{printer_id}/settings-profiles").json() == []
+
+
+def test_rename_settings_profile(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    profile_id = client.post(
+        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
+    ).json()["id"]
+
+    resp = client.put(f"/printers/{printer_id}/settings-profiles/{profile_id}", json={"name": "Standard v2"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Standard v2"
+    assert body["quick_settings"] == {"layer_height": "0.2"}  # untouched
+
+
+def test_update_mode_overwrites_settings_profile(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    profile_id = client.post(
+        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
+    ).json()["id"]
+
+    resp = client.put(
+        f"/printers/{printer_id}/settings-profiles/{profile_id}",
+        json={"quick_settings": {"layer_height": "0.3"}, "advanced_overrides": {"x": "1"}},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Standard"  # untouched
+    assert body["quick_settings"] == {"layer_height": "0.3"}
+    assert body["advanced_overrides"] == {"x": "1"}
+
+
+def test_duplicate_settings_profile(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    profile_id = client.post(
+        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
+    ).json()["id"]
+
+    resp = client.post(f"/printers/{printer_id}/settings-profiles/{profile_id}/duplicate")
+    assert resp.status_code == 200
+    dup = resp.json()
+    assert dup["name"] == "Standard (2)"
+    assert dup["id"] != profile_id
+    assert dup["quick_settings"] == {"layer_height": "0.2"}
+
+    listed = client.get(f"/printers/{printer_id}/settings-profiles").json()
+    assert {p["name"] for p in listed} == {"Standard", "Standard (2)"}
+
+
+def test_settings_profile_actions_404_for_another_users_printer(client):
+    client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    profile_id = client.post(
+        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
+    ).json()["id"]
+
+    client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
+    client.post("/auth/logout")
+    client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
+
+    assert (
+        client.put(f"/printers/{printer_id}/settings-profiles/{profile_id}", json={"name": "x"}).status_code
+        == 404
+    )
+    assert (
+        client.post(f"/printers/{printer_id}/settings-profiles/{profile_id}/duplicate").status_code == 404
+    )
+    assert client.get(f"/printers/{printer_id}/settings-profiles").status_code == 404
 
 
 def test_ad_hoc_test_connection_success(client, monkeypatch):

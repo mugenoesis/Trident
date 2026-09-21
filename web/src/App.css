@@ -420,7 +420,7 @@
 }
 
 .saved-printers,
-.material-profiles {
+.saved-profile-picker {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -759,6 +759,36 @@
 
 .color-preset-swatch.selected {
   border: 2px solid var(--accent-hover);
+}
+
+.filament-slot-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.nozzle-diameter-global,
+.nozzle-diameter-per-slot {
+  flex-direction: row !important;
+  flex-wrap: wrap;
+}
+
+.nozzle-diameter-global label,
+.nozzle-diameter-per-slot label {
+  flex: 1;
+  min-width: 140px;
+}
+
+.filament-slot-remove {
+  align-self: flex-start;
+}
+
+.filament-slot-add {
+  margin-bottom: 0.5rem;
 }
 
 .nozzle-assignment {

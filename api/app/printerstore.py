@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import settings
-from .schemas import MaterialProfileRecord, PrinterRecord
+from .schemas import MaterialProfileRecord, PrinterRecord, SettingsProfileRecord
 
 _DUPLICATE_SUFFIX_RE = re.compile(r" \(\d+\)$")
 
@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS material_profiles (
     filament_profile TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings_profiles (
+    id TEXT PRIMARY KEY,
+    printer_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    quick_settings TEXT NOT NULL,
+    advanced_overrides TEXT NOT NULL,
+    process_profile TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 # filament_profile (both tables) is superseded by filament_profiles/
@@ -73,6 +83,11 @@ CREATE TABLE IF NOT EXISTS material_profiles (
 # by version and there's no reason to fight it. printers.create_printer()
 # still writes it (satisfying its NOT NULL) for schema compatibility only;
 # nothing reads it back once the migration below has run.
+#
+# material_profiles.quick_settings/advanced_overrides/process_profile are
+# likewise superseded -- by settings_profiles, a separately-saved entity --
+# but kept physically in place for the same reason. create_material() always
+# writes "{}"/"{}"/None into them now; nothing reads them back.
 
 
 def _now() -> str:
@@ -217,18 +232,21 @@ class PrinterStore:
         leak state between tests in the same pytest session)."""
         with self._connect() as conn:
             conn.execute("DELETE FROM material_profiles")
+            conn.execute("DELETE FROM settings_profiles")
             conn.execute("DELETE FROM printers")
 
     def reassign_all_to_user(self, user_id: str) -> None:
-        """Used by switch-to-single: merges every printer + material
+        """Used by switch-to-single: merges every printer + material/settings
         profile, regardless of current owner, onto one account."""
         with self._connect() as conn:
             conn.execute("UPDATE printers SET user_id = ?", (user_id,))
             conn.execute("UPDATE material_profiles SET user_id = ?", (user_id,))
+            conn.execute("UPDATE settings_profiles SET user_id = ?", (user_id,))
 
     def delete_printer(self, printer_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM material_profiles WHERE printer_id = ?", (printer_id,))
+            conn.execute("DELETE FROM settings_profiles WHERE printer_id = ?", (printer_id,))
             conn.execute("DELETE FROM printers WHERE id = ?", (printer_id,))
 
     @staticmethod
@@ -260,18 +278,17 @@ class PrinterStore:
         printer_id: str,
         user_id: str,
         name: str,
-        quick_settings: dict[str, str],
-        advanced_overrides: dict[str, str],
-        process_profile: str | None,
         filament_profiles: list[str] | None = None,
         filament_colors: list[str] | None = None,
     ) -> MaterialProfileRecord:
         material_id = uuid.uuid4().hex
         now = _now()
-        # A material profile's legacy scalar filament_profile column is kept
-        # physically in place (see the migration note near _SCHEMA) but is
-        # never written by new code -- filament_profiles/filament_colors are
-        # the only source of truth going forward.
+        # A material profile's legacy scalar filament_profile column, and
+        # its legacy quick_settings/advanced_overrides/process_profile
+        # columns (superseded by settings_profiles), are kept physically in
+        # place (see the migration note near _SCHEMA) but never written with
+        # real data by new code -- filament_profiles/filament_colors are the
+        # only source of truth going forward.
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO material_profiles (
@@ -283,9 +300,9 @@ class PrinterStore:
                     printer_id,
                     user_id,
                     name,
-                    json.dumps(quick_settings),
-                    json.dumps(advanced_overrides),
-                    process_profile,
+                    "{}",
+                    "{}",
+                    None,
                     json.dumps(filament_profiles) if filament_profiles is not None else None,
                     json.dumps(filament_colors) if filament_colors is not None else None,
                     now,
@@ -312,23 +329,10 @@ class PrinterStore:
         with self._connect() as conn:
             conn.execute("DELETE FROM material_profiles WHERE id = ?", (material_id,))
 
-    _MATERIAL_UPDATABLE_COLUMNS = frozenset(
-        {
-            "name",
-            "quick_settings",
-            "advanced_overrides",
-            "process_profile",
-            "filament_profiles",
-            "filament_colors",
-        }
-    )
+    _MATERIAL_UPDATABLE_COLUMNS = frozenset({"name", "filament_profiles", "filament_colors"})
 
     def update_material(self, material_id: str, **fields: Any) -> MaterialProfileRecord | None:
         updates = {k: v for k, v in fields.items() if k in self._MATERIAL_UPDATABLE_COLUMNS}
-        if "quick_settings" in updates:
-            updates["quick_settings"] = json.dumps(updates["quick_settings"])
-        if "advanced_overrides" in updates:
-            updates["advanced_overrides"] = json.dumps(updates["advanced_overrides"])
         if "filament_profiles" in updates:
             v = updates["filament_profiles"]
             updates["filament_profiles"] = json.dumps(v) if v is not None else None
@@ -353,9 +357,6 @@ class PrinterStore:
             printer_id=original.printer_id,
             user_id=user_id,
             name=_next_duplicate_name(original.name, existing_names),
-            quick_settings=original.quick_settings,
-            advanced_overrides=original.advanced_overrides,
-            process_profile=original.process_profile,
             filament_profiles=original.filament_profiles,
             filament_colors=original.filament_colors,
         )
@@ -368,11 +369,110 @@ class PrinterStore:
             id=row["id"],
             printer_id=row["printer_id"],
             name=row["name"],
+            filament_profiles=json.loads(filament_profiles) if filament_profiles is not None else None,
+            filament_colors=json.loads(filament_colors) if filament_colors is not None else None,
+            created_at=row["created_at"],
+        )
+
+    # -- settings profiles -------------------------------------------------
+    # The counterpart to material profiles above: print-quality settings
+    # only (no filament choice), saved/loaded independently so the same
+    # materials can be reused across quality presets and vice versa.
+
+    def create_settings_profile(
+        self,
+        *,
+        printer_id: str,
+        user_id: str,
+        name: str,
+        quick_settings: dict[str, str],
+        advanced_overrides: dict[str, str],
+        process_profile: str | None = None,
+    ) -> SettingsProfileRecord:
+        profile_id = uuid.uuid4().hex
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO settings_profiles (
+                    id, printer_id, user_id, name, quick_settings, advanced_overrides,
+                    process_profile, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    profile_id,
+                    printer_id,
+                    user_id,
+                    name,
+                    json.dumps(quick_settings),
+                    json.dumps(advanced_overrides),
+                    process_profile,
+                    now,
+                ),
+            )
+        return self.get_settings_profile(profile_id)  # type: ignore[return-value]
+
+    def list_settings_profiles(self, printer_id: str) -> list[SettingsProfileRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM settings_profiles WHERE printer_id = ? ORDER BY created_at",
+                (printer_id,),
+            ).fetchall()
+        return [self._row_to_settings_profile(r) for r in rows]
+
+    def get_settings_profile(self, profile_id: str) -> SettingsProfileRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM settings_profiles WHERE id = ?", (profile_id,)
+            ).fetchone()
+        return self._row_to_settings_profile(row) if row else None
+
+    def delete_settings_profile(self, profile_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM settings_profiles WHERE id = ?", (profile_id,))
+
+    _SETTINGS_PROFILE_UPDATABLE_COLUMNS = frozenset(
+        {"name", "quick_settings", "advanced_overrides", "process_profile"}
+    )
+
+    def update_settings_profile(self, profile_id: str, **fields: Any) -> SettingsProfileRecord | None:
+        updates = {k: v for k, v in fields.items() if k in self._SETTINGS_PROFILE_UPDATABLE_COLUMNS}
+        if "quick_settings" in updates:
+            updates["quick_settings"] = json.dumps(updates["quick_settings"])
+        if "advanced_overrides" in updates:
+            updates["advanced_overrides"] = json.dumps(updates["advanced_overrides"])
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE settings_profiles SET {set_clause} WHERE id = ?",  # noqa: S608 - keys are our own frozenset
+                    (*updates.values(), profile_id),
+                )
+        return self.get_settings_profile(profile_id)
+
+    def duplicate_settings_profile(
+        self, profile_id: str, *, user_id: str
+    ) -> SettingsProfileRecord | None:
+        original = self.get_settings_profile(profile_id)
+        if original is None:
+            return None
+        existing_names = {p.name for p in self.list_settings_profiles(original.printer_id)}
+        return self.create_settings_profile(
+            printer_id=original.printer_id,
+            user_id=user_id,
+            name=_next_duplicate_name(original.name, existing_names),
+            quick_settings=original.quick_settings,
+            advanced_overrides=original.advanced_overrides,
+            process_profile=original.process_profile,
+        )
+
+    @staticmethod
+    def _row_to_settings_profile(row: sqlite3.Row) -> SettingsProfileRecord:
+        return SettingsProfileRecord(
+            id=row["id"],
+            printer_id=row["printer_id"],
+            name=row["name"],
             quick_settings=json.loads(row["quick_settings"]),
             advanced_overrides=json.loads(row["advanced_overrides"]),
             process_profile=row["process_profile"],
-            filament_profiles=json.loads(filament_profiles) if filament_profiles is not None else None,
-            filament_colors=json.loads(filament_colors) if filament_colors is not None else None,
             created_at=row["created_at"],
         )
 

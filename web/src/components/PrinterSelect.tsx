@@ -12,7 +12,7 @@ interface PrinterSelectProps {
 }
 
 // Material/filament choice lives in FilamentSelect.tsx now, rendered
-// separately under "Quick settings" -- see App.tsx.
+// separately under the "Material" section -- see App.tsx.
 export default function PrinterSelect({
   profiles,
   vendor,
