@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -26,10 +26,20 @@ interface ViewerProps {
 // here depends on interaction actually happening.
 export default function Viewer({ file, onDimensions, bedSize, colorTree }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Geometry loading (a fresh .3mf/.stl/.drc) and per-triangle color
+  // application (toNonIndexed() + a fresh vertex-color buffer per painted
+  // mesh, see applyTriangleColors below) can both take a noticeable moment
+  // on a large model -- this whole effect re-runs on every colorTree change
+  // too (a nozzle reassignment), re-fetching and re-parsing the file from
+  // scratch, not just recoloring in place. Surfaced as a loading overlay
+  // rather than left silent so a slow model/reassignment doesn't look hung.
+  const [isRendering, setIsRendering] = useState(false)
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+
+    setIsRendering(!!file)
 
     // Cleared immediately on a new/removed file so stale dimensions from a
     // previous model don't linger in the UI while the new one loads.
@@ -279,6 +289,7 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
 
         finishLoad(mesh, geometry.boundingBox!)
         URL.revokeObjectURL(url)
+        setIsRendering(false)
       }
 
       if (isThreeMf) {
@@ -302,11 +313,14 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
             loadedObject = group
             finishLoad(group, new THREE.Box3().setFromObject(group))
             URL.revokeObjectURL(url)
+            setIsRendering(false)
           },
           undefined,
           (err) => {
-            console.error('Failed to load 3MF for preview', err)
             URL.revokeObjectURL(url)
+            if (disposed) return
+            console.error('Failed to load 3MF for preview', err)
+            setIsRendering(false)
           },
         )
       } else if (isDrc) {
@@ -320,8 +334,10 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
           handleGeometry,
           undefined,
           (err) => {
-            console.error('Failed to load DRC for preview', err)
             URL.revokeObjectURL(url)
+            if (disposed) return
+            console.error('Failed to load DRC for preview', err)
+            setIsRendering(false)
           },
         )
       } else {
@@ -330,8 +346,10 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
           handleGeometry,
           undefined,
           (err) => {
-            console.error('Failed to load STL for preview', err)
             URL.revokeObjectURL(url)
+            if (disposed) return
+            console.error('Failed to load STL for preview', err)
+            setIsRendering(false)
           },
         )
       }
@@ -400,6 +418,12 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
           so nothing here is a React-rendered child. */}
       <div className="viewer" ref={containerRef} />
       {!file && <div className="viewer-placeholder">Upload a model to preview it here</div>}
+      {isRendering && (
+        <div className="viewer-loading">
+          <div className="viewer-loading-spinner" />
+          <span>Rendering preview…</span>
+        </div>
+      )}
     </div>
   )
 }

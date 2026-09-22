@@ -126,6 +126,41 @@
   padding: 1rem;
 }
 
+/* Shown while Viewer.tsx is (re)loading a model or reapplying colors --
+   both can take a noticeable moment on a large/painted model, and a
+   nozzle reassignment reloads the whole file from scratch (see
+   Viewer.tsx's effect), so this covers "just uploaded" and "just changed
+   a color" alike. Sits on top of whatever the previous frame rendered
+   (a stale but non-blank canvas) rather than blanking the viewport. */
+.viewer-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: rgba(26, 29, 35, 0.55);
+  color: var(--text-dim);
+  pointer-events: none;
+  font-size: 0.85rem;
+}
+
+.viewer-loading-spinner {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 3px solid var(--panel-border);
+  border-top-color: var(--accent);
+  animation: viewer-loading-spin 0.8s linear infinite;
+}
+
+@keyframes viewer-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .field-group {
   display: flex;
   flex-direction: column;
