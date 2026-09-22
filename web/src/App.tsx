@@ -95,6 +95,14 @@ function computeSliceSignature(
   quickSettings: QuickSettingsValues,
   advancedOverrides: Record<string, string>,
   nozzleSettingsSignature: string,
+  // Two different physical-slot assignments can resolve to the identical
+  // effectiveFilamentProfiles array whenever the slots involved share a
+  // material profile (exactly the case that caused a real print to come
+  // out the wrong colors: two slots both set to the same PLA, so which
+  // physical head prints which role never showed up in the signature at
+  // all) -- include the raw per-role slot assignment directly so changing
+  // it always counts as "you changed something," even then.
+  roleNozzleAssignments: (number | null)[],
 ): string {
   return JSON.stringify({
     modelId,
@@ -105,6 +113,7 @@ function computeSliceSignature(
     quickSettings: sortedEntries(quickSettings as unknown as Record<string, unknown>),
     advancedOverrides: sortedEntries(advancedOverrides),
     nozzleSettingsSignature,
+    roleNozzleAssignments,
   })
 }
 
@@ -1197,6 +1206,7 @@ function MainApp({
         quickSettings,
         advancedOverrides,
         nozzleSettingsSignature,
+        roleNozzleAssignments,
       ),
     [
       modelId,
@@ -1207,6 +1217,7 @@ function MainApp({
       quickSettings,
       advancedOverrides,
       nozzleSettingsSignature,
+      roleNozzleAssignments,
     ],
   )
   // Only a *successful* prior slice blocks re-slicing -- a failed job with
@@ -1284,11 +1295,44 @@ function MainApp({
         overrides.nozzle_type = Array(filamentSlots.length || 1).fill(globalNozzleType).join(',')
       }
     }
+    // A file's role N (0-based roleIdx) is always embedded as extruder
+    // (roleIdx + 1) -- confirmed the same 1-based numbering is used for
+    // both plain per-object extruder tags and per-triangle painted
+    // assignments (both ultimately resolve via filament_colors[extruder -
+    // 1], see api/app/threemf.py's _build_color_node). The user assigning
+    // that role to filamentSlots[slotIdx] means "physically print this
+    // with extruder slotIdx + 1" -- only emit a pair when that actually
+    // differs from the file's own default (identity), so the common case
+    // (single material, or roles already left in their original order)
+    // sends nothing and behaves exactly as before. Requires the vendored
+    // OrcaSlicer fork's --remap-filament-extruder CLI patch, which remaps
+    // both the plain per-object extruder config and any per-triangle
+    // MMU-painted color assignment via libslic3r's own
+    // remap_model_filament_slots -- confirmed via direct CLI testing.
+    const remapPairs: string[] = []
+    roleNozzleAssignments.forEach((slotIdx, roleIdx) => {
+      if (slotIdx === null) return
+      const oldExtruder = roleIdx + 1
+      const newExtruder = slotIdx + 1
+      if (oldExtruder !== newExtruder) remapPairs.push(`${oldExtruder}:${newExtruder}`)
+    })
+    const needsRemap = remapPairs.length > 0
+    if (needsRemap) {
+      overrides.remap_filament_extruder = remapPairs.join(',')
+    }
     createJob({
       model_id: modelId,
       printer_profile: printerName,
       process_profile: processName,
-      filament_profiles: effectiveFilamentProfiles,
+      // Confirmed via direct CLI testing: --load-filaments position N
+      // always means physical extruder N (1-based) -- once a remap is in
+      // play, the file can end up using non-sequential/sparse extruder
+      // numbers (e.g. 2 and 4), and the array must be DENSE, sized to
+      // cover every configured physical slot, not just "as many as the
+      // file's own role count" (that narrower rule is what the no-remap
+      // path below still uses, and remains correct for it: today's files
+      // always use sequential extruders from 1).
+      filament_profiles: needsRemap ? filamentSlots.map((s) => s.profile) : effectiveFilamentProfiles,
       setting_overrides: overrides,
       plate_index: plateIndex ?? undefined,
     })
@@ -1308,6 +1352,7 @@ function MainApp({
     quickSettings,
     advancedOverrides,
     filamentSlots,
+    roleNozzleAssignments,
     isMultiHeadPrinter,
     globalNozzleDiameter,
     globalNozzleType,
