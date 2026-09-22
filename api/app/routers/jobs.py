@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import cli_runner
+from .. import cli_runner, gcode_thumbnail
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
@@ -40,6 +40,8 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
         return
 
     if result.succeeded:
+        if request.preview_image_base64:
+            gcode_thumbnail.embed_preview(_job_output_dir(job_id), request.preview_image_base64)
         store.finish(job_id, status=JobStatus.SUCCEEDED, result=result.result_json)
     else:
         error = result.result_json.get("error_string") if result.result_json else result.stderr

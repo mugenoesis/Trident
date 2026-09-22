@@ -72,6 +72,12 @@ export interface JobCreateRequest {
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
   plate_index?: number | null
+  // Raw base64 PNG (no "data:" prefix), a snapshot of the 3D preview at the
+  // moment slicing starts -- embedded into the gcode's own thumbnail and
+  // this app's job-thumbnail image server-side (api/app/gcode_thumbnail.py),
+  // since the OrcaSlicer CLI never renders one itself. Omitted entirely
+  // when nothing was loaded to capture.
+  preview_image_base64?: string
 }
 
 export interface PlateInfo {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -19,13 +19,49 @@ interface ViewerProps {
   colorTree?: ColorNode[]
 }
 
+export interface ViewerHandle {
+  // A snapshot of whatever this viewer is currently showing (the exact
+  // colors/nozzle assignment the user has configured), as a data: URL --
+  // used to embed a real preview into the sliced gcode and this app's own
+  // job thumbnail, since the OrcaSlicer CLI itself never generates one (see
+  // api/app/gcode_thumbnail.py). null if nothing's loaded yet or the
+  // capture fails for any reason -- best-effort, never blocks slicing.
+  capturePreview: () => string | null
+}
+
 // Basic model preview: not meant to be a full slicer viewport (no layer
 // preview, no plate/gizmos) -- just enough to confirm "yes, that's the
 // object I uploaded" before slicing. Drag-to-rotate/zoom via OrbitControls
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
-export default function Viewer({ file, onDimensions, bedSize, colorTree }: ViewerProps) {
+const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
+  { file, onDimensions, bedSize, colorTree },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Set to the live renderer's canvas each time the effect below (re)creates
+  // one, and cleared on teardown -- capturePreview reads through this
+  // rather than closing over a specific renderer instance, since the whole
+  // scene gets recreated on every file/colorTree change.
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      capturePreview: () => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        try {
+          return canvas.toDataURL('image/png')
+        } catch {
+          // A tainted canvas or an engine that refuses toDataURL -- fall
+          // back to "no preview" rather than let this block slicing.
+          return null
+        }
+      },
+    }),
+    [],
+  )
   // Geometry loading (a fresh .3mf/.stl/.drc) and per-triangle color
   // application (toNonIndexed() + a fresh vertex-color buffer per painted
   // mesh, see applyTriangleColors below) can both take a noticeable moment
@@ -60,10 +96,15 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
     // OrbitControls is constructed, which reads it to orient orbiting.
     camera.up.set(0, 0, 1)
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    // preserveDrawingBuffer: capturePreview() (above) reads this canvas via
+    // toDataURL() on demand -- e.g. when the user clicks Slice, not right
+    // after a render call -- and without this the buffer can already be
+    // cleared by then.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
     renderer.setPixelRatio(window.devicePixelRatio)
     renderer.setSize(container.clientWidth, container.clientHeight)
     container.appendChild(renderer.domElement)
+    canvasRef.current = renderer.domElement
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6))
     const key = new THREE.DirectionalLight(0xffffff, 0.8)
@@ -403,6 +444,7 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
       ;(ceiling?.material as THREE.Material | undefined)?.dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
+      if (canvasRef.current === renderer.domElement) canvasRef.current = null
     }
     // bedSize is intentionally included: picking/changing a printer with a
     // model already loaded should resize the plate/ceiling to match, even
@@ -426,4 +468,6 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
       )}
     </div>
   )
-}
+})
+
+export default Viewer

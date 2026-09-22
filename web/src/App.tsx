@@ -55,7 +55,7 @@ import SendToPrinterControl from './components/SendToPrinterControl'
 import SettingsMenu from './components/SettingsMenu'
 import SetupGate from './components/SetupGate'
 import Uploader from './components/Uploader'
-import Viewer from './components/Viewer'
+import Viewer, { type ViewerHandle } from './components/Viewer'
 import type {
   ColorNode,
   JobRecord,
@@ -390,6 +390,11 @@ function MainApp({
   const [printersLoaded, setPrintersLoaded] = useState(false)
   const pendingLastMaterialId = useRef(authStatus.last_material_id)
   const pendingLastSettingsProfileId = useRef(authStatus.last_settings_profile_id)
+  // Lets handleSlice grab a snapshot of the 3D preview at the moment
+  // slicing starts, to embed into the gcode and this app's own job
+  // thumbnail (see api/app/gcode_thumbnail.py) -- the engine itself never
+  // renders one in CLI mode.
+  const viewerRef = useRef<ViewerHandle>(null)
 
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
@@ -1327,10 +1332,20 @@ function MainApp({
     if (needsRemap) {
       overrides.remap_filament_extruder = remapPairs.join(',')
     }
+    // Best-effort: a snapshot of exactly what's on screen right now (the
+    // file's own colors, or the user's chosen nozzle-to-slot substitution)
+    // gets embedded into the gcode as its preview thumbnail server-side --
+    // see api/app/gcode_thumbnail.py for why this happens client-side
+    // instead of in the slicer engine. Strips the "data:image/png;base64,"
+    // prefix; a capture failure (nothing loaded yet, tainted canvas) just
+    // means no preview, not a blocked slice.
+    const previewDataUrl = viewerRef.current?.capturePreview()
+    const previewImageBase64 = previewDataUrl?.split(',')[1]
     createJob({
       model_id: modelId,
       printer_profile: printerName,
       process_profile: processName,
+      preview_image_base64: previewImageBase64,
       // Confirmed via direct CLI testing: --load-filaments position N
       // always means physical extruder N (1-based) -- once a remap is in
       // play, the file can end up using non-sequential/sparse extruder
@@ -1406,7 +1421,13 @@ function MainApp({
                 fileName={file?.name ?? null}
                 uploadStatus={uploadStatus}
               />
-              <Viewer file={file} onDimensions={handleDimensions} bedSize={bedSize} colorTree={renderColorTree} />
+              <Viewer
+                ref={viewerRef}
+                file={file}
+                onDimensions={handleDimensions}
+                bedSize={bedSize}
+                colorTree={renderColorTree}
+              />
               {dimensions && (
                 <>
                   <div className="dimensions-readout">

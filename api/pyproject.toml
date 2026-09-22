@@ -12,6 +12,9 @@ dependencies = [
     # Runtime dependency, not just for tests: printhost.py uses this to
     # upload sliced G-code straight to a Klipper/Moonraker or OctoPrint host.
     "httpx>=0.27",
+    # gcode_thumbnail.py resizes the browser's captured preview PNG into the
+    # sizes embedded in the sliced gcode.
+    "pillow>=10.4",
 ]
 
 [project.optional-dependencies]

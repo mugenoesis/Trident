@@ -60,6 +60,14 @@ class JobCreateRequest(BaseModel):
     # from JobProgress.plate_index/plate_count below, which are populated
     # from the --pipe progress stream (an output of slicing), not an input.
     plate_index: int | None = None
+    # Raw base64 PNG (no "data:" prefix) of the browser's own 3D preview at
+    # the moment slicing starts -- the OrcaSlicer CLI never renders a gcode
+    # thumbnail itself (its thumbnail_cb is hardcoded null on the plain
+    # --slice path), so routers/jobs.py embeds this one instead, once
+    # slicing succeeds. See app/gcode_thumbnail.py. None if the frontend had
+    # nothing loaded to capture -- the job still slices normally, just
+    # without a preview.
+    preview_image_base64: str | None = None
 
 
 class JobProgress(BaseModel):
