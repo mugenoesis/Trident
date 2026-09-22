@@ -51,10 +51,25 @@ resolves every .model part's objects into one flat, id-keyed map,
 building a Group whose children mirror <build><item>/<components>
 order exactly. _parse_object_graph mirrors that same resolution so a
 frontend can walk its rendered Object3D tree in lockstep with color_tree
-and apply the right color to each mesh. This only covers per-object/
-per-part color assignment, not per-triangle "paint on" coloring (a
-separate, proprietary, per-triangle mesh property this module does not
-parse) -- a file using only that will get an empty color_tree.
+and apply the right color to each mesh.
+
+A leaf's single `extruder`/`color` above is still only the OBJECT/PART's
+own base assignment, though -- a hand-painted file (e.g. a downloaded
+multi-color model with just one part, its actual color variation living
+entirely as per-triangle "paint_color" attributes on individual
+<triangle> elements, OrcaSlicer's own proprietary MMU-segmentation
+format) needs `triangle_extruders`/`triangle_colors` instead: one
+representative extruder/color PER ORIGINAL TRIANGLE (same order as that
+part's <triangle> elements, so the same order the loaded 3D geometry's
+faces come in). This is a deliberate approximation, not the file's exact
+paint pattern -- a triangle whose paint data is itself split into
+multiple colors reports only its most-common one, not a
+sub-triangle-accurate boundary (see _representative_extruder). Good
+enough for "does the preview roughly look like the print", which is all
+it needs to be: the actual slice already uses the real, exact paint data
+regardless of what the preview shows (see cli_runner.py/OrcaSlicer's own
+--remap-filament-extruder patch, which operates on the real engine-side
+paint data, not this approximation).
 """
 from __future__ import annotations
 
@@ -143,15 +158,27 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
     in a Production-Extension sub-.model file, referenced via
     <component objectid="Y"> (see module docstring) -- so one flat mapping
     keyed by either kind of id is all a color-tree walk needs.
+
+    A part with no "extruder" metadata of its own inherits its parent
+    object's value, mirroring OrcaSlicer's own ModelVolume::extruder_id()
+    (falls back to the parent ModelObject's config when the volume's own
+    is unset) -- confirmed against a real single-part painted file (the
+    common case: one part per object, so the author only ever set
+    "extruder" once, at the object level) whose color_tree previously
+    resolved to no color at all (the leaf's part id had no entry here),
+    silently falling back to the 3D viewer's flat default color.
     """
     result: dict[str, int] = {}
     for object_elem in root.findall("object"):
         obj_id = object_elem.get("id")
+        obj_extruder: int | None = None
         try:
             meta = _metadata_dict(object_elem)
             raw = meta.get("extruder")
-            if obj_id and raw is not None:
-                result[obj_id] = int(raw)
+            if raw is not None:
+                obj_extruder = int(raw)
+                if obj_id:
+                    result[obj_id] = obj_extruder
         except Exception:  # noqa: BLE001 - skip this object's metadata, keep going
             pass
         for part_elem in object_elem.findall("part"):
@@ -161,8 +188,152 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
                 raw = part_meta.get("extruder")
                 if part_id and raw is not None:
                     result[part_id] = int(raw)
+                elif part_id and obj_extruder is not None:
+                    result[part_id] = obj_extruder
             except Exception:  # noqa: BLE001
                 pass
+    return result
+
+
+# -- per-triangle paint ("MMU segmentation") decoding --------------------
+#
+# Reverse-engineered from vendor/orcaslicer/src/libslic3r/TriangleSelector.cpp
+# (serialize()/deserialize(), ~line 1692-1907) and Model.cpp's
+# FacetsAnnotation::get_triangle_as_string/set_triangle_from_string
+# (~line 3654-3703), and verified bit-for-bit against that same repo's own
+# Catch2 ground-truth vectors (tests/libslic3r/test_triangle_selector.cpp
+# and the CONST_FILAMENTS table, Model.cpp:54-57) -- see this module's
+# tests for the hardcoded vectors. A <triangle>'s paint_color hex string
+# encodes a small recursive tree: every node is one 4-bit "nibble" whose
+# low 2 bits say whether it's a split (1-3 = split into that+1 children)
+# or a leaf (0 = leaf, high 2 bits give the state -- an extruder number --
+# directly for 0-2, or trigger reading 1-2 more nibbles for 3-17/18-32).
+# We only need the *set* of leaf states a triangle's paint encodes (for
+# the one-representative-color-per-triangle approximation, see module
+# docstring), not their geometry, so unlike a full reconstruction we don't
+# need to track which child is which -- just consume the right number of
+# bits per node.
+
+
+def _decode_paint_color_states(hex_str: str) -> list[int]:
+    """Every leaf state (0 = NONE/unpainted, 1-32 = Extruder1-32) this
+    triangle's paint_color attribute encodes, in whatever order the
+    recursive descent visits them -- never raises; a malformed string
+    (odd bit count, truncated, non-hex chars) yields whatever states were
+    fully decoded before the problem, dropping only the tail.
+    """
+    if not hex_str:
+        return []
+    bits: list[int] = []
+    for ch in reversed(hex_str):
+        try:
+            value = int(ch, 16)
+        except ValueError:
+            break
+        bits.extend((value >> i) & 1 for i in range(4))
+
+    states: list[int] = []
+    pos = 0
+
+    def next_nibble() -> int | None:
+        nonlocal pos
+        if pos + 4 > len(bits):
+            return None
+        nibble = 0
+        for i in range(4):
+            nibble |= bits[pos] << i
+            pos += 1
+        return nibble
+
+    def decode_node() -> bool:
+        code = next_nibble()
+        if code is None:
+            return False
+        num_split_sides = code & 0b11
+        if num_split_sides == 0:
+            high = code >> 2
+            if high == 0b11:
+                nxt = next_nibble()
+                if nxt is None:
+                    return False
+                if nxt == 0b1111:
+                    third = next_nibble()
+                    if third is None:
+                        return False
+                    states.append(third + 18)
+                else:
+                    states.append(nxt + 3)
+            else:
+                states.append(high)
+        else:
+            for _ in range(num_split_sides + 1):
+                if not decode_node():
+                    return False
+        return True
+
+    decode_node()
+    return states
+
+
+def _representative_extruder(hex_str: str) -> int | None:
+    """One representative extruder number for a whole triangle -- the
+    most-common non-NONE leaf state its paint data encodes (ties broken by
+    first-encountered), or None if it has no paint override at all (every
+    leaf is NONE, or the string didn't decode to anything). Deliberately
+    a per-triangle approximation, not a sub-triangle-accurate split --
+    see module docstring.
+    """
+    states = [s for s in _decode_paint_color_states(hex_str) if s != 0]
+    if not states:
+        return None
+    counts: dict[int, int] = {}
+    order: list[int] = []
+    for state in states:
+        if state not in counts:
+            order.append(state)
+        counts[state] = counts.get(state, 0) + 1
+    return max(order, key=lambda s: counts[s])
+
+
+def _parse_triangle_extruders(zf: zipfile.ZipFile) -> dict[str, list[int | None]]:
+    """Maps a leaf object's id (same id space as _parse_id_extruders) to
+    one representative extruder number per triangle in its <mesh>, in
+    <triangle> document order -- matching the order the loaded 3D
+    geometry's faces come in, since neither the 3MF writer nor three.js's
+    loader reorders them. An object id is only present in the result if
+    at least one of its triangles actually has a real paint override --
+    keeps the common (fully unpainted) case's payload untouched, and lets
+    _build_color_node fall back to that leaf's single base color exactly
+    as it already does when there's no entry at all.
+    """
+    result: dict[str, list[int | None]] = {}
+    for name in zf.namelist():
+        if not name.lower().endswith(".model"):
+            continue
+        try:
+            root = ET.fromstring(zf.read(name))
+        except (ET.ParseError, KeyError):
+            continue
+        for object_elem in root.iter(_tag("object")):
+            obj_id = object_elem.get("id")
+            if not obj_id:
+                continue
+            mesh_elem = object_elem.find(_tag("mesh"))
+            if mesh_elem is None:
+                continue
+            triangles_elem = mesh_elem.find(_tag("triangles"))
+            if triangles_elem is None:
+                continue
+            per_triangle: list[int | None] = []
+            any_painted = False
+            for triangle_elem in triangles_elem.findall(_tag("triangle")):
+                raw = triangle_elem.get("paint_color")
+                extruder = _representative_extruder(raw) if raw else None
+                if extruder is not None:
+                    any_painted = True
+                per_triangle.append(extruder)
+            if any_painted:
+                result[obj_id] = per_triangle
     return result
 
 
@@ -232,32 +403,59 @@ def _parse_object_graph(zf: zipfile.ZipFile) -> tuple[dict[str, list[str] | None
 _MAX_COMPONENT_DEPTH = 20  # guards against a malformed/cyclic <components> reference chain
 
 
+def _resolve_color(extruder: int | None, filament_colors: list[str]) -> tuple[str | None, int | None]:
+    """Shared by the leaf's single color/extruder and each entry of
+    triangle_colors/triangle_extruders -- same out-of-range guard either
+    way, so a bogus/unconfigured index never reaches the frontend."""
+    if extruder is not None and 1 <= extruder <= len(filament_colors):
+        return filament_colors[extruder - 1] or None, extruder
+    return None, None
+
+
 def _build_color_node(
     object_id: str,
     objects: dict[str, list[str] | None],
     id_extruders: dict[str, int],
     filament_colors: list[str],
+    triangle_extruders_by_id: dict[str, list[int | None]],
     depth: int = 0,
 ) -> ColorNode:
     children_ids = objects.get(object_id) if depth < _MAX_COMPONENT_DEPTH else None
     if children_ids:
         return ColorNode(
             children=[
-                _build_color_node(child_id, objects, id_extruders, filament_colors, depth + 1)
+                _build_color_node(
+                    child_id, objects, id_extruders, filament_colors, triangle_extruders_by_id, depth + 1
+                )
                 for child_id in children_ids
             ]
         )
-    extruder = id_extruders.get(object_id)
-    color = None
-    if extruder is not None and 1 <= extruder <= len(filament_colors):
-        color = filament_colors[extruder - 1] or None
-    else:
-        extruder = None  # out of range or unresolvable -- don't expose a bogus index
-    return ColorNode(color=color, extruder=extruder)
+    color, extruder = _resolve_color(id_extruders.get(object_id), filament_colors)
+
+    triangle_extruders = triangle_extruders_by_id.get(object_id)
+    triangle_colors: list[str | None] | None = None
+    resolved_triangle_extruders: list[int | None] | None = None
+    if triangle_extruders is not None:
+        resolved_triangle_extruders = []
+        triangle_colors = []
+        for raw_extruder in triangle_extruders:
+            tri_color, tri_extruder = _resolve_color(raw_extruder, filament_colors)
+            resolved_triangle_extruders.append(tri_extruder)
+            triangle_colors.append(tri_color)
+
+    return ColorNode(
+        color=color,
+        extruder=extruder,
+        triangle_extruders=resolved_triangle_extruders,
+        triangle_colors=triangle_colors,
+    )
 
 
 def _parse_color_tree(
-    zf: zipfile.ZipFile, id_extruders: dict[str, int], filament_colors: list[str]
+    zf: zipfile.ZipFile,
+    id_extruders: dict[str, int],
+    filament_colors: list[str],
+    triangle_extruders_by_id: dict[str, list[int | None]],
 ) -> list[ColorNode]:
     """Best-effort -- returns [] (meaning "nothing to color, use the
     default flat color") on anything missing/malformed, or when there's
@@ -268,7 +466,10 @@ def _parse_color_tree(
     objects, build_item_ids = _parse_object_graph(zf)
     if not build_item_ids:
         return []
-    return [_build_color_node(item_id, objects, id_extruders, filament_colors) for item_id in build_item_ids]
+    return [
+        _build_color_node(item_id, objects, id_extruders, filament_colors, triangle_extruders_by_id)
+        for item_id in build_item_ids
+    ]
 
 
 def _string_list(data: dict, key: str) -> list[str]:
@@ -313,7 +514,11 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
             plates, extruder_indices, id_extruders = _parse_model_settings(zf)
             embedded_filament_colors, embedded_filament_names = _parse_embedded_filament_info(zf)
             try:
-                color_tree = _parse_color_tree(zf, id_extruders, embedded_filament_colors)
+                triangle_extruders_by_id = _parse_triangle_extruders(zf)
+            except Exception:  # noqa: BLE001 - never let a malformed paint attribute break the rest of the inspection
+                triangle_extruders_by_id = {}
+            try:
+                color_tree = _parse_color_tree(zf, id_extruders, embedded_filament_colors, triangle_extruders_by_id)
             except Exception:  # noqa: BLE001 - the object-graph walk is the riskiest part of this module; never let it break the rest of the inspection
                 color_tree = []
     except (OSError, zipfile.BadZipFile):

@@ -103,8 +103,9 @@ class ColorNode(BaseModel):
     filament_colour array), a composite (a <components> object) carries
     no color of its own, only children. The frontend walks its rendered
     Object3D tree in lockstep with this same structure to color each mesh
-    -- see api/app/threemf.py's module docstring for why this only covers
-    per-object/per-part color (not per-triangle paint)."""
+    -- see api/app/threemf.py's module docstring for the per-triangle
+    paint approximation triangle_extruders/triangle_colors add on top of
+    this per-object/per-part base color."""
 
     color: str | None = None
     # This leaf's 1-based extruder/filament-role index (None for a
@@ -116,6 +117,18 @@ class ColorNode(BaseModel):
     # picked a nozzle for it, without needing a second round-trip.
     extruder: int | None = None
     children: list["ColorNode"] = Field(default_factory=list)
+    # One entry per triangle in this leaf's own mesh, same order as its
+    # <triangle> elements (and so the loaded 3D geometry's face order) --
+    # only present (non-None) on a leaf with real per-triangle paint
+    # overrides; always None for a composite, and for a leaf with no paint
+    # data at all (the common case, already fully described by
+    # color/extruder alone). A deliberate per-triangle approximation, not
+    # a sub-triangle-accurate split -- see api/app/threemf.py's
+    # _representative_extruder. Same extruder->color resolution and
+    # live-reassignment substitution as the singular extruder/color pair
+    # above, just per-triangle.
+    triangle_extruders: list[int | None] | None = None
+    triangle_colors: list[str | None] | None = None
 
 
 class ThreeMfInspection(BaseModel):

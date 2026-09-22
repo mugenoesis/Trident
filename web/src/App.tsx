@@ -1176,13 +1176,20 @@ function MainApp({
   // color as a placeholder. Recomputed on every assignment change, which
   // is what makes the preview update live as roles are picked.
   const renderColorTree = useMemo(() => {
+    const assignedColorFor = (extruder: number | null): string | undefined => {
+      if (extruder === null) return undefined
+      const slotIdx = roleNozzleAssignments[extruder - 1]
+      return slotIdx !== null ? filamentSlots[slotIdx]?.color : undefined
+    }
     const substitute = (nodes: ColorNode[]): ColorNode[] =>
       nodes.map((node) => {
         if (node.children.length > 0) return { ...node, children: substitute(node.children) }
-        if (node.extruder === null) return node
-        const slotIdx = roleNozzleAssignments[node.extruder - 1]
-        const assignedColor = slotIdx !== null ? filamentSlots[slotIdx]?.color : undefined
-        return assignedColor ? { ...node, color: assignedColor } : node
+        const assignedColor = assignedColorFor(node.extruder)
+        const triangleColors = node.triangle_extruders
+          ? node.triangle_extruders.map((extruder, i) => assignedColorFor(extruder) ?? node.triangle_colors?.[i] ?? null)
+          : node.triangle_colors
+        if (!assignedColor && triangleColors === node.triangle_colors) return node
+        return { ...node, color: assignedColor ?? node.color, triangle_colors: triangleColors ?? null }
       })
     return substitute(plateInfo?.color_tree ?? [])
   }, [plateInfo, roleNozzleAssignments, filamentSlots])

@@ -192,6 +192,47 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
         if (child instanceof THREE.Mesh) child.material = mat
       })
     }
+    // Approximates a leaf's hand-painted per-triangle colors: one flat
+    // color per ORIGINAL triangle (see api/app/threemf.py's
+    // _representative_extruder), not a sub-triangle-accurate repaint --
+    // good enough for "does the preview roughly look like the print".
+    // Converts to non-indexed geometry (every face gets its own 3 unique
+    // vertices) so each face can carry its own flat vertex color, since
+    // the original indexed geometry shares vertices between faces.
+    const applyTriangleColors = (
+      object3D: THREE.Object3D,
+      baseColorHex: string | null,
+      triangleColors: (string | null)[],
+    ) => {
+      object3D.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return
+        const geometry = child.geometry
+        const faceCount = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3
+        if (faceCount !== triangleColors.length) {
+          // Shape mismatch -- bail to this mesh's flat default rather than
+          // risk coloring the wrong faces.
+          child.material = baseColorHex ? materialForColor(baseColorHex) : material
+          return
+        }
+        const nonIndexed = geometry.toNonIndexed()
+        const colors = new Float32Array(nonIndexed.attributes.position.count * 3)
+        const fallback = new THREE.Color(baseColorHex ?? '#ffffff')
+        const tmp = new THREE.Color()
+        triangleColors.forEach((hex, i) => {
+          const c = hex ? tmp.set(hex) : fallback
+          for (let vertex = 0; vertex < 3; vertex++) {
+            const base = (i * 3 + vertex) * 3
+            colors[base] = c.r
+            colors[base + 1] = c.g
+            colors[base + 2] = c.b
+          }
+        })
+        nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+        geometry.dispose()
+        child.geometry = nonIndexed
+        child.material = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55 })
+      })
+    }
     const applyColorTree = (object3D: THREE.Object3D, nodes: ColorNode[]) => {
       const children = object3D.children
       if (nodes.length !== children.length) {
@@ -202,6 +243,8 @@ export default function Viewer({ file, onDimensions, bedSize, colorTree }: Viewe
         const node = nodes[i]
         if (node.children.length > 0) {
           applyColorTree(child, node.children)
+        } else if (node.triangle_colors && node.triangle_colors.length > 0) {
+          applyTriangleColors(child, node.color, node.triangle_colors)
         } else {
           applyFlatMaterial(child, node.color ? materialForColor(node.color) : material)
         }

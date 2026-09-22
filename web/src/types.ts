@@ -101,8 +101,8 @@ export interface ThreeMfInspection {
   // (a composite object's Group children come from <components> in the
   // same order) -- Viewer.tsx walks its rendered Object3D tree in
   // lockstep with this to color each mesh. Empty when there's no per-
-  // object/part color info to place (covers plain files and ones whose
-  // color is only per-triangle paint, which isn't parsed server-side).
+  // object/part color info to place (a plain file with no material split
+  // at all).
   color_tree: ColorNode[]
 }
 
@@ -116,6 +116,19 @@ export interface ColorNode {
   // assigned that role to, once they've picked a nozzle for it.
   extruder: number | null
   children: ColorNode[]
+  // One entry per triangle in this leaf's own mesh, same order as its
+  // <triangle> elements (and so the loaded 3D geometry's face order) --
+  // present only on a leaf with real per-triangle paint overrides (a
+  // hand-painted multi-color part, e.g. from MakerWorld/Bambu Studio);
+  // null for a composite, and for a leaf with no paint data at all (the
+  // common case, already fully described by color/extruder alone). A
+  // deliberate one-representative-color-per-original-triangle
+  // approximation, not a sub-triangle-accurate split -- see
+  // api/app/threemf.py's _representative_extruder. Same
+  // extruder->color/live-reassignment substitution as the singular
+  // extruder/color pair above, just per-triangle.
+  triangle_extruders: (number | null)[] | null
+  triangle_colors: (string | null)[] | null
 }
 
 // "unset": fresh install, no mode chosen yet -- behaves like "single"
