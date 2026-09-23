@@ -1,9 +1,7 @@
 """Embeds a client-captured 3D-preview PNG into sliced gcode as a standard
-thumbnail comment block, and writes a plain PNG sidecar next to each plate's
-gcode for this app's own job panel (see routers/jobs.py's get_job_thumbnail
-and web/src/components/JobPanel.tsx's ".job-thumbnail" <img>, which has been
-silently broken -- always 404, always hidden -- since no job has ever
-produced one).
+thumbnail comment block -- purely for printers/print-host UIs (Mainsail,
+Fluidd, OctoPrint, a printer's own screen) that read it from the gcode file
+itself; this app's own UI doesn't display a copy of it anywhere.
 
 The comment-block format (`; THUMBNAIL_BLOCK_START` / `; thumbnail begin
 WxH SIZE` / base64 body / `; thumbnail end`) matches exactly what OrcaSlicer's
@@ -63,18 +61,12 @@ def _square_thumbnail(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return cropped.resize(size, Image.LANCZOS)
 
 
-def _thumbnail_block(image: Image.Image) -> tuple[str, bytes]:
-    """Returns (comment_block_text, largest_thumbnail_png_bytes) -- the
-    latter reused as the plain .png sidecar so the image only gets resized
-    once per size."""
+def _thumbnail_block(image: Image.Image) -> str:
     lines = ["; THUMBNAIL_BLOCK_START"]
-    largest_png: bytes = b""
     for width, height in _THUMBNAIL_SIZES:
         buf = io.BytesIO()
         _square_thumbnail(image, (width, height)).save(buf, format="PNG")
-        png_bytes = buf.getvalue()
-        largest_png = png_bytes
-        encoded = base64.b64encode(png_bytes).decode("ascii")
+        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
         lines.append(";")
         lines.append(f"; thumbnail begin {width}x{height} {len(encoded)}")
         for i in range(0, len(encoded), _MAX_LINE_LENGTH):
@@ -82,7 +74,7 @@ def _thumbnail_block(image: Image.Image) -> tuple[str, bytes]:
         lines.append("; thumbnail end")
     lines.append("; THUMBNAIL_BLOCK_END")
     lines.append("")
-    return "\n".join(lines) + "\n", largest_png
+    return "\n".join(lines) + "\n"
 
 
 def embed_preview(output_dir: Path, preview_image_base64: str) -> None:
@@ -99,7 +91,7 @@ def embed_preview(output_dir: Path, preview_image_base64: str) -> None:
         logger.warning("preview_image_base64 did not decode as a PNG, skipping thumbnail")
         return
 
-    block, sidecar_png = _thumbnail_block(image)
+    block = _thumbnail_block(image)
 
     for gcode_path in output_dir.glob("*.gcode"):
         try:
@@ -107,8 +99,3 @@ def embed_preview(output_dir: Path, preview_image_base64: str) -> None:
             gcode_path.write_text(block + original)
         except OSError:
             logger.warning("Failed to embed thumbnail into %s", gcode_path, exc_info=True)
-            continue
-        try:
-            gcode_path.with_suffix(".png").write_bytes(sidecar_png)
-        except OSError:
-            logger.warning("Failed to write thumbnail sidecar for %s", gcode_path, exc_info=True)

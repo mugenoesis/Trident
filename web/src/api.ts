@@ -132,10 +132,6 @@ export function gcodeDownloadUrl(id: string): string {
   return `${API_BASE}/jobs/${id}/gcode`
 }
 
-export function thumbnailUrl(id: string): string {
-  return `${API_BASE}/jobs/${id}/thumbnail`
-}
-
 function postJson<T>(path: string, body: unknown): Promise<T> {
   return request(path, {
     method: 'POST',

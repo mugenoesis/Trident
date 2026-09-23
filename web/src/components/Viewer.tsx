@@ -17,6 +17,10 @@ interface ViewerProps {
   // never produce a Group) or when empty/absent, in which case every mesh
   // gets the same flat default color as before this existed.
   colorTree?: ColorNode[]
+  // The last successful job's total filament weight (api/app/gcode_stats.py),
+  // shown as a small badge over the model -- null/undefined hides it (no
+  // successful job yet, or it didn't report one).
+  filamentUsedGrams?: number | null
 }
 
 export interface ViewerHandle {
@@ -35,7 +39,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -579,6 +583,9 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
           <div className="viewer-loading-spinner" />
           <span>Rendering preview…</span>
         </div>
+      )}
+      {filamentUsedGrams != null && (
+        <div className="filament-badge">{filamentUsedGrams.toFixed(2)} g filament</div>
       )}
     </div>
   )

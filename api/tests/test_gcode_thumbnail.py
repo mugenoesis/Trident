@@ -17,7 +17,7 @@ def _fake_preview_base64(size: tuple[int, int] = (64, 40), color: str = "#ff8800
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def test_embed_preview_prepends_thumbnail_block_and_writes_sidecar(tmp_path: Path):
+def test_embed_preview_prepends_thumbnail_block(tmp_path: Path):
     gcode_path = tmp_path / "plate_1.gcode"
     gcode_path.write_text("; original gcode content\nG28\n")
 
@@ -32,11 +32,6 @@ def test_embed_preview_prepends_thumbnail_block_and_writes_sidecar(tmp_path: Pat
     # Original content preserved, just pushed after the new block.
     assert content.endswith("; original gcode content\nG28\n")
 
-    sidecar = tmp_path / "plate_1.png"
-    assert sidecar.is_file()
-    with Image.open(sidecar) as img:
-        assert img.size == (300, 300)
-
 
 def test_embed_preview_covers_every_gcode_file_in_the_output_dir(tmp_path: Path):
     (tmp_path / "plate_1.gcode").write_text("plate one\n")
@@ -46,8 +41,6 @@ def test_embed_preview_covers_every_gcode_file_in_the_output_dir(tmp_path: Path)
 
     assert (tmp_path / "plate_1.gcode").read_text().endswith("plate one\n")
     assert (tmp_path / "plate_2.gcode").read_text().endswith("plate two\n")
-    assert (tmp_path / "plate_1.png").is_file()
-    assert (tmp_path / "plate_2.png").is_file()
 
 
 def test_embed_preview_decodes_a_data_url_prefixed_payload(tmp_path: Path):
@@ -57,7 +50,6 @@ def test_embed_preview_decodes_a_data_url_prefixed_payload(tmp_path: Path):
     gcode_thumbnail.embed_preview(tmp_path, f"data:image/png;base64,{_fake_preview_base64()}")
 
     assert "; THUMBNAIL_BLOCK_START" in gcode_path.read_text()
-    assert (tmp_path / "plate_1.png").is_file()
 
 
 def test_embed_preview_is_a_noop_on_invalid_base64(tmp_path: Path):
@@ -67,7 +59,6 @@ def test_embed_preview_is_a_noop_on_invalid_base64(tmp_path: Path):
     gcode_thumbnail.embed_preview(tmp_path, "not valid base64!!!")
 
     assert gcode_path.read_text() == "G28\n"
-    assert not (tmp_path / "plate_1.png").exists()
 
 
 def test_embed_preview_is_a_noop_on_valid_base64_that_is_not_a_png(tmp_path: Path):
@@ -77,7 +68,6 @@ def test_embed_preview_is_a_noop_on_valid_base64_that_is_not_a_png(tmp_path: Pat
     gcode_thumbnail.embed_preview(tmp_path, base64.b64encode(b"not a png").decode("ascii"))
 
     assert gcode_path.read_text() == "G28\n"
-    assert not (tmp_path / "plate_1.png").exists()
 
 
 def test_embed_preview_ignores_missing_output_dir(tmp_path: Path):

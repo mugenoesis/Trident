@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import cli_runner, gcode_thumbnail
+from .. import cli_runner, gcode_stats, gcode_thumbnail
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
@@ -42,7 +42,15 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
     if result.succeeded:
         if request.preview_image_base64:
             gcode_thumbnail.embed_preview(_job_output_dir(job_id), request.preview_image_base64)
-        store.finish(job_id, status=JobStatus.SUCCEEDED, result=result.result_json)
+        # OrcaSlicer's own result.json never carries this (see
+        # gcode_stats.py) -- folded into the same free-form result blob
+        # rather than a new JobRecord/DB column, same as everything else
+        # here that's "whatever the slice produced."
+        result_json = dict(result.result_json) if result.result_json else {}
+        filament_grams = gcode_stats.total_filament_grams_for_job(_job_output_dir(job_id))
+        if filament_grams is not None:
+            result_json["filament_used_g"] = round(filament_grams, 2)
+        store.finish(job_id, status=JobStatus.SUCCEEDED, result=result_json)
     else:
         error = result.result_json.get("error_string") if result.result_json else result.stderr
         store.finish(
@@ -162,16 +170,3 @@ def delete_job(job_id: str, current: User = Depends(require_user)) -> dict[str, 
     if not still_referenced:
         delete_model(job.model_id)
     return {"ok": True}
-
-
-@router.get("/{job_id}/thumbnail")
-def get_job_thumbnail(job_id: str, current: User = Depends(require_user)) -> FileResponse:
-    job = _get_owned_job(job_id, current)
-    if job.plate_index is not None:
-        specific = _job_output_dir(job_id) / f"plate_{job.plate_index}.png"
-        if specific.is_file():
-            return FileResponse(specific, media_type="image/png", filename=specific.name)
-    matches = list(_job_output_dir(job_id).glob("*.png"))
-    if not matches:
-        raise HTTPException(status_code=404, detail="No thumbnail produced (yet) for this job")
-    return FileResponse(matches[0], media_type="image/png", filename=matches[0].name)

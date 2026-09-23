@@ -6,6 +6,9 @@ import { parseGcode, type GcodeLayer } from '../gcodeParser'
 
 interface GcodeViewerProps {
   jobId: string
+  // This job's total filament weight (api/app/gcode_stats.py), shown as a
+  // small badge over the toolpath view -- null/undefined hides it.
+  filamentUsedGrams?: number | null
   onBackToModel: () => void
 }
 
@@ -28,7 +31,7 @@ const EXTRUSION_WIDTH_MM = 0.42
 // so scrubbing works identically in either mode.
 // Rendered inline in place of the 3D model Viewer (App.tsx), not a modal --
 // swapped in automatically once a slice succeeds.
-export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) {
+export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }: GcodeViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
@@ -357,6 +360,9 @@ export default function GcodeViewer({ jobId, onBackToModel }: GcodeViewerProps) 
               Lines
             </button>
           </div>
+        )}
+        {filamentUsedGrams != null && (
+          <div className="filament-badge">{filamentUsedGrams.toFixed(2)} g filament</div>
         )}
       </div>
 

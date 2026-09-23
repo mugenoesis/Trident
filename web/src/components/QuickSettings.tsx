@@ -9,6 +9,12 @@ export interface QuickSettingsValues {
   enable_support: string
   support_type: string
   support_buildplate_only: string
+  // The wipe/prime tower -- purges leftover filament on the nozzle after a
+  // color change so it doesn't show up in the next layer. App.tsx defaults
+  // this on whenever the selected printer has more than one filament slot
+  // configured (a color change becomes possible), but it's a plain toggle
+  // here same as any other -- the user can always turn it back off.
+  enable_prime_tower: string
 }
 
 interface QuickSettingsProps {
@@ -26,6 +32,7 @@ const KEYS: (keyof QuickSettingsValues)[] = [
   'enable_support',
   'support_type',
   'support_buildplate_only',
+  'enable_prime_tower',
 ]
 
 function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
@@ -142,6 +149,15 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
         />
         Support on build plate only
       </label>
+
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={values.enable_prime_tower === '1'}
+          onChange={(e) => set('enable_prime_tower', e.target.checked ? '1' : '0')}
+        />
+        Enable prime/wipe tower
+      </label>
     </div>
   )
 }
@@ -160,6 +176,9 @@ export function defaultQuickSettings(schema: SettingDef[]): QuickSettingsValues 
     enable_support: def('enable_support', '0'),
     support_type: def('support_type', 'normal(auto)'),
     support_buildplate_only: def('support_buildplate_only', '0'),
+    // Matches OrcaSlicer's own baseline default (false) -- App.tsx turns
+    // this on automatically once a multi-slot printer is selected.
+    enable_prime_tower: def('enable_prime_tower', '0'),
   }
 }
 

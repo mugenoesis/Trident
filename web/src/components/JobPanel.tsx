@@ -1,4 +1,4 @@
-import { gcodeDownloadUrl, thumbnailUrl } from '../api'
+import { gcodeDownloadUrl } from '../api'
 import type { JobRecord } from '../types'
 
 interface JobPanelProps {
@@ -63,14 +63,6 @@ export default function JobPanel({
               <a className="download-button" href={gcodeDownloadUrl(currentJob.id)} download>
                 Download G-code
               </a>
-              <img
-                className="job-thumbnail"
-                src={thumbnailUrl(currentJob.id)}
-                alt="Slice thumbnail"
-                onError={(e) => {
-                  ;(e.target as HTMLImageElement).style.display = 'none'
-                }}
-              />
             </div>
           )}
           {currentJob.status === 'failed' && (

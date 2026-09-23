@@ -86,6 +86,15 @@ function sortedEntries(obj: Record<string, unknown>): [string, unknown][] {
     .map((key) => [key, obj[key]])
 }
 
+// api/app/gcode_stats.py adds this to a succeeded job's own result blob
+// (OrcaSlicer's own result.json never carries it) -- null for any other
+// status, or a job whose gcode footer didn't have a parseable line.
+function filamentGramsOf(job: JobRecord | null): number | null {
+  if (job?.status !== 'succeeded') return null
+  const grams = job.result?.filament_used_g
+  return typeof grams === 'number' ? grams : null
+}
+
 function computeSliceSignature(
   modelId: string | null,
   printerName: string,
@@ -398,6 +407,23 @@ function MainApp({
 
   const [quickSettings, setQuickSettings] = useState<QuickSettingsValues>(defaultQuickSettings([]))
   const [advancedOverrides, setAdvancedOverrides] = useState<Record<string, string>>({})
+
+  // A color change can only happen at all once there's more than one
+  // filament slot configured on the printer (whether that's several heads
+  // or several AMS-style slots feeding one shared nozzle) -- crossing that
+  // threshold turns the prime/wipe tower on by default, since leftover
+  // filament on the nozzle from the previous color would otherwise show up
+  // in the next layer. Deliberately keyed on the true/false threshold
+  // itself, not the raw slot count, so it fires once going from a single
+  // material to several, not on every subsequent slot added/removed while
+  // already multi-material -- the checkbox in QuickSettings stays a normal
+  // toggle either way, this is just the starting point.
+  const hasMultipleFilamentSlots = filamentSlots.length > 1
+  useEffect(() => {
+    if (hasMultipleFilamentSlots) {
+      setQuickSettings((prev) => (prev.enable_prime_tower === '1' ? prev : { ...prev, enable_prime_tower: '1' }))
+    }
+  }, [hasMultipleFilamentSlots])
 
   const [slicing, setSlicing] = useState(false)
   const [currentJob, setCurrentJob] = useState<JobRecord | null>(null)
@@ -1258,6 +1284,7 @@ function MainApp({
       sparse_infill_pattern: quickSettings.sparse_infill_pattern,
       curr_bed_type: quickSettings.curr_bed_type,
       enable_support: quickSettings.enable_support,
+      enable_prime_tower: quickSettings.enable_prime_tower,
     }
     // Only meaningful (and only worth sending) when support is actually on.
     if (quickSettings.enable_support === '1') {
@@ -1404,7 +1431,13 @@ function MainApp({
         <section className="panel panel-viewer">
           {showGcode && viewedJobId ? (
             <>
-              <GcodeViewer jobId={viewedJobId} onBackToModel={backToModelView} />
+              <GcodeViewer
+                jobId={viewedJobId}
+                filamentUsedGrams={filamentGramsOf(
+                  [currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null,
+                )}
+                onBackToModel={backToModelView}
+              />
               {selectedPrinter?.print_host && (
                 <SendToPrinterControl
                   key={viewedJobId}
@@ -1427,6 +1460,7 @@ function MainApp({
                 onDimensions={handleDimensions}
                 bedSize={bedSize}
                 colorTree={renderColorTree}
+                filamentUsedGrams={filamentGramsOf(currentJob)}
               />
               {dimensions && (
                 <>
