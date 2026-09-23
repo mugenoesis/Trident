@@ -44,22 +44,124 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   // rather than closing over a specific renderer instance, since the whole
   // scene gets recreated on every file/colorTree change.
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Everything capturePreview needs to temporarily re-frame the shot around
+  // just the model (see below) -- populated once finishLoad knows the
+  // model's own bounds, cleared on teardown alongside canvasRef.
+  const liveRef = useRef<{
+    renderer: THREE.WebGLRenderer
+    scene: THREE.Scene
+    camera: THREE.PerspectiveCamera
+    controls: OrbitControls
+    plate: THREE.Mesh | null
+    ceiling: THREE.Mesh | null
+    modelBox: THREE.Box3 | null
+  } | null>(null)
 
   useImperativeHandle(
     ref,
-    () => ({
-      capturePreview: () => {
+    () => {
+      // The interactive view frames the model's bounding SPHERE (a
+      // deliberately loose, orientation-independent fit, see finishLoad
+      // below) in whatever (usually non-square) aspect ratio the viewer
+      // panel happens to be, and always shows the reference plate/ceiling --
+      // both sized for a big multi-material bed, they're mostly empty space
+      // around a typical print. A gcode thumbnail is tiny (48x48 on a
+      // printer's own screen), always square, and has no use for that
+      // context, so this temporarily hides the plate/ceiling, renders into a
+      // SQUARE capture buffer instead of the panel's own aspect (cropping
+      // tight to the model in a non-square frame first and then
+      // center-square-cropping afterward double-crops -- confirmed: an
+      // asymmetric shape, like a part with wings extending past one side of
+      // its own bounding box, got clipped by that second crop even though it
+      // fit the first one), and uses setViewOffset (a "virtual sensor crop"
+      // -- no camera movement, so it can't perturb OrbitControls' own state)
+      // centered on the model's OWN projected bounding box rather than the
+      // frame's center, then restores everything before the next paint --
+      // synchronous, so the live view never actually flashes any of this.
+      const CAPTURE_SIZE = 512
+      // The model's furthest corner reaches 88% of the square capture frame,
+      // leaving a small margin so anti-aliased edges aren't clipped -- chosen
+      // by comparing several options directly against the real bee model.
+      const FRAME_FILL = 0.88
+      const capturePreview = (): string | null => {
         const canvas = canvasRef.current
+        const live = liveRef.current
         if (!canvas) return null
+        if (!live || !live.modelBox) {
+          try {
+            return canvas.toDataURL('image/png')
+          } catch {
+            return null
+          }
+        }
+        const { renderer, scene, camera, plate, ceiling, modelBox } = live
+        const savedPlateVisible = plate?.visible ?? null
+        const savedCeilingVisible = ceiling?.visible ?? null
+        const savedAspect = camera.aspect
+        const savedSize = renderer.getSize(new THREE.Vector2())
         try {
+          if (plate) plate.visible = false
+          if (ceiling) ceiling.visible = false
+          renderer.setSize(CAPTURE_SIZE, CAPTURE_SIZE, false)
+          camera.aspect = 1
+          camera.updateProjectionMatrix()
+
+          const corners = [
+            [modelBox.min.x, modelBox.min.y, modelBox.min.z],
+            [modelBox.min.x, modelBox.min.y, modelBox.max.z],
+            [modelBox.min.x, modelBox.max.y, modelBox.min.z],
+            [modelBox.min.x, modelBox.max.y, modelBox.max.z],
+            [modelBox.max.x, modelBox.min.y, modelBox.min.z],
+            [modelBox.max.x, modelBox.min.y, modelBox.max.z],
+            [modelBox.max.x, modelBox.max.y, modelBox.min.z],
+            [modelBox.max.x, modelBox.max.y, modelBox.max.z],
+          ] as const
+          let minPx = Infinity
+          let maxPx = -Infinity
+          let minPy = Infinity
+          let maxPy = -Infinity
+          for (const [x, y, z] of corners) {
+            const ndc = new THREE.Vector3(x, y, z).project(camera)
+            const px = (ndc.x * 0.5 + 0.5) * CAPTURE_SIZE
+            // NDC's +y is up; pixel space's +y is down.
+            const py = (1 - (ndc.y * 0.5 + 0.5)) * CAPTURE_SIZE
+            minPx = Math.min(minPx, px)
+            maxPx = Math.max(maxPx, px)
+            minPy = Math.min(minPy, py)
+            maxPy = Math.max(maxPy, py)
+          }
+          const bboxCx = (minPx + maxPx) / 2
+          const bboxCy = (minPy + maxPy) / 2
+          // A single half-extent, big enough to cover whichever axis needs
+          // more room -- keeps the crop window perfectly square so there's
+          // no second crop needed downstream.
+          const cropHalf = Math.max(maxPx - minPx, maxPy - minPy) / 2 / FRAME_FILL
+
+          camera.setViewOffset(
+            CAPTURE_SIZE,
+            CAPTURE_SIZE,
+            bboxCx - cropHalf,
+            bboxCy - cropHalf,
+            cropHalf * 2,
+            cropHalf * 2,
+          )
+          camera.updateProjectionMatrix()
+          renderer.render(scene, camera)
           return canvas.toDataURL('image/png')
         } catch {
-          // A tainted canvas or an engine that refuses toDataURL -- fall
-          // back to "no preview" rather than let this block slicing.
           return null
+        } finally {
+          camera.clearViewOffset()
+          camera.aspect = savedAspect
+          if (plate && savedPlateVisible !== null) plate.visible = savedPlateVisible
+          if (ceiling && savedCeilingVisible !== null) ceiling.visible = savedCeilingVisible
+          camera.updateProjectionMatrix()
+          renderer.setSize(savedSize.x, savedSize.y, false)
+          renderer.render(scene, camera)
         }
-      },
-    }),
+      }
+      return { capturePreview }
+    },
     [],
   )
   // Geometry loading (a fresh .3mf/.stl/.drc) and per-triangle color
@@ -116,6 +218,8 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
+
+    liveRef.current = { renderer, scene, camera, controls, plate: null, ceiling: null, modelBox: null }
 
     // Not meant to be a single mesh/geometry across both loader paths:
     // STLLoader yields one BufferGeometry -> one Mesh, but 3MFLoader.parse()
@@ -218,6 +322,15 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
         ceiling.rotation.x = Math.PI
         ceiling.position.z = plate.position.z + bedSize.height
         scene.add(ceiling)
+      }
+
+      if (liveRef.current) {
+        liveRef.current.plate = plate
+        liveRef.current.ceiling = ceiling
+        // Post-centering world box (object.position was just shifted above)
+        // -- setFromObject updates the object's world matrix itself, so this
+        // is accurate regardless of whether `box` above was local or world.
+        liveRef.current.modelBox = new THREE.Box3().setFromObject(object)
       }
 
       onDimensions?.({ x: size.x, y: size.y, z: size.z })
@@ -445,6 +558,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       renderer.dispose()
       container.removeChild(renderer.domElement)
       if (canvasRef.current === renderer.domElement) canvasRef.current = null
+      if (liveRef.current?.renderer === renderer) liveRef.current = null
     }
     // bedSize is intentionally included: picking/changing a printer with a
     // model already loaded should resize the plate/ceiling to match, even
