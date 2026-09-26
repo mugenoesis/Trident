@@ -418,7 +418,15 @@ function MainApp({
   // material to several, not on every subsequent slot added/removed while
   // already multi-material -- the checkbox in QuickSettings stays a normal
   // toggle either way, this is just the starting point.
-  const hasMultipleFilamentSlots = filamentSlots.length > 1
+  //
+  // Never for a belt printer: fdm_belt_common.json sets
+  // purge_in_prime_tower=0 and belt mode has its own dedicated
+  // purge-into-object system (BeltPurge.cpp/Print::has_belt_purge_tower(),
+  // replacing the classic wipe tower) that a forced classic prime tower
+  // would conflict with. Multi-extruder belt printers are essentially
+  // nonexistent in practice, so this only ever skips a default that would
+  // otherwise never even apply.
+  const hasMultipleFilamentSlots = filamentSlots.length > 1 && !bedSize?.beltPrinterInfiniteY
   useEffect(() => {
     if (hasMultipleFilamentSlots) {
       setQuickSettings((prev) => (prev.enable_prime_tower === '1' ? prev : { ...prev, enable_prime_tower: '1' }))
