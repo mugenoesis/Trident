@@ -897,7 +897,16 @@ function MainApp({
     )
     setBedSize(
       printer.bed_width != null && printer.bed_depth != null && printer.bed_height != null
-        ? { width: printer.bed_width, depth: printer.bed_depth, height: printer.bed_height }
+        ? {
+            width: printer.bed_width,
+            depth: printer.bed_depth,
+            height: printer.bed_height,
+            // Backfilled a moment later once the machine profile itself
+            // loads below (a saved printer record doesn't snapshot this
+            // flag) -- false here just means the belt-specific placement
+            // in Viewer briefly falls back to dead-center until then.
+            beltPrinterInfiniteY: false,
+          }
         : null,
     )
     setScaleToastDismissed(false)
@@ -926,6 +935,11 @@ function MainApp({
             nozzleType: types[i] ?? types[types.length - 1] ?? slot.nozzleType,
           })),
         )
+        // Re-derive from the actual profile now that it's loaded, so a
+        // belt printer's beltPrinterInfiniteY flag (not part of the saved
+        // printer record itself) reaches the Viewer too.
+        const parsedBed = parseBedSize(detail.data)
+        if (parsedBed) setBedSize(parsedBed)
       })
       .catch(() => {
         setNozzleDiameters([])

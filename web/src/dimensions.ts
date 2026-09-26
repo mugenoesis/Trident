@@ -12,12 +12,26 @@ export interface BedSize {
   width: number // X, mm
   depth: number // Y, mm
   height: number // Z (printable_height), mm
+  // True for a belt printer's own (deliberately very long) bed, where Y
+  // represents distance traveled along the belt rather than a normal
+  // bounded dimension -- see `belt_printer_infinite_y` in the machine
+  // profile. Drives the Viewer's default object placement below instead of
+  // the usual dead-plate-center placement.
+  beltPrinterInfiniteY: boolean
 }
 
 // A margin below 1.0: an exact-fit scale can still fail slicer validation
 // for sitting flush against the bed edge, and it looks uncomfortably tight
 // in the viewer.
 const FIT_MARGIN = 0.97
+
+// How far from the belt's own Y origin (the end where the prime lines /
+// purge blob live, see machine_start_gcode) a belt printer's slicer engine
+// places a fresh object by default -- vendor/orcaslicer/src/OrcaSlicer.cpp's
+// `center_instances_around_point` recenter uses this exact same 60mm
+// margin. Kept in sync manually since the preview re-derives this position
+// on the client rather than asking the slicer for it.
+export const BELT_PRINTER_PREVIEW_MARGIN_MM = 60
 
 /**
  * Printer machine profiles carry their bed as `printable_area` (a polygon of
@@ -47,7 +61,11 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
   const height = Number(heightRaw)
 
   if (!(width > 0) || !(depth > 0) || !Number.isFinite(height) || !(height > 0)) return null
-  return { width, depth, height }
+
+  const beltFlag = profileData.belt_printer_infinite_y
+  const beltPrinterInfiniteY = beltFlag === '1' || beltFlag === true || beltFlag === 1
+
+  return { width, depth, height, beltPrinterInfiniteY }
 }
 
 /**

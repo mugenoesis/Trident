@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
-import type { BedSize, Dimensions } from '../dimensions'
+import { BELT_PRINTER_PREVIEW_MARGIN_MM, type BedSize, type Dimensions } from '../dimensions'
 import type { ColorNode } from '../types'
 
 interface ViewerProps {
@@ -270,6 +270,23 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       const plateDepth = bedSize?.depth ?? size.y * plateMargin
       const plateZ = -size.z / 2
 
+      // A belt printer's own slicer default (see OrcaSlicer.cpp's
+      // center_instances_around_point recenter) puts a fresh object near
+      // the belt's Y origin -- where the prime lines/purge blob live, close
+      // enough to help first-layer adhesion -- NOT at the middle of its own
+      // deliberately very long bed. The plate mesh below is already built
+      // at the real bed size, so without this the model would sit at its
+      // geometric center, which for a 2000mm belt bed is nowhere near
+      // where it will actually print. `plate` spans [-depth/2, +depth/2]
+      // in scene Y around this same object, so the belt's own Y origin is
+      // at scene Y = -plateDepth / 2, regardless of the profile's own
+      // absolute min-Y coordinate.
+      const modelCenter = new THREE.Vector3(0, 0, 0)
+      if (bedSize?.beltPrinterInfiniteY) {
+        modelCenter.y = -plateDepth / 2 + BELT_PRINTER_PREVIEW_MARGIN_MM
+        object.position.y += modelCenter.y
+      }
+
       // Auto-frame the model itself, regardless of the plate/ceiling size --
       // those are there to check against by zooming/orbiting out manually
       // if needed, not something the default view should reframe around (a
@@ -278,11 +295,15 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       const radius = size.length() / 2 || 1
       const distance = radius / Math.sin((Math.PI * camera.fov) / 360)
 
-      camera.position.set(distance, distance, distance * 0.6)
+      camera.position.set(
+        modelCenter.x + distance,
+        modelCenter.y + distance,
+        modelCenter.z + distance * 0.6,
+      )
       camera.near = distance / 100
       camera.far = distance * 100
       camera.updateProjectionMatrix()
-      controls.target.set(0, 0, 0)
+      controls.target.copy(modelCenter)
       controls.update()
 
       // FrontSide (the default) makes the plate a one-way surface:
