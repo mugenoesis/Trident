@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -24,23 +26,41 @@ from typing import Any
 
 from . import profiles as profiles_module
 from .config import settings
-from .schemas import JobProgress
+from .schemas import JobProgress, ProfileDetail
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[JobProgress], None]
 
 
-def _resolve_profile_path(kind: str, name: str) -> str:
+def _resolve_profile_detail(kind: str, name: str) -> ProfileDetail:
+    detail = profiles_module.catalog.get_by_name(kind, name)
+    if detail is None:
+        raise ValueError(f"Unknown {kind} profile: {name!r}")
+    return detail
+
+
+def _write_resolved_profile(detail: ProfileDetail, tmp_dir: Path, stem: str) -> str:
     """--load-settings/--load-filaments take literal file paths, not the bare
     catalog names GET /profiles and JobCreateRequest use (confirmed against a
     real build: OrcaSlicer.cpp's load_config_file() does a plain
     boost::filesystem::exists() on the string it's given, no name lookup).
+
+    Writing out `detail.data` (ProfileCatalog's fully `inherits`-resolved
+    effective config, see profiles.py) rather than pointing at the profile's
+    own file on disk matters: OrcaSlicer.cpp's `--load-settings` handler reads
+    only the literal keys present in the given file and does NOT itself walk
+    `inherits` (that only happens in the GUI/PresetBundle preset-selection
+    flow) -- confirmed against a real build, a belt machine's leaf JSON alone
+    slices with `belt_printer = 0` and identity `gcode_remap_*` in the
+    resulting gcode's config dump, silently dropping every belt-mode setting
+    that's only declared on its "fdm_belt_common" parent. Feeding the
+    already-merged dict here sidesteps that gap without needing an
+    OrcaSlicer.cpp change.
     """
-    detail = profiles_module.catalog.get_by_name(kind, name)
-    if detail is None:
-        raise ValueError(f"Unknown {kind} profile: {name!r}")
-    return str(settings.profiles_dir / detail.path)
+    path = tmp_dir / f"{stem}.json"
+    path.write_text(json.dumps(detail.data))
+    return str(path)
 
 
 class SliceResult:
@@ -108,9 +128,9 @@ def run_slice(
 ) -> SliceResult:
     # Resolved before the FIFO/reader thread exist so an unknown profile name
     # fails fast without leaking a thread blocked forever on open()-for-read.
-    printer_path = _resolve_profile_path("machine", printer_profile)
-    process_path = _resolve_profile_path("process", process_profile)
-    filament_paths = [_resolve_profile_path("filament", f) for f in filament_profiles]
+    printer_detail = _resolve_profile_detail("machine", printer_profile)
+    process_detail = _resolve_profile_detail("process", process_profile)
+    filament_details = [_resolve_profile_detail("filament", f) for f in filament_profiles]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     fifo_path = output_dir / "progress.pipe"
@@ -122,6 +142,18 @@ def run_slice(
         target=_pipe_reader, args=(fifo_path, on_progress), daemon=True
     )
     reader_thread.start()
+
+    # Written fresh per slice (not cached alongside the catalog) since
+    # setting_overrides below apply as separate CLI flags on top, not into
+    # these files -- these just need to carry each profile's own resolved
+    # `inherits` chain, see _write_resolved_profile.
+    resolved_profiles_dir = tempfile.mkdtemp(prefix="headless-orca-resolved-")
+    printer_path = _write_resolved_profile(printer_detail, Path(resolved_profiles_dir), "printer")
+    process_path = _write_resolved_profile(process_detail, Path(resolved_profiles_dir), "process")
+    filament_paths = [
+        _write_resolved_profile(detail, Path(resolved_profiles_dir), f"filament_{i}")
+        for i, detail in enumerate(filament_details)
+    ]
 
     cmd = [
         settings.orcaslicer_bin,
@@ -178,6 +210,7 @@ def run_slice(
     finally:
         reader_thread.join(timeout=2.0)
         fifo_path.unlink(missing_ok=True)
+        shutil.rmtree(resolved_profiles_dir, ignore_errors=True)
 
     result_json_path = output_dir / "result.json"
     result_json: dict[str, Any] | None = None

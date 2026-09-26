@@ -46,13 +46,23 @@ class ProfileCatalog:
     def __init__(self, profiles_dir: Path):
         self._profiles_dir = profiles_dir
         self._by_key: dict[tuple[str, str, str], ProfileDetail] = {}
+        # Every profile's own (unmerged) leaf keys, INCLUDING non-instantiable
+        # base/template presets (e.g. "fdm_belt_common") -- kept around
+        # purely as `inherits` merge sources; never exposed via list()/get().
+        self._raw_by_key: dict[tuple[str, str, str], dict] = {}
 
     def load(self) -> None:
         self._by_key.clear()
+        self._raw_by_key.clear()
         if not self._profiles_dir.is_dir():
             logger.warning("profiles_dir %s does not exist; catalog is empty", self._profiles_dir)
             return
 
+        # Pass 1: parse every profile file's own keys (leaf-only, unmerged),
+        # instantiable or not -- a later pass needs every base/template
+        # preset available as a potential `inherits` target regardless of
+        # whether it's independently selectable.
+        entries: list[tuple[str, str, str, Path, dict]] = []
         for vendor_index in sorted(self._profiles_dir.glob("*.json")):
             vendor = vendor_index.stem
             vendor_dir = self._profiles_dir / vendor
@@ -64,26 +74,83 @@ class ProfileCatalog:
                 except (json.JSONDecodeError, OSError) as exc:
                     logger.warning("Skipping unreadable profile %s: %s", preset_path, exc)
                     continue
-                # instantiation:"false" marks shared base/template presets meant
-                # only to be `inherits`-ed from (e.g. "fdm_machine_common"), not
-                # to be loaded directly -- OrcaSlicer's CLI resolves `inherits`
-                # chains on its own from the leaf preset's path, so these never
-                # need to be independently selectable or resolvable here.
-                if str(data.get("instantiation", "true")).lower() == "false":
-                    continue
-
                 kind = _infer_kind(data, preset_path.relative_to(vendor_dir))
                 name = data.get("name", preset_path.stem)
-                detail = ProfileDetail(
-                    vendor=vendor,
-                    kind=kind,
-                    name=name,
-                    path=str(preset_path.relative_to(self._profiles_dir)),
-                    data=data,
-                )
-                self._by_key[(vendor, kind, name)] = detail
+                self._raw_by_key[(vendor, kind, name)] = data
+                entries.append((vendor, kind, name, preset_path, data))
+
+        # Pass 2: resolve each instantiable profile's full `inherits` chain
+        # into one merged effective config. OrcaSlicer profiles are commonly
+        # split leaf/base (e.g. "IdeaFormer IR3 V2 0.4 nozzle" inherits
+        # "fdm_belt_common" inherits "fdm_klipper_common" inherits
+        # "fdm_machine_common") -- a key declared only on a base preset (e.g.
+        # `belt_printer`, `gcode_remap_x`) must still reach the leaf's
+        # resolved config, or it silently falls back to PrintConfig's
+        # hardcoded default. This is NOT something OrcaSlicer's CLI does on
+        # its own for a raw `--load-settings <path>` (that only walks
+        # `inherits` in the GUI/PresetBundle preset-selection flow) -- confirmed
+        # against a real build: a belt machine profile's `--load-settings`
+        # slice came back with `belt_printer = 0` and identity `gcode_remap_*`
+        # in its own gcode config dump, despite both being declared "1"/non-identity
+        # on the (uninherited) base preset.
+        for vendor, kind, name, preset_path, data in entries:
+            if str(data.get("instantiation", "true")).lower() == "false":
+                # instantiation:"false" marks a shared base/template preset
+                # (e.g. "fdm_machine_common") meant only to be inherited from,
+                # not independently selectable -- still merge-source-eligible
+                # via _raw_by_key above, just not exposed here.
+                continue
+
+            merged = self._resolve_merged(vendor, kind, name, data)
+            detail = ProfileDetail(
+                vendor=vendor,
+                kind=kind,
+                name=name,
+                path=str(preset_path.relative_to(self._profiles_dir)),
+                data=merged,
+            )
+            self._by_key[(vendor, kind, name)] = detail
 
         logger.info("Loaded %d profiles from %s", len(self._by_key), self._profiles_dir)
+
+    def _resolve_merged(
+        self, vendor: str, kind: str, name: str, data: dict, _seen: frozenset[tuple[str, str, str]] = frozenset()
+    ) -> dict:
+        """Merge `data` over its full `inherits` ancestor chain, root-first so
+        the child's own keys always win. `inherits` is a bare name (no
+        vendor) -- each vendor directory normally carries its own copy of
+        every ancestor it needs (e.g. every vendor has its own
+        "fdm_process_common.json"), so same-vendor lookup is tried first;
+        some chains cross vendor directories on purpose though (e.g. a
+        filament's "Generic ... @System" parent lives under the separate
+        "OrcaFilamentLibrary" vendor), so this falls back to a by-name search
+        across all vendors. `_seen` guards against a cyclic `inherits` chain
+        (shouldn't happen in a well-formed catalog, but a bad/malformed
+        profile must not hang the whole catalog load).
+        """
+        inherits = data.get("inherits")
+        if not isinstance(inherits, str) or not inherits or (vendor, kind, name) in _seen:
+            return dict(data)
+
+        seen = _seen | {(vendor, kind, name)}
+        parent_key = (vendor, kind, inherits)
+        parent_data = self._raw_by_key.get(parent_key)
+        if parent_data is None:
+            for (other_vendor, other_kind, other_name), other_data in self._raw_by_key.items():
+                if other_kind == kind and other_name == inherits:
+                    parent_key = (other_vendor, other_kind, other_name)
+                    parent_data = other_data
+                    break
+        if parent_data is None:
+            # Declared parent isn't in the catalog (fork drift/missing file)
+            # -- fall back to this preset's own keys rather than failing the
+            # whole catalog load.
+            return dict(data)
+
+        merged_parent = self._resolve_merged(*parent_key, parent_data, seen)
+        merged = dict(merged_parent)
+        merged.update(data)
+        return merged
 
     def list(self) -> list[ProfileSummary]:
         return [
