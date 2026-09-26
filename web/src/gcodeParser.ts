@@ -8,7 +8,6 @@ export interface GcodeSegment {
 }
 
 export interface GcodeLayer {
-  z: number
   segments: GcodeSegment[]
 }
 
@@ -27,12 +26,19 @@ function parseArgs(parts: string[]): Map<string, number> {
 }
 
 /**
- * Extracts extruding toolpath segments from G-code text, grouped by layer
- * (a new layer starts whenever Z changes and something is actually
- * extruded there -- a Z-hop during a travel move that never deposits
- * material never becomes a "layer" on its own). Travel/retraction moves
- * are dropped entirely: this is a print-path preview, not a full
- * simulation, and travel lines mostly just clutter it.
+ * Extracts extruding toolpath segments from G-code text, grouped by layer.
+ * Layer boundaries come from OrcaSlicer's own `;LAYER_CHANGE` comment
+ * (emitted right before each layer's first move, for every printer this
+ * app supports, belt included) rather than "Z changed" -- confirmed
+ * against a real IdeaFormer IR3 V2 (belt) slice that Z-based grouping
+ * splinters into 541 bogus "layers" for a 9-layer part: a belt printer's
+ * gcode Z legitimately steps through more than one distinct value per
+ * real layer (small Z moves the belt-shear transform introduces that
+ * aren't layer changes at all), which "Z changed" can't tell apart from
+ * an actual layer boundary but the slicer's own marker always can.
+ * Travel/retraction moves are dropped from the returned segments (this is
+ * a print-path preview, not a full simulation, and travel lines mostly
+ * just clutter it).
  *
  * Assumes absolute XYZ positioning (G91 relative-mode is essentially never
  * used in sliced FDM output) but handles both absolute (M82, the default)
@@ -50,7 +56,14 @@ export function parseGcode(text: string): ParsedGcode {
   let relativeE = false
 
   for (const rawLine of text.split('\n')) {
-    const line = rawLine.split(';', 1)[0].trim()
+    const trimmed = rawLine.trim()
+    if (trimmed === ';LAYER_CHANGE' || !currentLayer) {
+      currentLayer = { segments: [] }
+      layers.push(currentLayer)
+      if (trimmed === ';LAYER_CHANGE') continue
+    }
+
+    const line = trimmed.split(';', 1)[0].trim()
     if (!line) continue
     const parts = line.split(/\s+/)
     const cmd = parts[0].toUpperCase()
@@ -77,10 +90,6 @@ export function parseGcode(text: string): ParsedGcode {
     const eDelta = args.has('E') ? (relativeE ? args.get('E')! : args.get('E')! - e) : 0
     const extruding = eDelta > 0
 
-    if (nz !== z || !currentLayer) {
-      currentLayer = { z: nz, segments: [] }
-      layers.push(currentLayer)
-    }
     if (extruding) {
       currentLayer.segments.push({ x1: x, y1: y, z1: z, x2: nx, y2: ny, z2: nz })
     }

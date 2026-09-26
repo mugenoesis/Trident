@@ -4,6 +4,19 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { gcodeDownloadUrl } from '../api'
 import { parseGcode, type GcodeLayer } from '../gcodeParser'
 
+// buildSolid's per-layer box height is a visual stand-in (the parser
+// doesn't carry an authoritative "this layer's height" number, see
+// gcodeParser.ts), derived by averaging the Z each layer's segments were
+// actually drawn at -- confirmed against a real belt (IdeaFormer IR3 V2)
+// slice that these averages climb cleanly in step with the real layer
+// height (0.2, 0.4, 0.6mm, ...) once layers are grouped correctly (i.e.
+// by ;LAYER_CHANGE, not by "Z changed"), same as any normal printer.
+function averageLayerZ(layer: GcodeLayer): number {
+  let sum = 0
+  for (const seg of layer.segments) sum += seg.z1
+  return sum / layer.segments.length
+}
+
 interface GcodeViewerProps {
   jobId: string
   // This job's total filament weight (api/app/gcode_stats.py), shown as a
@@ -195,11 +208,12 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       object.receiveShadow = true
       let index = 0
       const ends: number[] = []
+      const layerZs = layers.map(averageLayerZ)
       layers.forEach((layer, layerIndex) => {
         const layerHeight =
           layerIndex === 0
-            ? Math.max(0.05, layer.z)
-            : Math.max(0.05, layer.z - layers[layerIndex - 1].z)
+            ? Math.max(0.05, layerZs[0])
+            : Math.max(0.05, Math.abs(layerZs[layerIndex] - layerZs[layerIndex - 1]))
         for (const seg of layer.segments) {
           const length = orientDummy(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
           if (length <= 0) continue
