@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { gcodeDownloadUrl } from '../api'
 import { parseGcode, type GcodeLayer } from '../gcodeParser'
+import type { BeltTransform } from '../beltTransform'
 
 // buildSolid's per-layer box height is a visual stand-in (the parser
 // doesn't carry an authoritative "this layer's height" number, see
@@ -22,6 +23,11 @@ interface GcodeViewerProps {
   // This job's total filament weight (api/app/gcode_stats.py), shown as a
   // small badge over the toolpath view -- null/undefined hides it.
   filamentUsedGrams?: number | null
+  // Non-null only for a belt printer with a real machine-frame tilt (see
+  // beltTransform.ts) -- un-shears the raw G-code back into the object's
+  // upright shape before rendering. null/undefined renders G-code as-is,
+  // same as any normal printer.
+  beltTransform?: BeltTransform | null
   onBackToModel: () => void
 }
 
@@ -44,7 +50,12 @@ const EXTRUSION_WIDTH_MM = 0.42
 // so scrubbing works identically in either mode.
 // Rendered inline in place of the 3D model Viewer (App.tsx), not a modal --
 // swapped in automatically once a slice succeeds.
-export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }: GcodeViewerProps) {
+export default function GcodeViewer({
+  jobId,
+  filamentUsedGrams,
+  beltTransform,
+  onBackToModel,
+}: GcodeViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
@@ -258,7 +269,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       })
       .then((text) => {
         if (disposed) return
-        const { layers } = parseGcode(text)
+        const { layers } = parseGcode(text, beltTransform)
         if (layers.length === 0) throw new Error('No extrusion moves found in this G-code')
         layersRef.current = layers
 
@@ -326,11 +337,11 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
-    // jobId only: this scene is built once per preview open, not re-run on
-    // the slider/mode toggle's own state changes (handled imperatively via
-    // the refs above).
+    // jobId + beltTransform only: this scene is built once per preview open
+    // (or belt-transform change), not re-run on the slider/mode toggle's own
+    // state changes (handled imperatively via the refs above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId])
+  }, [jobId, beltTransform])
 
   // Rebuild the displayed object when the render mode is toggled, once a
   // scene actually exists to rebuild into.

@@ -1,3 +1,5 @@
+import { beltBackTransformPoint, type BeltTransform } from './beltTransform'
+
 export interface GcodeSegment {
   x1: number
   y1: number
@@ -44,8 +46,12 @@ function parseArgs(parts: string[]): Map<string, number> {
  * used in sliced FDM output) but handles both absolute (M82, the default)
  * and relative (M83) extrusion, since which one a given profile/gcode
  * flavor uses varies.
+ *
+ * `beltTransform`, when given, un-shears every point back into the object's
+ * upright shape before it's stored (see beltTransform.ts) -- omit/pass null
+ * for a non-belt printer, which renders G-code coordinates as-is.
  */
-export function parseGcode(text: string): ParsedGcode {
+export function parseGcode(text: string, beltTransform?: BeltTransform | null): ParsedGcode {
   const layers: GcodeLayer[] = []
   let currentLayer: GcodeLayer | null = null
 
@@ -55,12 +61,21 @@ export function parseGcode(text: string): ParsedGcode {
   let e = 0
   let relativeE = false
 
+  const toRenderSpace = (px: number, py: number, pz: number) =>
+    beltTransform ? beltBackTransformPoint(beltTransform, px, py, pz) : { x: px, y: py, z: pz }
+
   for (const rawLine of text.split('\n')) {
     const trimmed = rawLine.trim()
-    if (trimmed === ';LAYER_CHANGE' || !currentLayer) {
+    // A belt slice appends the new layer's Z value directly onto this
+    // marker with no separator (e.g. ";LAYER_CHANGE32.4794", confirmed
+    // against a real IdeaFormer IR3 V2 slice) -- an exact-string match here
+    // would silently never fire for belt gcode, collapsing the whole file
+    // into one giant "layer".
+    const isLayerChange = trimmed.startsWith(';LAYER_CHANGE')
+    if (isLayerChange || !currentLayer) {
       currentLayer = { segments: [] }
       layers.push(currentLayer)
-      if (trimmed === ';LAYER_CHANGE') continue
+      if (isLayerChange) continue
     }
 
     const line = trimmed.split(';', 1)[0].trim()
@@ -77,8 +92,17 @@ export function parseGcode(text: string): ParsedGcode {
       continue
     }
     if (cmd === 'G92') {
+      // Redefines the CURRENT position without moving the head -- e.g. a
+      // belt printer's start gcode uses "G92 Z0" to zero the belt's own
+      // travel origin. Must update the tracked position the same way E is
+      // already handled below, or every subsequent move that omits that
+      // axis (carrying the old position forward) drifts by a constant
+      // offset.
       const args = parseArgs(parts)
       if (args.has('E')) e = args.get('E')!
+      if (args.has('X')) x = args.get('X')!
+      if (args.has('Y')) y = args.get('Y')!
+      if (args.has('Z')) z = args.get('Z')!
       continue
     }
     if (cmd !== 'G0' && cmd !== 'G1') continue
@@ -91,7 +115,9 @@ export function parseGcode(text: string): ParsedGcode {
     const extruding = eDelta > 0
 
     if (extruding) {
-      currentLayer.segments.push({ x1: x, y1: y, z1: z, x2: nx, y2: ny, z2: nz })
+      const p1 = toRenderSpace(x, y, z)
+      const p2 = toRenderSpace(nx, ny, nz)
+      currentLayer.segments.push({ x1: p1.x, y1: p1.y, z1: p1.z, x2: p2.x, y2: p2.y, z2: p2.z })
     }
 
     x = nx

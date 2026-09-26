@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import { parseBeltTransform, type BeltTransform } from './beltTransform'
 
 export interface Dimensions {
   x: number
@@ -18,6 +19,12 @@ export interface BedSize {
   // profile. Drives the Viewer's default object placement below instead of
   // the usual dead-plate-center placement.
   beltPrinterInfiniteY: boolean
+  // Non-null only for an actual belt printer with a real machine-frame tilt
+  // (belt_printer + belt_slice_rotation != none/z) -- see beltTransform.ts.
+  // GcodeViewer uses this to un-shear raw G-code coordinates back into the
+  // object's upright shape; null means "render G-code as-is", same as any
+  // normal printer.
+  beltTransform: BeltTransform | null
 }
 
 // A margin below 1.0: an exact-fit scale can still fail slicer validation
@@ -56,16 +63,22 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
 
   const xs = points.map((p) => p[0])
   const ys = points.map((p) => p[1])
-  const width = Math.max(...xs) - Math.min(...xs)
-  const depth = Math.max(...ys) - Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  const width = maxX - Math.min(...xs)
+  const depth = maxY - Math.min(...ys)
   const height = Number(heightRaw)
 
   if (!(width > 0) || !(depth > 0) || !Number.isFinite(height) || !(height > 0)) return null
 
   const beltFlag = profileData.belt_printer_infinite_y
   const beltPrinterInfiniteY = beltFlag === '1' || beltFlag === true || beltFlag === 1
+  // set_build_volume_max (GCode.cpp) uses the bed polygon's own max X/Y plus
+  // printable_height -- matched here so a "rev_*" gcode_remap axis inverts
+  // against the same reference the slicer itself used.
+  const beltTransform = parseBeltTransform(profileData, [maxX, maxY, height])
 
-  return { width, depth, height, beltPrinterInfiniteY }
+  return { width, depth, height, beltPrinterInfiniteY, beltTransform }
 }
 
 /**

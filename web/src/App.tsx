@@ -902,10 +902,12 @@ function MainApp({
             depth: printer.bed_depth,
             height: printer.bed_height,
             // Backfilled a moment later once the machine profile itself
-            // loads below (a saved printer record doesn't snapshot this
-            // flag) -- false here just means the belt-specific placement
-            // in Viewer briefly falls back to dead-center until then.
+            // loads below (a saved printer record doesn't snapshot these) --
+            // false/null here just means the belt-specific placement in
+            // Viewer and the GcodeViewer back-transform briefly fall back to
+            // their non-belt defaults until then.
             beltPrinterInfiniteY: false,
+            beltTransform: null,
           }
         : null,
     )
@@ -1450,6 +1452,7 @@ function MainApp({
                 filamentUsedGrams={filamentGramsOf(
                   [currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null,
                 )}
+                beltTransform={bedSize?.beltTransform ?? null}
                 onBackToModel={backToModelView}
               />
               {selectedPrinter?.print_host && (
