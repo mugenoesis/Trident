@@ -11,6 +11,16 @@ export interface GcodeSegment {
 
 export interface GcodeLayer {
   segments: GcodeSegment[]
+  // The layer's own nominal height in mm, straight from its first
+  // `;HEIGHT:` comment (right after `;LAYER_CHANGE`/`;Z:`, before any
+  // `;TYPE:` feature section -- later `;HEIGHT:` comments belong to a
+  // specific feature, e.g. a brim ribbon at a different height, and are
+  // ignored). Undefined if the gcode flavor doesn't emit this comment.
+  // Authoritative for GcodeViewer's solid-mode box thickness -- needed for a
+  // belt printer, where consecutive layers' own average Z (the previous
+  // stand-in) is no longer monotonic once each nominal slicing layer maps to
+  // a diagonal, not horizontal, plane in the object's upright shape.
+  height?: number
 }
 
 export interface ParsedGcode {
@@ -76,6 +86,12 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
       currentLayer = { segments: [] }
       layers.push(currentLayer)
       if (isLayerChange) continue
+    }
+
+    if (trimmed.startsWith(';HEIGHT:') && currentLayer.height === undefined) {
+      const parsed = Number.parseFloat(trimmed.slice(';HEIGHT:'.length))
+      if (Number.isFinite(parsed)) currentLayer.height = parsed
+      continue
     }
 
     const line = trimmed.split(';', 1)[0].trim()

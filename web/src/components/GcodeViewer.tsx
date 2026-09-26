@@ -5,13 +5,17 @@ import { gcodeDownloadUrl } from '../api'
 import { parseGcode, type GcodeLayer } from '../gcodeParser'
 import type { BeltTransform } from '../beltTransform'
 
-// buildSolid's per-layer box height is a visual stand-in (the parser
-// doesn't carry an authoritative "this layer's height" number, see
-// gcodeParser.ts), derived by averaging the Z each layer's segments were
-// actually drawn at -- confirmed against a real belt (IdeaFormer IR3 V2)
-// slice that these averages climb cleanly in step with the real layer
-// height (0.2, 0.4, 0.6mm, ...) once layers are grouped correctly (i.e.
-// by ;LAYER_CHANGE, not by "Z changed"), same as any normal printer.
+// Fallback only for a gcode flavor without a `;HEIGHT:` comment (see
+// GcodeLayer.height, gcodeParser.ts, which buildSolid prefers below) --
+// averaging the Z each layer's segments were actually drawn at. This breaks
+// down for a belt printer's real (post-back-transform) coordinates: one
+// nominal slicing layer maps to a DIAGONAL plane through the object's
+// upright shape, not a horizontal one, so consecutive layers' average
+// upright Z isn't monotonic (confirmed against a real IdeaFormer IR3 V2
+// slice: layer-to-layer average deltas ranged from -1.7mm to +3.0mm once the
+// belt back-transform was applied) -- `;HEIGHT:` is unaffected by any of
+// this since it's the slicer's own nominal per-layer value, not derived from
+// coordinates.
 function averageLayerZ(layer: GcodeLayer): number {
   let sum = 0
   for (const seg of layer.segments) sum += seg.z1
@@ -221,10 +225,11 @@ export default function GcodeViewer({
       const ends: number[] = []
       const layerZs = layers.map(averageLayerZ)
       layers.forEach((layer, layerIndex) => {
-        const layerHeight =
+        const fallbackHeight =
           layerIndex === 0
             ? Math.max(0.05, layerZs[0])
             : Math.max(0.05, Math.abs(layerZs[layerIndex] - layerZs[layerIndex - 1]))
+        const layerHeight = layer.height !== undefined ? Math.max(0.05, layer.height) : fallbackHeight
         for (const seg of layer.segments) {
           const length = orientDummy(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
           if (length <= 0) continue
