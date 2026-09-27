@@ -1366,7 +1366,13 @@ function MainApp({
     // Only meaningful (and only worth sending) when support is actually on.
     if (quickSettings.enable_support === '1') {
       overrides.support_type = quickSettings.support_type
-      overrides.support_buildplate_only = quickSettings.support_buildplate_only
+      // NOTE: the real FDM option is "support_on_build_plate_only" --
+      // "support_buildplate_only" is a same-named-looking but unrelated SLA
+      // option (SLAPrintObjectConfig, PrintConfig.cpp) that silently no-ops
+      // for every FDM print. Confirmed via direct API test: overriding the
+      // wrong key left filament_used_g unchanged, while the correct key
+      // changed it (19.52g -> 17.24g on a support-enabled Benchy).
+      overrides.support_on_build_plate_only = quickSettings.support_buildplate_only
     }
     // Nozzle diameter & type: a genuine multi-head printer (isMultiHeadPrinter)
     // can have a different nozzle installed per head, so each slot carries
