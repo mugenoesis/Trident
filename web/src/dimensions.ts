@@ -36,16 +36,22 @@ const FIT_MARGIN = 0.97
 // purge blob live, see machine_start_gcode) a belt printer's slicer engine
 // places a fresh object by default -- vendor/orcaslicer/src/OrcaSlicer.cpp's
 // arrange-cap and `center_instances_around_point` recenter both use this
-// exact same 30mm margin. Deliberately small (not "clear of" the prime
-// lines) but not the bare minimum either: 15mm left the object touching the
-// prime lines, but support material generated later (a slicing-time
-// computation, after this placement decision) can extend further toward the
-// origin than the bare mesh does -- confirmed on a real belt slice with
-// supports enabled overshooting a 15mm-margin placement by ~11.6mm, past the
-// belt's own origin. 30mm leaves roughly 2x that overshoot as headroom.
-// Kept in sync manually since the preview re-derives this position on the
-// client rather than asking the slicer for it.
-export const BELT_PRINTER_PREVIEW_MARGIN_MM = 30
+// exact same 15mm margin, close enough that the object actually touches the
+// prime lines (confirmed: this is what a real belt slice with no support
+// enabled lands at). Kept in sync manually since the preview re-derives this
+// position on the client rather than asking the slicer for it.
+export const BELT_PRINTER_PREVIEW_MARGIN_MM = 15
+// Used instead of the above whenever support material is enabled: support
+// (a slicing-time computation, after the object's own placement is decided)
+// can extend further toward the belt origin than the bare mesh does --
+// confirmed on a real belt slice with supports enabled overshooting a 15mm
+// placement by ~11.6mm, past the belt's own origin. 30mm leaves roughly 2x
+// that overshoot as headroom. Conditioned on enable_support specifically
+// (matching OrcaSlicer.cpp) rather than applied unconditionally, since a
+// flat 30mm regressed adhesion for every non-support slice -- confirmed the
+// object/brim no longer visibly reached the prime lines once it applied
+// regardless of settings.
+export const BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT = 30
 
 /**
  * Printer machine profiles carry their bed as `printable_area` (a polygon of

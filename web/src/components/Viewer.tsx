@@ -4,7 +4,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
-import { BELT_PRINTER_PREVIEW_MARGIN_MM, type BedSize, type Dimensions } from '../dimensions'
+import {
+  BELT_PRINTER_PREVIEW_MARGIN_MM,
+  BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT,
+  type BedSize,
+  type Dimensions,
+} from '../dimensions'
 import type { ColorNode } from '../types'
 
 interface ViewerProps {
@@ -21,6 +26,12 @@ interface ViewerProps {
   // shown as a small badge over the model -- null/undefined hides it (no
   // successful job yet, or it didn't report one).
   filamentUsedGrams?: number | null
+  // Mirrors QuickSettings' enable_support toggle -- the belt placement
+  // margin below only needs to be wide when support material is enabled
+  // (see BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT); this keeps the
+  // preview consistent with the same enable_support-conditioned margin the
+  // slicer itself now uses (vendor/orcaslicer/src/OrcaSlicer.cpp).
+  supportEnabled?: boolean
 }
 
 export interface ViewerHandle {
@@ -39,7 +50,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree, filamentUsedGrams },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -283,7 +294,10 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       // absolute min-Y coordinate.
       const modelCenter = new THREE.Vector3(0, 0, 0)
       if (bedSize?.beltPrinterInfiniteY) {
-        modelCenter.y = -plateDepth / 2 + BELT_PRINTER_PREVIEW_MARGIN_MM
+        const margin = supportEnabled
+          ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT
+          : BELT_PRINTER_PREVIEW_MARGIN_MM
+        modelCenter.y = -plateDepth / 2 + margin
         object.position.y += modelCenter.y
       }
 

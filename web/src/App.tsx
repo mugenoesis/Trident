@@ -1519,6 +1519,7 @@ function MainApp({
                 bedSize={bedSize}
                 colorTree={renderColorTree}
                 filamentUsedGrams={filamentGramsOf(currentJob)}
+                supportEnabled={quickSettings.enable_support === '1'}
               />
               {dimensions && (
                 <>
