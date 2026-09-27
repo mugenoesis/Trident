@@ -35,13 +35,17 @@ const FIT_MARGIN = 0.97
 // How far from the belt's own Y origin (the end where the prime lines /
 // purge blob live, see machine_start_gcode) a belt printer's slicer engine
 // places a fresh object by default -- vendor/orcaslicer/src/OrcaSlicer.cpp's
-// `center_instances_around_point` recenter uses this exact same 15mm
-// margin (deliberately small: confirmed via the gcode viewer's belt
-// back-transform that a larger margin leaves the object not actually
-// touching the prime lines, defeating their first-layer-adhesion purpose).
+// arrange-cap and `center_instances_around_point` recenter both use this
+// exact same 30mm margin. Deliberately small (not "clear of" the prime
+// lines) but not the bare minimum either: 15mm left the object touching the
+// prime lines, but support material generated later (a slicing-time
+// computation, after this placement decision) can extend further toward the
+// origin than the bare mesh does -- confirmed on a real belt slice with
+// supports enabled overshooting a 15mm-margin placement by ~11.6mm, past the
+// belt's own origin. 30mm leaves roughly 2x that overshoot as headroom.
 // Kept in sync manually since the preview re-derives this position on the
 // client rather than asking the slicer for it.
-export const BELT_PRINTER_PREVIEW_MARGIN_MM = 15
+export const BELT_PRINTER_PREVIEW_MARGIN_MM = 30
 
 /**
  * Printer machine profiles carry their bed as `printable_area` (a polygon of
