@@ -400,6 +400,20 @@ function MainApp({
   const [printersLoaded, setPrintersLoaded] = useState(false)
   const pendingLastMaterialId = useRef(authStatus.last_material_id)
   const pendingLastSettingsProfileId = useRef(authStatus.last_settings_profile_id)
+  // Set once (never reset) the first time a real saved settings profile's
+  // values are actually applied -- guards the initial-catalog-load effect
+  // below against a genuine race: that effect and the printer/settings-
+  // profile restoration chain (auth status -> printers -> saved printer's
+  // settings profiles -> apply) both kick off independently from mount, in
+  // no guaranteed order. Confirmed via real testing: the settings-profile
+  // dropdown correctly showed the restored profile's name, but its actual
+  // quick-setting values (e.g. enable_support) were silently reset to bare
+  // schema defaults -- the catalog-load effect's own setQuickSettings had
+  // resolved AFTER the profile's real values were already applied, clobbering
+  // them. This ref makes the outcome correct regardless of which finishes
+  // first, unlike checking pendingLastSettingsProfileId alone (which is only
+  // reliable for one specific ordering).
+  const appliedSettingsProfileRef = useRef(false)
   // Lets handleSlice grab a snapshot of the 3D preview at the moment
   // slicing starts, to embed into the gcode and this app's own job
   // thumbnail (see api/app/gcode_thumbnail.py) -- the engine itself never
@@ -554,7 +568,12 @@ function MainApp({
       .then(([profileList, settingsSchema]) => {
         setProfiles(profileList)
         setSchema(settingsSchema.settings)
-        setQuickSettings(defaultQuickSettings(settingsSchema.settings))
+        // Skip if a real saved settings profile's values already won the
+        // race (see appliedSettingsProfileRef above) -- this would otherwise
+        // unconditionally stomp them back to bare defaults.
+        if (!appliedSettingsProfileRef.current) {
+          setQuickSettings(defaultQuickSettings(settingsSchema.settings))
+        }
       })
       .catch((err: Error) => setCatalogError(err.message))
 
@@ -617,6 +636,7 @@ function MainApp({
   }, [])
 
   const applySettingsProfile = useCallback((profile: SettingsProfileRecord) => {
+    appliedSettingsProfileRef.current = true
     setSelectedSettingsProfileId(profile.id)
     setQuickSettings((prev) => ({ ...prev, ...profile.quick_settings }))
     setAdvancedOverrides(profile.advanced_overrides)

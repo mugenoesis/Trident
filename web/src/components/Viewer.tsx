@@ -605,7 +605,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     // effect (camera resets too), which is an acceptable trade-off for
     // keeping one effect rather than splitting scene setup from plate
     // sizing.
-  }, [file, onDimensions, bedSize, colorTree])
+  }, [file, onDimensions, bedSize, colorTree, supportEnabled])
 
   return (
     <div className="viewer-wrap">
