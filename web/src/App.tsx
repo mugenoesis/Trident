@@ -36,6 +36,7 @@ import {
   parseBedSize,
   scaleStlFile,
 } from './dimensions'
+import type { BeltTransform } from './beltTransform'
 import AdvancedSettings from './components/AdvancedSettings'
 import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
@@ -449,6 +450,38 @@ function MainApp({
   const [viewMode, setViewMode] = useState<'model' | 'gcode'>('model')
 
   const showGcode = viewMode === 'gcode' && viewedJobId !== null
+
+  // The gcode viewer's belt back-transform (see beltTransform.ts) must match
+  // whichever printer THIS job was actually sliced with, not whatever the
+  // printer dropdown currently has selected (`bedSize` below) -- those two
+  // can disagree the moment a job from history is reopened, or the page
+  // reloads, without reselecting the same printer. Resolved independently
+  // here from the job's own recorded printer_profile so the viewer is
+  // correct regardless of ambient UI selection state.
+  const [viewedJobBeltTransform, setViewedJobBeltTransform] = useState<BeltTransform | null>(null)
+  useEffect(() => {
+    const job = viewedJobId ? ([currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null) : null
+    if (!job) {
+      setViewedJobBeltTransform(null)
+      return
+    }
+    let cancelled = false
+    listProfiles()
+      .then((profiles) => {
+        const match = profiles.find((p) => p.kind === 'machine' && p.name === job.printer_profile)
+        return match ? getProfileDetail(match.vendor, 'machine', match.name) : null
+      })
+      .then((detail) => {
+        if (cancelled) return
+        setViewedJobBeltTransform(detail ? (parseBedSize(detail.data)?.beltTransform ?? null) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setViewedJobBeltTransform(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [viewedJobId, currentJob, history])
 
   const viewJobGcode = useCallback((jobId: string) => {
     setViewedJobId(jobId)
@@ -1460,7 +1493,7 @@ function MainApp({
                 filamentUsedGrams={filamentGramsOf(
                   [currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null,
                 )}
-                beltTransform={bedSize?.beltTransform ?? null}
+                beltTransform={viewedJobBeltTransform}
                 onBackToModel={backToModelView}
               />
               {selectedPrinter?.print_host && (
