@@ -70,6 +70,18 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
   let z = 0
   let e = 0
   let relativeE = false
+  // Accumulated so `raw + offset` stays the machine's true, continuous
+  // physical position across a G92 reset (see the G92 branch below) --
+  // without this, a belt printer's start gcode re-zeroing Z partway through
+  // (confirmed on a real IdeaFormer IR3 V2 slice: "G92 Z0" once after the
+  // prime lines, again right before the first layer) makes every point
+  // before vs. after the reset get back-transformed as if they were in the
+  // SAME frame when they're not, rendering the prime line and the object
+  // visibly offset from each other even though the machine never actually
+  // moved between them.
+  let xOffset = 0
+  let yOffset = 0
+  let zOffset = 0
 
   const toRenderSpace = (px: number, py: number, pz: number) =>
     beltTransform ? beltBackTransformPoint(beltTransform, px, py, pz) : { x: px, y: py, z: pz }
@@ -116,9 +128,21 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
       // offset.
       const args = parseArgs(parts)
       if (args.has('E')) e = args.get('E')!
-      if (args.has('X')) x = args.get('X')!
-      if (args.has('Y')) y = args.get('Y')!
-      if (args.has('Z')) z = args.get('Z')!
+      if (args.has('X')) {
+        const v = args.get('X')!
+        xOffset += x - v
+        x = v
+      }
+      if (args.has('Y')) {
+        const v = args.get('Y')!
+        yOffset += y - v
+        y = v
+      }
+      if (args.has('Z')) {
+        const v = args.get('Z')!
+        zOffset += z - v
+        z = v
+      }
       continue
     }
     if (cmd !== 'G0' && cmd !== 'G1') continue
@@ -131,8 +155,8 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
     const extruding = eDelta > 0
 
     if (extruding) {
-      const p1 = toRenderSpace(x, y, z)
-      const p2 = toRenderSpace(nx, ny, nz)
+      const p1 = toRenderSpace(x + xOffset, y + yOffset, z + zOffset)
+      const p2 = toRenderSpace(nx + xOffset, ny + yOffset, nz + zOffset)
       currentLayer.segments.push({ x1: p1.x, y1: p1.y, z1: p1.z, x2: p2.x, y2: p2.y, z2: p2.z })
     }
 
