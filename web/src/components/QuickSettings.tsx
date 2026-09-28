@@ -8,6 +8,10 @@ export interface QuickSettingsValues {
   curr_bed_type: string
   enable_support: string
   support_type: string
+  // Bound to the schema/override key "support_on_build_plate_only" -- kept
+  // as its own field name since "support_buildplate_only" is a
+  // same-named-looking but unrelated SLA-only option that no-ops for FDM
+  // (see App.tsx's slice-request override for the full story).
   support_buildplate_only: string
   // The wipe/prime tower -- purges leftover filament on the nozzle after a
   // color change so it doesn't show up in the next layer. App.tsx defaults
@@ -175,7 +179,7 @@ export function defaultQuickSettings(schema: SettingDef[]): QuickSettingsValues 
     curr_bed_type: def('curr_bed_type', 'Cool Plate'),
     enable_support: def('enable_support', '0'),
     support_type: def('support_type', 'normal(auto)'),
-    support_buildplate_only: def('support_buildplate_only', '0'),
+    support_buildplate_only: def('support_on_build_plate_only', '0'),
     // Matches OrcaSlicer's own baseline default (false) -- App.tsx turns
     // this on automatically once a multi-slot printer is selected.
     enable_prime_tower: def('enable_prime_tower', '0'),

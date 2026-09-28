@@ -3,12 +3,35 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { gcodeDownloadUrl } from '../api'
 import { parseGcode, type GcodeLayer } from '../gcodeParser'
+import type { BeltTransform } from '../beltTransform'
+
+// Fallback only for a gcode flavor without a `;HEIGHT:` comment (see
+// GcodeLayer.height, gcodeParser.ts, which buildSolid prefers below) --
+// averaging the Z each layer's segments were actually drawn at. This breaks
+// down for a belt printer's real (post-back-transform) coordinates: one
+// nominal slicing layer maps to a DIAGONAL plane through the object's
+// upright shape, not a horizontal one, so consecutive layers' average
+// upright Z isn't monotonic (confirmed against a real IdeaFormer IR3 V2
+// slice: layer-to-layer average deltas ranged from -1.7mm to +3.0mm once the
+// belt back-transform was applied) -- `;HEIGHT:` is unaffected by any of
+// this since it's the slicer's own nominal per-layer value, not derived from
+// coordinates.
+function averageLayerZ(layer: GcodeLayer): number {
+  let sum = 0
+  for (const seg of layer.segments) sum += seg.z1
+  return sum / layer.segments.length
+}
 
 interface GcodeViewerProps {
   jobId: string
   // This job's total filament weight (api/app/gcode_stats.py), shown as a
   // small badge over the toolpath view -- null/undefined hides it.
   filamentUsedGrams?: number | null
+  // Non-null only for a belt printer with a real machine-frame tilt (see
+  // beltTransform.ts) -- un-shears the raw G-code back into the object's
+  // upright shape before rendering. null/undefined renders G-code as-is,
+  // same as any normal printer.
+  beltTransform?: BeltTransform | null
   onBackToModel: () => void
 }
 
@@ -19,6 +42,29 @@ type RenderMode = 'solid' | 'lines'
 // derived from flow, not present in the G-code moves themselves), so this is
 // a visual stand-in, not a dimensionally exact value.
 const EXTRUSION_WIDTH_MM = 0.42
+
+// A belt printer's full-history render is actively misleading, not just
+// cluttered: consecutive slicing layers are diagonal planes through the
+// object's upright shape (see averageLayerZ above), so structure printed
+// long ago (e.g. an early support column, already fully consumed) can end
+// up rendered right next to -- but visibly disconnected from -- whatever
+// the belt has since carried into view, even though the physical print was
+// never actually discontinuous. Confirmed against a real IdeaFormer IR3 V2
+// job: an early support column anchored to the belt for ~35 layers, fully
+// finished by layer 539, still appeared as a stray disconnected line at
+// layer 656/755 purely because "Lines"/"Solid" render everything from
+// layer 0 forward.
+//
+// Windowing by trailing G-code Z (GcodeLayer.beltZ, the belt's own absolute
+// motor position -- monotonic by construction, confirmed against that same
+// job's full 754-layer G-code) instead of by layer index keeps this
+// invariant to layer height/count, unlike a fixed trailing-layer count
+// would be. There's no config value for how much belt length is physically
+// enclosed within the machine's frame (that's a hardware constant the
+// slicer doesn't model), so this is a tuned UX default, not a physical
+// simulation of the real machine -- adjust if it hides too much or too
+// little in practice.
+const BELT_WINDOW_SPAN_MM = 60
 
 // Real toolpath preview, not just "here's the file": fetches the sliced
 // G-code, parses out the extruding moves (gcodeParser.ts), and renders them
@@ -31,7 +77,12 @@ const EXTRUSION_WIDTH_MM = 0.42
 // so scrubbing works identically in either mode.
 // Rendered inline in place of the 3D model Viewer (App.tsx), not a modal --
 // swapped in automatically once a slice succeeds.
-export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }: GcodeViewerProps) {
+export default function GcodeViewer({
+  jobId,
+  filamentUsedGrams,
+  beltTransform,
+  onBackToModel,
+}: GcodeViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [layerCount, setLayerCount] = useState(0)
@@ -195,11 +246,13 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       object.receiveShadow = true
       let index = 0
       const ends: number[] = []
+      const layerZs = layers.map(averageLayerZ)
       layers.forEach((layer, layerIndex) => {
-        const layerHeight =
+        const fallbackHeight =
           layerIndex === 0
-            ? Math.max(0.05, layer.z)
-            : Math.max(0.05, layer.z - layers[layerIndex - 1].z)
+            ? Math.max(0.05, layerZs[0])
+            : Math.max(0.05, Math.abs(layerZs[layerIndex] - layerZs[layerIndex - 1]))
+        const layerHeight = layer.height !== undefined ? Math.max(0.05, layer.height) : fallbackHeight
         for (const seg of layer.segments) {
           const length = orientDummy(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
           if (length <= 0) continue
@@ -225,15 +278,47 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
     }
     applyVisibleRef.current = applyVisible
 
+    // Belt-mode only: the first layer index (>= the trailing window's start)
+    // to include when showing up through `visible`. Layer index, not just
+    // beltZ, is returned so callers can slice layersRef.current directly.
+    // Linear scan backward from `visible` -- bounded by the window itself
+    // (beltZ is monotonic, confirmed in gcodeParser.ts), not by total layer
+    // count, so this stays cheap even for a long print.
+    const beltWindowStart = (visible: number): number => {
+      const layers = layersRef.current
+      const endIdx = Math.min(visible, layers.length) - 1
+      if (endIdx < 0) return 0
+      const currentBeltZ = layers[endIdx].beltZ
+      if (currentBeltZ === undefined) return 0
+      let start = endIdx
+      while (start > 0) {
+        const prevBeltZ = layers[start - 1].beltZ
+        if (prevBeltZ === undefined || currentBeltZ - prevBeltZ > BELT_WINDOW_SPAN_MM) break
+        start--
+      }
+      return start
+    }
+
     const rebuild = (mode: RenderMode, visible: number) => {
       disposeActive()
-      const built = mode === 'lines' ? buildLines(layersRef.current) : buildSolid(layersRef.current)
+      const layers = layersRef.current
+      // Non-belt: unchanged -- build the full cumulative history once, trim
+      // to `visible` via drawRange/count below (cheap to re-trim on every
+      // slider tick without a rebuild, see the scrubbing effect below).
+      // Belt: build only the trailing window ending at `visible`, so the
+      // built object already *is* exactly what should show, with nothing
+      // stale from earlier in the print behind it.
+      const buildLayers = beltTransform ? layers.slice(beltWindowStart(visible), Math.min(visible, layers.length)) : layers
+      const built = mode === 'lines' ? buildLines(buildLayers) : buildSolid(buildLayers)
       activeObject = built.object
       layerEnds = built.layerEnds
       activeObject.position.set(-center.x, -center.y, -center.z)
       scene.add(activeObject)
       ground.visible = mode === 'solid'
-      applyVisible(visible)
+      // For belt, buildLayers already ends exactly at `visible` -- passing
+      // its own length here shows all of it (layerEnds has exactly that
+      // many entries), rather than re-trimming against the full-file index.
+      applyVisible(beltTransform ? buildLayers.length : visible)
     }
     rebuildRef.current = rebuild
 
@@ -244,7 +329,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       })
       .then((text) => {
         if (disposed) return
-        const { layers } = parseGcode(text)
+        const { layers } = parseGcode(text, beltTransform)
         if (layers.length === 0) throw new Error('No extrusion moves found in this G-code')
         layersRef.current = layers
 
@@ -312,11 +397,11 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
-    // jobId only: this scene is built once per preview open, not re-run on
-    // the slider/mode toggle's own state changes (handled imperatively via
-    // the refs above).
+    // jobId + beltTransform only: this scene is built once per preview open
+    // (or belt-transform change), not re-run on the slider/mode toggle's own
+    // state changes (handled imperatively via the refs above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId])
+  }, [jobId, beltTransform])
 
   // Rebuild the displayed object when the render mode is toggled, once a
   // scene actually exists to rebuild into.
@@ -329,11 +414,19 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, onBackToModel }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderMode, status])
 
-  // Cheap layer scrubbing: adjust the existing object's visible range
-  // instead of re-parsing/rebuilding the scene on every slider tick.
+  // Layer scrubbing. Non-belt: cheap -- adjust the existing (full-history)
+  // object's visible range instead of re-parsing/rebuilding on every slider
+  // tick. Belt: the window's *start* also moves as the slider moves (unlike
+  // non-belt, which always starts at 0), so this needs a real rebuild each
+  // tick -- bounded by BELT_WINDOW_SPAN_MM rather than total print length,
+  // so it stays comparable in cost to the mode-toggle rebuild above.
   useEffect(() => {
-    applyVisibleRef.current?.(visibleLayers)
-  }, [visibleLayers])
+    if (beltTransform) {
+      if (status === 'ready') rebuildRef.current?.(renderModeRef.current, visibleLayers)
+    } else {
+      applyVisibleRef.current?.(visibleLayers)
+    }
+  }, [visibleLayers, beltTransform, status])
 
   return (
     <>

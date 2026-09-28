@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import { parseBeltTransform, type BeltTransform } from './beltTransform'
 
 export interface Dimensions {
   x: number
@@ -12,12 +13,45 @@ export interface BedSize {
   width: number // X, mm
   depth: number // Y, mm
   height: number // Z (printable_height), mm
+  // True for a belt printer's own (deliberately very long) bed, where Y
+  // represents distance traveled along the belt rather than a normal
+  // bounded dimension -- see `belt_printer_infinite_y` in the machine
+  // profile. Drives the Viewer's default object placement below instead of
+  // the usual dead-plate-center placement.
+  beltPrinterInfiniteY: boolean
+  // Non-null only for an actual belt printer with a real machine-frame tilt
+  // (belt_printer + belt_slice_rotation != none/z) -- see beltTransform.ts.
+  // GcodeViewer uses this to un-shear raw G-code coordinates back into the
+  // object's upright shape; null means "render G-code as-is", same as any
+  // normal printer.
+  beltTransform: BeltTransform | null
 }
 
 // A margin below 1.0: an exact-fit scale can still fail slicer validation
 // for sitting flush against the bed edge, and it looks uncomfortably tight
 // in the viewer.
 const FIT_MARGIN = 0.97
+
+// How far from the belt's own Y origin (the end where the prime lines /
+// purge blob live, see machine_start_gcode) a belt printer's slicer engine
+// places a fresh object by default -- vendor/orcaslicer/src/OrcaSlicer.cpp's
+// arrange-cap and `center_instances_around_point` recenter both use this
+// exact same 15mm margin, close enough that the object actually touches the
+// prime lines (confirmed: this is what a real belt slice with no support
+// enabled lands at). Kept in sync manually since the preview re-derives this
+// position on the client rather than asking the slicer for it.
+export const BELT_PRINTER_PREVIEW_MARGIN_MM = 15
+// Used instead of the above whenever support material is enabled: support
+// (a slicing-time computation, after the object's own placement is decided)
+// can extend further toward the belt origin than the bare mesh does --
+// confirmed on a real belt slice with supports enabled overshooting a 15mm
+// placement by ~11.6mm, past the belt's own origin. 30mm leaves roughly 2x
+// that overshoot as headroom. Conditioned on enable_support specifically
+// (matching OrcaSlicer.cpp) rather than applied unconditionally, since a
+// flat 30mm regressed adhesion for every non-support slice -- confirmed the
+// object/brim no longer visibly reached the prime lines once it applied
+// regardless of settings.
+export const BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT = 30
 
 /**
  * Printer machine profiles carry their bed as `printable_area` (a polygon of
@@ -42,12 +76,22 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
 
   const xs = points.map((p) => p[0])
   const ys = points.map((p) => p[1])
-  const width = Math.max(...xs) - Math.min(...xs)
-  const depth = Math.max(...ys) - Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  const width = maxX - Math.min(...xs)
+  const depth = maxY - Math.min(...ys)
   const height = Number(heightRaw)
 
   if (!(width > 0) || !(depth > 0) || !Number.isFinite(height) || !(height > 0)) return null
-  return { width, depth, height }
+
+  const beltFlag = profileData.belt_printer_infinite_y
+  const beltPrinterInfiniteY = beltFlag === '1' || beltFlag === true || beltFlag === 1
+  // set_build_volume_max (GCode.cpp) uses the bed polygon's own max X/Y plus
+  // printable_height -- matched here so a "rev_*" gcode_remap axis inverts
+  // against the same reference the slicer itself used.
+  const beltTransform = parseBeltTransform(profileData, [maxX, maxY, height])
+
+  return { width, depth, height, beltPrinterInfiniteY, beltTransform }
 }
 
 /**

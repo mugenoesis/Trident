@@ -36,6 +36,7 @@ import {
   parseBedSize,
   scaleStlFile,
 } from './dimensions'
+import type { BeltTransform } from './beltTransform'
 import AdvancedSettings from './components/AdvancedSettings'
 import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
@@ -399,6 +400,20 @@ function MainApp({
   const [printersLoaded, setPrintersLoaded] = useState(false)
   const pendingLastMaterialId = useRef(authStatus.last_material_id)
   const pendingLastSettingsProfileId = useRef(authStatus.last_settings_profile_id)
+  // Set once (never reset) the first time a real saved settings profile's
+  // values are actually applied -- guards the initial-catalog-load effect
+  // below against a genuine race: that effect and the printer/settings-
+  // profile restoration chain (auth status -> printers -> saved printer's
+  // settings profiles -> apply) both kick off independently from mount, in
+  // no guaranteed order. Confirmed via real testing: the settings-profile
+  // dropdown correctly showed the restored profile's name, but its actual
+  // quick-setting values (e.g. enable_support) were silently reset to bare
+  // schema defaults -- the catalog-load effect's own setQuickSettings had
+  // resolved AFTER the profile's real values were already applied, clobbering
+  // them. This ref makes the outcome correct regardless of which finishes
+  // first, unlike checking pendingLastSettingsProfileId alone (which is only
+  // reliable for one specific ordering).
+  const appliedSettingsProfileRef = useRef(false)
   // Lets handleSlice grab a snapshot of the 3D preview at the moment
   // slicing starts, to embed into the gcode and this app's own job
   // thumbnail (see api/app/gcode_thumbnail.py) -- the engine itself never
@@ -418,7 +433,15 @@ function MainApp({
   // material to several, not on every subsequent slot added/removed while
   // already multi-material -- the checkbox in QuickSettings stays a normal
   // toggle either way, this is just the starting point.
-  const hasMultipleFilamentSlots = filamentSlots.length > 1
+  //
+  // Never for a belt printer: fdm_belt_common.json sets
+  // purge_in_prime_tower=0 and belt mode has its own dedicated
+  // purge-into-object system (BeltPurge.cpp/Print::has_belt_purge_tower(),
+  // replacing the classic wipe tower) that a forced classic prime tower
+  // would conflict with. Multi-extruder belt printers are essentially
+  // nonexistent in practice, so this only ever skips a default that would
+  // otherwise never even apply.
+  const hasMultipleFilamentSlots = filamentSlots.length > 1 && !bedSize?.beltPrinterInfiniteY
   useEffect(() => {
     if (hasMultipleFilamentSlots) {
       setQuickSettings((prev) => (prev.enable_prime_tower === '1' ? prev : { ...prev, enable_prime_tower: '1' }))
@@ -441,6 +464,38 @@ function MainApp({
   const [viewMode, setViewMode] = useState<'model' | 'gcode'>('model')
 
   const showGcode = viewMode === 'gcode' && viewedJobId !== null
+
+  // The gcode viewer's belt back-transform (see beltTransform.ts) must match
+  // whichever printer THIS job was actually sliced with, not whatever the
+  // printer dropdown currently has selected (`bedSize` below) -- those two
+  // can disagree the moment a job from history is reopened, or the page
+  // reloads, without reselecting the same printer. Resolved independently
+  // here from the job's own recorded printer_profile so the viewer is
+  // correct regardless of ambient UI selection state.
+  const [viewedJobBeltTransform, setViewedJobBeltTransform] = useState<BeltTransform | null>(null)
+  useEffect(() => {
+    const job = viewedJobId ? ([currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null) : null
+    if (!job) {
+      setViewedJobBeltTransform(null)
+      return
+    }
+    let cancelled = false
+    listProfiles()
+      .then((profiles) => {
+        const match = profiles.find((p) => p.kind === 'machine' && p.name === job.printer_profile)
+        return match ? getProfileDetail(match.vendor, 'machine', match.name) : null
+      })
+      .then((detail) => {
+        if (cancelled) return
+        setViewedJobBeltTransform(detail ? (parseBedSize(detail.data)?.beltTransform ?? null) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setViewedJobBeltTransform(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [viewedJobId, currentJob, history])
 
   const viewJobGcode = useCallback((jobId: string) => {
     setViewedJobId(jobId)
@@ -513,7 +568,12 @@ function MainApp({
       .then(([profileList, settingsSchema]) => {
         setProfiles(profileList)
         setSchema(settingsSchema.settings)
-        setQuickSettings(defaultQuickSettings(settingsSchema.settings))
+        // Skip if a real saved settings profile's values already won the
+        // race (see appliedSettingsProfileRef above) -- this would otherwise
+        // unconditionally stomp them back to bare defaults.
+        if (!appliedSettingsProfileRef.current) {
+          setQuickSettings(defaultQuickSettings(settingsSchema.settings))
+        }
       })
       .catch((err: Error) => setCatalogError(err.message))
 
@@ -576,6 +636,7 @@ function MainApp({
   }, [])
 
   const applySettingsProfile = useCallback((profile: SettingsProfileRecord) => {
+    appliedSettingsProfileRef.current = true
     setSelectedSettingsProfileId(profile.id)
     setQuickSettings((prev) => ({ ...prev, ...profile.quick_settings }))
     setAdvancedOverrides(profile.advanced_overrides)
@@ -897,7 +958,18 @@ function MainApp({
     )
     setBedSize(
       printer.bed_width != null && printer.bed_depth != null && printer.bed_height != null
-        ? { width: printer.bed_width, depth: printer.bed_depth, height: printer.bed_height }
+        ? {
+            width: printer.bed_width,
+            depth: printer.bed_depth,
+            height: printer.bed_height,
+            // Backfilled a moment later once the machine profile itself
+            // loads below (a saved printer record doesn't snapshot these) --
+            // false/null here just means the belt-specific placement in
+            // Viewer and the GcodeViewer back-transform briefly fall back to
+            // their non-belt defaults until then.
+            beltPrinterInfiniteY: false,
+            beltTransform: null,
+          }
         : null,
     )
     setScaleToastDismissed(false)
@@ -926,6 +998,11 @@ function MainApp({
             nozzleType: types[i] ?? types[types.length - 1] ?? slot.nozzleType,
           })),
         )
+        // Re-derive from the actual profile now that it's loaded, so a
+        // belt printer's beltPrinterInfiniteY flag (not part of the saved
+        // printer record itself) reaches the Viewer too.
+        const parsedBed = parseBedSize(detail.data)
+        if (parsedBed) setBedSize(parsedBed)
       })
       .catch(() => {
         setNozzleDiameters([])
@@ -1289,7 +1366,13 @@ function MainApp({
     // Only meaningful (and only worth sending) when support is actually on.
     if (quickSettings.enable_support === '1') {
       overrides.support_type = quickSettings.support_type
-      overrides.support_buildplate_only = quickSettings.support_buildplate_only
+      // NOTE: the real FDM option is "support_on_build_plate_only" --
+      // "support_buildplate_only" is a same-named-looking but unrelated SLA
+      // option (SLAPrintObjectConfig, PrintConfig.cpp) that silently no-ops
+      // for every FDM print. Confirmed via direct API test: overriding the
+      // wrong key left filament_used_g unchanged, while the correct key
+      // changed it (19.52g -> 17.24g on a support-enabled Benchy).
+      overrides.support_on_build_plate_only = quickSettings.support_buildplate_only
     }
     // Nozzle diameter & type: a genuine multi-head printer (isMultiHeadPrinter)
     // can have a different nozzle installed per head, so each slot carries
@@ -1436,6 +1519,7 @@ function MainApp({
                 filamentUsedGrams={filamentGramsOf(
                   [currentJob, ...history].find((j) => j?.id === viewedJobId) ?? null,
                 )}
+                beltTransform={viewedJobBeltTransform}
                 onBackToModel={backToModelView}
               />
               {selectedPrinter?.print_host && (
@@ -1461,6 +1545,7 @@ function MainApp({
                 bedSize={bedSize}
                 colorTree={renderColorTree}
                 filamentUsedGrams={filamentGramsOf(currentJob)}
+                supportEnabled={quickSettings.enable_support === '1'}
               />
               {dimensions && (
                 <>
