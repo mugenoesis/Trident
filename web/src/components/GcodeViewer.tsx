@@ -188,10 +188,22 @@ export default function GcodeViewer({
       activeObject = null
     }
 
+    // How close a segment has to be to the belt surface (in the upright,
+    // back-transformed frame) to get the "grounded" highlight below --
+    // generous enough to cover first-layer squish/a tree support trunk's
+    // base without also lighting up a support tip or wall that's merely
+    // low in the object's own local geometry.
+    const GROUNDED_HEIGHT_MM = 1.0
+    const groundedColor = new THREE.Color(0xffffff)
+
     const buildLines = (layers: GcodeLayer[]) => {
       const positions: number[] = []
       const colors: number[] = []
       const ends: number[] = []
+      // groundZ/center are only meaningful once real bounds have been
+      // computed (see the fetch callback below) -- fine here since
+      // buildLines is only ever invoked afterwards, via rebuild().
+      const beltRawZ = groundZ + center.z
       layers.forEach((layer, layerIndex) => {
         const color = new THREE.Color().setHSL(
           0.72 - 0.72 * (layerIndex / Math.max(1, layers.length - 1)),
@@ -200,7 +212,17 @@ export default function GcodeViewer({
         )
         for (const seg of layer.segments) {
           positions.push(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
-          colors.push(color.r, color.g, color.b, color.r, color.g, color.b)
+          // Highlight segments that actually touch the belt in white,
+          // regardless of layer color -- on a belt printer the purge line
+          // and a support trunk's base can be tens of mm apart along the
+          // belt-travel axis (by design: the purge happens once, early,
+          // then the belt keeps moving), which reads as "disconnected" in
+          // the normal per-layer rainbow coloring even though both are
+          // correctly anchored to the belt. This makes that anchoring
+          // visible directly instead of requiring a gcode-math explanation.
+          const c =
+            beltTransform && Math.min(seg.z1, seg.z2) - beltRawZ < GROUNDED_HEIGHT_MM ? groundedColor : color
+          colors.push(c.r, c.g, c.b, c.r, c.g, c.b)
         }
         ends.push(positions.length / 3)
       })
@@ -433,6 +455,11 @@ export default function GcodeViewer({
         )}
         {filamentUsedGrams != null && (
           <div className="filament-badge">{filamentUsedGrams.toFixed(2)} g filament</div>
+        )}
+        {status === 'ready' && beltTransform && renderMode === 'lines' && (
+          <div className="belt-contact-legend">
+            <span className="belt-contact-swatch" /> touching the belt
+          </div>
         )}
       </div>
 

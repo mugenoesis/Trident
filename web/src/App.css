@@ -179,6 +179,35 @@
   }
 }
 
+/* Bottom-left, clear of the filament badge (top-left) and mode toggle
+   (top-right) -- explains the white "touching the belt" highlight
+   GcodeViewer.tsx applies in Lines mode for a belt printer, so a purge
+   line and a support trunk that sit far apart along the belt-travel axis
+   (correct, by design) don't read as disconnected just because they're
+   different colors under the normal per-layer rainbow. */
+.belt-contact-legend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(20, 23, 27, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text);
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.belt-contact-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
 .field-group {
   display: flex;
   flex-direction: column;
