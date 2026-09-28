@@ -102,6 +102,19 @@ class ProfileCatalog:
                 continue
 
             merged = self._resolve_merged(vendor, kind, name, data)
+            # Drop the leaf's own "inherits" pointer from the *stored* result --
+            # every ancestor's keys are already folded in above, so it's stale
+            # metadata at this point, not a pending resolution. Left in place,
+            # OrcaSlicer.cpp's newer CLI preset loader (PresetBundle::
+            # resolve_preset_config, "resolve inherited presets through vendor
+            # manifests") sees a non-empty "inherits" on a `--load-settings`
+            # file and tries to re-resolve it by walking for a sibling vendor
+            # manifest next to the file -- which our temp resolved-profile
+            # directory (cli_runner.py's _write_resolved_profile) never has,
+            # failing every single slice with "Preset was not found in the
+            # loaded bundle" regardless of vendor or belt/non-belt. Confirmed
+            # against a real build.
+            merged.pop("inherits", None)
             detail = ProfileDetail(
                 vendor=vendor,
                 kind=kind,
