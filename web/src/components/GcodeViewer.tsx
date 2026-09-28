@@ -145,6 +145,20 @@ export default function GcodeViewer({
     ground.visible = false
     scene.add(ground)
 
+    // Belt-plane reference grid, shown only in "lines" mode (the opaque
+    // `ground` mesh above already anchors solid mode). Without this, a belt
+    // job's purge lines and first-layer support -- which really do sit
+    // within ~1mm of the belt, confirmed by back-transforming the raw
+    // gcode -- have no visual reference plane to be flush against, so a
+    // camera-perspective effect (two coplanar lines at very different belt-
+    // travel depths project to different screen positions) reads as one
+    // line floating at a diagonal above the plate instead of two flat lines
+    // at different points along the belt.
+    let beltGrid = new THREE.GridHelper(1, 1, 0x6b7280, 0x454b54)
+    beltGrid.rotation.x = Math.PI / 2
+    beltGrid.visible = false
+    scene.add(beltGrid)
+
     let animationId = 0
     const animate = () => {
       animationId = requestAnimationFrame(animate)
@@ -277,6 +291,7 @@ export default function GcodeViewer({
       activeObject.position.set(-center.x, -center.y, -center.z)
       scene.add(activeObject)
       ground.visible = mode === 'solid'
+      beltGrid.visible = mode === 'lines'
       applyVisible(visible)
     }
     rebuildRef.current = rebuild
@@ -309,6 +324,15 @@ export default function GcodeViewer({
         ground.geometry.dispose()
         ground.geometry = new THREE.PlaneGeometry(planeSize, planeSize)
         ground.position.set(0, 0, groundZ)
+
+        scene.remove(beltGrid)
+        beltGrid.geometry.dispose()
+        ;(beltGrid.material as THREE.Material).dispose()
+        beltGrid = new THREE.GridHelper(planeSize, 20, 0x6b7280, 0x454b54)
+        beltGrid.rotation.x = Math.PI / 2
+        beltGrid.position.set(0, 0, groundZ)
+        beltGrid.visible = renderModeRef.current === 'lines'
+        scene.add(beltGrid)
 
         const radius = size.length() / 2 || 1
         // Same X/Y sign as the camera (set just below) so the key light
@@ -353,6 +377,8 @@ export default function GcodeViewer({
       disposeActive()
       ground.geometry.dispose()
       ;(ground.material as THREE.Material).dispose()
+      beltGrid.geometry.dispose()
+      ;(beltGrid.material as THREE.Material).dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
