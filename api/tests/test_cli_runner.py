@@ -97,6 +97,60 @@ def test_run_slice_no_plate_index_slices_all_plates(tmp_path: Path, monkeypatch,
     assert (output_dir / "slice_arg.txt").read_text() == "0"
 
 
+def test_run_slice_3mf_forces_arrange(tmp_path: Path, monkeypatch, data_dirs):
+    # A .3mf project bakes in the bed position(s) it was arranged at on
+    # whatever printer authored it. Re-slicing on a different printer
+    # profile (routine here, since one project can target many machines)
+    # gives no guarantee that position is valid for the new printer's bed --
+    # confirmed against a real project authored for a "Bambu Lab A1 mini"
+    # whose embedded object position sat outside an IdeaFormer IR3 V2's much
+    # smaller belt-shaped usable area, failing with "One of the plate is
+    # empty or has no object fully inside it" even though the object itself
+    # was perfectly printable once actually positioned within bounds.
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "project.3mf"
+    model_path.write_text("fake")
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "arrange_arg.txt").read_text() == "1"
+
+
+def test_run_slice_stl_does_not_force_arrange(tmp_path: Path, monkeypatch, data_dirs):
+    # A bare .stl/.obj carries no baked-in bed position to distrust, so
+    # there's nothing here for --arrange to correct -- leave the slicer's
+    # own default placement behavior alone.
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "cube.stl"
+    model_path.write_text("fake")
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "arrange_arg.txt").read_text() == ""
+
+
 def test_run_slice_unknown_profile_raises(tmp_path: Path, data_dirs):
     model_path = tmp_path / "cube.stl"
     model_path.write_text("fake")

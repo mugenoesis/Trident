@@ -173,6 +173,21 @@ def run_slice(
     ]
     if filament_paths:
         cmd += ["--load-filaments", ";".join(filament_paths)]
+    if model_path.suffix.lower() == ".3mf":
+        # A .3mf project bakes in the exact bed position(s) it was arranged
+        # at on whatever printer authored it -- fine when re-sliced on that
+        # same printer, but there's no guarantee here: a project built for a
+        # large rectangular bed (e.g. a Bambu machine) can embed a position
+        # nowhere near the valid area of a *different* printer profile
+        # selected for this job (confirmed: a dragon-toy 3mf authored for a
+        # "Bambu Lab A1 mini" embedded object position X=90,Y=90 -- roughly
+        # that bed's center -- which sits outside the IdeaFormer IR3 V2's
+        # much smaller, belt-shaped usable area, failing with "One of the
+        # plate is empty or has no object fully inside it" even though the
+        # object itself is perfectly printable once positioned correctly).
+        # Force a re-arrange so the object lands somewhere actually valid
+        # for the printer this job is actually using.
+        cmd.append("--arrange=1")
     for key, value in setting_overrides.items():
         # ConfigOptionDef::cli_args() (libslic3r/Config.cpp) derives the CLI flag
         # from the config key by replacing underscores with dashes, unless the

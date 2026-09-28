@@ -17,6 +17,7 @@ parser.add_argument("--outputdir", required=True)
 parser.add_argument("--pipe", required=True)
 parser.add_argument("--load-settings")
 parser.add_argument("--load-filaments")
+parser.add_argument("--arrange")
 parser.add_argument("model", nargs="?")
 args, _unknown = parser.parse_known_args()
 
@@ -38,5 +39,6 @@ outputdir.mkdir(parents=True, exist_ok=True)
 # without needing to mock subprocess.run (which would leave the FIFO
 # reader thread blocked forever waiting for a writer that never connects).
 (outputdir / "slice_arg.txt").write_text(args.slice or "")
+(outputdir / "arrange_arg.txt").write_text(args.arrange or "")
 
 sys.exit(0)
