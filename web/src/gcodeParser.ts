@@ -21,15 +21,6 @@ export interface GcodeLayer {
   // stand-in) is no longer monotonic once each nominal slicing layer maps to
   // a diagonal, not horizontal, plane in the object's upright shape.
   height?: number
-  // Raw (pre-back-transform) G-code Z at the start of this layer -- for a
-  // belt printer this is literally the belt conveyor's own absolute motor
-  // position (confirmed against a real IdeaFormer IR3 V2 machine_start_gcode,
-  // which comments its own Z moves "belt advance Nmm"), so it only ever
-  // increases over the course of a print. GcodeViewer uses it to window the
-  // belt-mode preview to "recently printed" layers instead of full history --
-  // meaningless (and unused) for a non-belt printer, where raw Z is just
-  // vertical height and the existing full-history render is already correct.
-  beltZ?: number
 }
 
 export interface ParsedGcode {
@@ -92,10 +83,7 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
     // into one giant "layer".
     const isLayerChange = trimmed.startsWith(';LAYER_CHANGE')
     if (isLayerChange || !currentLayer) {
-      // `z` still holds the previous layer's ending position here (this
-      // layer's own first move hasn't been parsed yet) -- close enough as
-      // "this layer's starting belt position" for windowing purposes.
-      currentLayer = { segments: [], beltZ: z }
+      currentLayer = { segments: [] }
       layers.push(currentLayer)
       if (isLayerChange) continue
     }

@@ -43,28 +43,19 @@ type RenderMode = 'solid' | 'lines'
 // a visual stand-in, not a dimensionally exact value.
 const EXTRUSION_WIDTH_MM = 0.42
 
-// A belt printer's full-history render is actively misleading, not just
-// cluttered: consecutive slicing layers are diagonal planes through the
-// object's upright shape (see averageLayerZ above), so structure printed
-// long ago (e.g. an early support column, already fully consumed) can end
-// up rendered right next to -- but visibly disconnected from -- whatever
-// the belt has since carried into view, even though the physical print was
-// never actually discontinuous. Confirmed against a real IdeaFormer IR3 V2
-// job: an early support column anchored to the belt for ~35 layers, fully
-// finished by layer 539, still appeared as a stray disconnected line at
-// layer 656/755 purely because "Lines"/"Solid" render everything from
-// layer 0 forward.
-//
-// Windowing by trailing G-code Z (GcodeLayer.beltZ, the belt's own absolute
-// motor position -- monotonic by construction, confirmed against that same
-// job's full 754-layer G-code) instead of by layer index keeps this
-// invariant to layer height/count, unlike a fixed trailing-layer count
-// would be. There's no config value for how much belt length is physically
-// enclosed within the machine's frame (that's a hardware constant the
-// slicer doesn't model), so this is a tuned UX default, not a physical
-// simulation of the real machine -- adjust if it hides too much or too
-// little in practice.
-const BELT_WINDOW_SPAN_MM = 60
+// REVERTED (see git history for the attempt): a belt printer's full-history
+// render can look like an early support column is "disconnected" from later
+// structure once consecutive slicing layers sweep past it -- but windowing
+// by a fixed trailing G-code-Z span was WORSE, not better: a support tower's
+// own height can climb tens of mm within the first few physical layers (a
+// 45-degree diagonal slice through a fast-rising structure), so a 60mm
+// window dropped genuinely current, still-printing geometry -- confirmed on
+// a real IdeaFormer IR3 V2 job where the viewer showed the purge line and
+// support as already disconnected by layer 4 of 260, while the raw G-code
+// proves the support's own extrusion never lifts off the belt (constant
+// ~0.14mm minimum height from layer 0 onward). Full cumulative history is
+// occasionally confusing to look at, but never wrong; a "recent window" that
+// silently deletes real toolpath is a strictly worse trade.
 
 // Real toolpath preview, not just "here's the file": fetches the sliced
 // G-code, parses out the extruding moves (gcodeParser.ts), and renders them
@@ -278,47 +269,15 @@ export default function GcodeViewer({
     }
     applyVisibleRef.current = applyVisible
 
-    // Belt-mode only: the first layer index (>= the trailing window's start)
-    // to include when showing up through `visible`. Layer index, not just
-    // beltZ, is returned so callers can slice layersRef.current directly.
-    // Linear scan backward from `visible` -- bounded by the window itself
-    // (beltZ is monotonic, confirmed in gcodeParser.ts), not by total layer
-    // count, so this stays cheap even for a long print.
-    const beltWindowStart = (visible: number): number => {
-      const layers = layersRef.current
-      const endIdx = Math.min(visible, layers.length) - 1
-      if (endIdx < 0) return 0
-      const currentBeltZ = layers[endIdx].beltZ
-      if (currentBeltZ === undefined) return 0
-      let start = endIdx
-      while (start > 0) {
-        const prevBeltZ = layers[start - 1].beltZ
-        if (prevBeltZ === undefined || currentBeltZ - prevBeltZ > BELT_WINDOW_SPAN_MM) break
-        start--
-      }
-      return start
-    }
-
     const rebuild = (mode: RenderMode, visible: number) => {
       disposeActive()
-      const layers = layersRef.current
-      // Non-belt: unchanged -- build the full cumulative history once, trim
-      // to `visible` via drawRange/count below (cheap to re-trim on every
-      // slider tick without a rebuild, see the scrubbing effect below).
-      // Belt: build only the trailing window ending at `visible`, so the
-      // built object already *is* exactly what should show, with nothing
-      // stale from earlier in the print behind it.
-      const buildLayers = beltTransform ? layers.slice(beltWindowStart(visible), Math.min(visible, layers.length)) : layers
-      const built = mode === 'lines' ? buildLines(buildLayers) : buildSolid(buildLayers)
+      const built = mode === 'lines' ? buildLines(layersRef.current) : buildSolid(layersRef.current)
       activeObject = built.object
       layerEnds = built.layerEnds
       activeObject.position.set(-center.x, -center.y, -center.z)
       scene.add(activeObject)
       ground.visible = mode === 'solid'
-      // For belt, buildLayers already ends exactly at `visible` -- passing
-      // its own length here shows all of it (layerEnds has exactly that
-      // many entries), rather than re-trimming against the full-file index.
-      applyVisible(beltTransform ? buildLayers.length : visible)
+      applyVisible(visible)
     }
     rebuildRef.current = rebuild
 
@@ -414,19 +373,11 @@ export default function GcodeViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderMode, status])
 
-  // Layer scrubbing. Non-belt: cheap -- adjust the existing (full-history)
-  // object's visible range instead of re-parsing/rebuilding on every slider
-  // tick. Belt: the window's *start* also moves as the slider moves (unlike
-  // non-belt, which always starts at 0), so this needs a real rebuild each
-  // tick -- bounded by BELT_WINDOW_SPAN_MM rather than total print length,
-  // so it stays comparable in cost to the mode-toggle rebuild above.
+  // Cheap layer scrubbing: adjust the existing object's visible range
+  // instead of re-parsing/rebuilding the scene on every slider tick.
   useEffect(() => {
-    if (beltTransform) {
-      if (status === 'ready') rebuildRef.current?.(renderModeRef.current, visibleLayers)
-    } else {
-      applyVisibleRef.current?.(visibleLayers)
-    }
-  }, [visibleLayers, beltTransform, status])
+    applyVisibleRef.current?.(visibleLayers)
+  }, [visibleLayers])
 
   return (
     <>
