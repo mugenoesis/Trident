@@ -7,6 +7,14 @@ export interface GcodeSegment {
   x2: number
   y2: number
   z2: number
+  // From the most recent `;TYPE:` comment (OrcaSlicer emits one per feature
+  // section, e.g. "Support material", "Support material interface", "Outer
+  // wall") -- true for any support-related feature. Used to color support
+  // distinctly from the object itself in GcodeViewer, since the two can
+  // otherwise be hard to tell apart at a glance (same color, and on a belt
+  // printer a support trunk's base can sit far from the object along the
+  // belt-travel axis by design).
+  isSupport: boolean
 }
 
 export interface GcodeLayer {
@@ -82,6 +90,13 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
   let xOffset = 0
   let yOffset = 0
   let zOffset = 0
+  // Sticks across layer boundaries (OrcaSlicer only re-emits ";TYPE:" when
+  // the feature actually changes, not at the start of every layer) --
+  // resetting it on ";LAYER_CHANGE" would silently misclassify every
+  // segment at the start of a layer that continues the previous layer's
+  // final feature (e.g. a support trunk spanning several layers) as "not
+  // support" until the next explicit ";TYPE:" comment.
+  let isSupportType = false
 
   const toRenderSpace = (px: number, py: number, pz: number) =>
     beltTransform ? beltBackTransformPoint(beltTransform, px, py, pz) : { x: px, y: py, z: pz }
@@ -103,6 +118,11 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
     if (trimmed.startsWith(';HEIGHT:') && currentLayer.height === undefined) {
       const parsed = Number.parseFloat(trimmed.slice(';HEIGHT:'.length))
       if (Number.isFinite(parsed)) currentLayer.height = parsed
+      continue
+    }
+
+    if (trimmed.startsWith(';TYPE:')) {
+      isSupportType = /support/i.test(trimmed.slice(';TYPE:'.length))
       continue
     }
 
@@ -157,7 +177,15 @@ export function parseGcode(text: string, beltTransform?: BeltTransform | null): 
     if (extruding) {
       const p1 = toRenderSpace(x + xOffset, y + yOffset, z + zOffset)
       const p2 = toRenderSpace(nx + xOffset, ny + yOffset, nz + zOffset)
-      currentLayer.segments.push({ x1: p1.x, y1: p1.y, z1: p1.z, x2: p2.x, y2: p2.y, z2: p2.z })
+      currentLayer.segments.push({
+        x1: p1.x,
+        y1: p1.y,
+        z1: p1.z,
+        x2: p2.x,
+        y2: p2.y,
+        z2: p2.z,
+        isSupport: isSupportType,
+      })
     }
 
     x = nx

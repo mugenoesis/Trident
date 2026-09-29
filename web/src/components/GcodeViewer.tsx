@@ -79,6 +79,7 @@ export default function GcodeViewer({
   const [layerCount, setLayerCount] = useState(0)
   const [visibleLayers, setVisibleLayers] = useState(0)
   const [renderMode, setRenderMode] = useState<RenderMode>('lines')
+  const [hasSupport, setHasSupport] = useState(false)
 
   const layersRef = useRef<GcodeLayer[]>([])
   const renderModeRef = useRef<RenderMode>(renderMode)
@@ -195,6 +196,14 @@ export default function GcodeViewer({
     // low in the object's own local geometry.
     const GROUNDED_HEIGHT_MM = 1.0
     const groundedColor = new THREE.Color(0xffffff)
+    // Distinct from both the per-layer rainbow (which only ever spans blue
+    // through red, see the hue formula below) and the orange solid-mode
+    // object color, so support reads as a consistent, recognizable color
+    // regardless of which layer it's on -- makes support/object connectivity
+    // (does a tree actually reach the belt, does a branch actually merge
+    // into the object) readable at a glance instead of requiring a
+    // gcode-math explanation.
+    const supportColor = new THREE.Color(0xff2fd6)
 
     const buildLines = (layers: GcodeLayer[]) => {
       const positions: number[] = []
@@ -205,7 +214,7 @@ export default function GcodeViewer({
       // buildLines is only ever invoked afterwards, via rebuild().
       const beltRawZ = groundZ + center.z
       layers.forEach((layer, layerIndex) => {
-        const color = new THREE.Color().setHSL(
+        const layerColor = new THREE.Color().setHSL(
           0.72 - 0.72 * (layerIndex / Math.max(1, layers.length - 1)),
           0.7,
           0.55,
@@ -213,15 +222,15 @@ export default function GcodeViewer({
         for (const seg of layer.segments) {
           positions.push(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2)
           // Highlight segments that actually touch the belt in white,
-          // regardless of layer color -- on a belt printer the purge line
-          // and a support trunk's base can be tens of mm apart along the
-          // belt-travel axis (by design: the purge happens once, early,
+          // regardless of layer/support color -- on a belt printer the purge
+          // line and a support trunk's base can be tens of mm apart along
+          // the belt-travel axis (by design: the purge happens once, early,
           // then the belt keeps moving), which reads as "disconnected" in
           // the normal per-layer rainbow coloring even though both are
           // correctly anchored to the belt. This makes that anchoring
           // visible directly instead of requiring a gcode-math explanation.
-          const c =
-            beltTransform && Math.min(seg.z1, seg.z2) - beltRawZ < GROUNDED_HEIGHT_MM ? groundedColor : color
+          const grounded = beltTransform && Math.min(seg.z1, seg.z2) - beltRawZ < GROUNDED_HEIGHT_MM
+          const c = grounded ? groundedColor : seg.isSupport ? supportColor : layerColor
           colors.push(c.r, c.g, c.b, c.r, c.g, c.b)
         }
         ends.push(positions.length / 3)
@@ -264,10 +273,16 @@ export default function GcodeViewer({
       return length
     }
 
+    // White base color: InstancedMesh multiplies each instance's own color
+    // (set below via setColorAt) into the material color, so a non-white
+    // base would tint every instance rather than letting object/support
+    // show their true, distinct colors.
+    const objectColor = new THREE.Color(0xff6f2c)
+
     const buildSolid = (layers: GcodeLayer[]) => {
       const total = layers.reduce((n, layer) => n + layer.segments.length, 0)
       const geometry = new THREE.BoxGeometry(1, 1, 1)
-      const material = new THREE.MeshStandardMaterial({ color: 0xff6f2c, roughness: 0.65, metalness: 0.05 })
+      const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, metalness: 0.05 })
       const object = new THREE.InstancedMesh(geometry, material, Math.max(total, 1))
       object.castShadow = true
       object.receiveShadow = true
@@ -285,12 +300,15 @@ export default function GcodeViewer({
           if (length <= 0) continue
           dummy.scale.set(length, EXTRUSION_WIDTH_MM, layerHeight)
           dummy.updateMatrix()
-          object.setMatrixAt(index++, dummy.matrix)
+          object.setMatrixAt(index, dummy.matrix)
+          object.setColorAt(index, seg.isSupport ? supportColor : objectColor)
+          index++
         }
         ends.push(index)
       })
       object.count = index
       object.instanceMatrix.needsUpdate = true
+      if (object.instanceColor) object.instanceColor.needsUpdate = true
       return { object, layerEnds: ends }
     }
 
@@ -328,6 +346,7 @@ export default function GcodeViewer({
         const { layers } = parseGcode(text, beltTransform)
         if (layers.length === 0) throw new Error('No extrusion moves found in this G-code')
         layersRef.current = layers
+        setHasSupport(layers.some((layer) => layer.segments.some((seg) => seg.isSupport)))
 
         const bounds = new THREE.Box3()
         const point = new THREE.Vector3()
@@ -456,9 +475,18 @@ export default function GcodeViewer({
         {filamentUsedGrams != null && (
           <div className="filament-badge">{filamentUsedGrams.toFixed(2)} g filament</div>
         )}
-        {status === 'ready' && beltTransform && renderMode === 'lines' && (
-          <div className="belt-contact-legend">
-            <span className="belt-contact-swatch" /> touching the belt
+        {status === 'ready' && (hasSupport || (beltTransform && renderMode === 'lines')) && (
+          <div className="viewer-legends">
+            {hasSupport && (
+              <div className="viewer-legend">
+                <span className="viewer-legend-swatch support-swatch" /> support
+              </div>
+            )}
+            {beltTransform && renderMode === 'lines' && (
+              <div className="viewer-legend">
+                <span className="viewer-legend-swatch belt-contact-swatch" /> touching the belt
+              </div>
+            )}
           </div>
         )}
       </div>
