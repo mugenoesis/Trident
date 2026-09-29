@@ -10,6 +10,19 @@ import json
 import pathlib
 import sys
 
+if "--help-json" in sys.argv:
+    # cli_runner.fetch_help_json()'s target -- a tiny slice of real
+    # ConfigDef metadata (see PrintConfig.cpp) covering exactly the keys
+    # test_cli_runner.py's out-of-range-override tests need, min/max
+    # included so _option_bounds() has something to work with. Handled
+    # before the --outputdir/--pipe-requiring parser below since a real
+    # `--help-json` invocation never passes those.
+    print(json.dumps([
+        {"key": "raft_first_layer_expansion", "type": "float", "min": 0, "default": "2"},
+        {"key": "tree_support_wall_count", "type": "int", "min": 0, "max": 2, "default": "0"},
+    ]))
+    sys.exit(0)
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--slice")
 parser.add_argument("--datadir")
@@ -18,6 +31,8 @@ parser.add_argument("--pipe", required=True)
 parser.add_argument("--load-settings")
 parser.add_argument("--load-filaments")
 parser.add_argument("--arrange")
+parser.add_argument("--raft-first-layer-expansion")
+parser.add_argument("--tree-support-wall-count")
 parser.add_argument("model", nargs="?")
 args, _unknown = parser.parse_known_args()
 
@@ -40,5 +55,6 @@ outputdir.mkdir(parents=True, exist_ok=True)
 # reader thread blocked forever waiting for a writer that never connects).
 (outputdir / "slice_arg.txt").write_text(args.slice or "")
 (outputdir / "arrange_arg.txt").write_text(args.arrange or "")
+(outputdir / "raft_first_layer_expansion_arg.txt").write_text(args.raft_first_layer_expansion or "")
 
 sys.exit(0)

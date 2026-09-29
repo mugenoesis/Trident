@@ -2,7 +2,12 @@ import json
 import zipfile
 from pathlib import Path
 
-from app.threemf import _decode_paint_color_states, _representative_extruder, inspect_3mf
+from app.threemf import (
+    _decode_paint_color_states,
+    _representative_extruder,
+    inspect_3mf,
+    read_project_scalar_settings,
+)
 
 _MODEL_SETTINGS_PATH = "Metadata/model_settings.config"
 _PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
@@ -215,6 +220,42 @@ def test_non_list_filament_colour_gives_empty_embedded_colors(tmp_path: Path):
     path = _write_3mf(tmp_path, "odd.3mf", model_settings=None, project_settings=project_settings)
     result = inspect_3mf(path)
     assert result.embedded_filament_colors == []
+
+
+def test_read_project_scalar_settings_keeps_only_string_values(tmp_path: Path):
+    # Real-world shape (a downloaded "bee+multicolor.3mf") that failed to
+    # slice with "Invalid parameter value(s) included in the 3mf file":
+    # raft_first_layer_expansion was baked in as "-1", outside the engine's
+    # own declared [0, inf) range for that key, even though this file's
+    # raft_layers ("0") meant the value was never actually going to matter.
+    project_settings = json.dumps(
+        {
+            "raft_first_layer_expansion": "-1",
+            "raft_layers": "0",
+            "filament_colour": ["#000000", "#FFFF00"],  # list -- not a scalar, must be dropped
+        }
+    )
+    path = _write_3mf(tmp_path, "bee_multicolor.3mf", model_settings=None, project_settings=project_settings)
+    result = read_project_scalar_settings(path)
+    assert result == {"raft_first_layer_expansion": "-1", "raft_layers": "0"}
+
+
+def test_read_project_scalar_settings_missing_file_gives_empty_dict(tmp_path: Path):
+    path = _write_3mf(tmp_path, "no_project_settings.3mf", model_settings="<config/>")
+    assert read_project_scalar_settings(path) == {}
+
+
+def test_read_project_scalar_settings_malformed_json_gives_empty_dict(tmp_path: Path):
+    path = _write_3mf(
+        tmp_path, "malformed.3mf", model_settings=None, project_settings="{not valid json"
+    )
+    assert read_project_scalar_settings(path) == {}
+
+
+def test_read_project_scalar_settings_not_a_zip_gives_empty_dict(tmp_path: Path):
+    path = tmp_path / "not_a_zip.3mf"
+    path.write_text("just some text, not a zip file at all")
+    assert read_project_scalar_settings(path) == {}
 
 
 def test_color_tree_for_two_simple_leaf_objects(tmp_path: Path):

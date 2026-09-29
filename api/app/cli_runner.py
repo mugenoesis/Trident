@@ -25,12 +25,80 @@ from pathlib import Path
 from typing import Any
 
 from . import profiles as profiles_module
+from . import threemf as threemf_module
 from .config import settings
 from .schemas import JobProgress, ProfileDetail
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[JobProgress], None]
+
+# Scalar option types whose value in a 3mf's project_settings.config is a
+# single plain number/percent we can bounds-check directly -- vector types
+# (floats, ints, percents, ...) can legitimately hold one value per extruder
+# and aren't safe to reinterpret as a single scalar here.
+_SCALAR_OPTION_TYPES = {"float", "int", "percent", "float_or_percent"}
+
+_option_bounds_cache: dict[str, tuple[float | None, float | None, str]] | None = None
+
+
+def _option_bounds() -> dict[str, tuple[float | None, float | None, str]]:
+    """key -> (min, max, default) for every scalar numeric/percent CLI
+    option that declares at least one bound, sourced from --help-json
+    (ConfigDef's own min/max/default, not a hand-maintained list) and
+    cached for the process lifetime -- the binary's option schema can't
+    change without a restart.
+    """
+    global _option_bounds_cache
+    if _option_bounds_cache is not None:
+        return _option_bounds_cache
+    bounds: dict[str, tuple[float | None, float | None, str]] = {}
+    for item in fetch_help_json() or []:
+        if item.get("type") not in _SCALAR_OPTION_TYPES:
+            continue
+        lo, hi = item.get("min"), item.get("max")
+        if lo is None and hi is None:
+            continue
+        default = item.get("default")
+        if default is None:
+            continue
+        bounds[item["key"]] = (lo, hi, default)
+    _option_bounds_cache = bounds
+    return bounds
+
+
+def _parse_scalar(raw: str) -> float | None:
+    try:
+        return float(raw[:-1]) if raw.endswith("%") else float(raw)
+    except ValueError:
+        return None
+
+
+def _out_of_range_overrides(model_path: Path, setting_overrides: dict[str, Any]) -> dict[str, str]:
+    """Explicit `--key=<engine default>` overrides for any scalar setting a
+    .3mf project bakes in outside its own declared [min, max] -- see
+    threemf.read_project_scalar_settings's docstring for why this class of
+    failure exists at all. Skips any key the caller already overrides
+    (setting_overrides, applied as its own separate CLI flag) since that's
+    a deliberate choice we shouldn't second-guess.
+    """
+    if model_path.suffix.lower() != ".3mf":
+        return {}
+    project_settings = threemf_module.read_project_scalar_settings(model_path)
+    if not project_settings:
+        return {}
+    bounds = _option_bounds()
+    fixes: dict[str, str] = {}
+    for key, raw_value in project_settings.items():
+        if key in setting_overrides or key not in bounds:
+            continue
+        value = _parse_scalar(raw_value)
+        if value is None:
+            continue
+        lo, hi, default = bounds[key]
+        if (lo is not None and value < lo) or (hi is not None and value > hi):
+            fixes[key] = default
+    return fixes
 
 
 def _resolve_profile_detail(kind: str, name: str) -> ProfileDetail:
@@ -188,6 +256,21 @@ def run_slice(
         # Force a re-arrange so the object lands somewhere actually valid
         # for the printer this job is actually using.
         cmd.append("--arrange=1")
+        # Same "don't trust what's baked in" reasoning, for scalar settings
+        # this specific project's config carries outside the engine's own
+        # declared bounds (see _out_of_range_overrides/threemf.read_project_
+        # scalar_settings) -- confirmed against a real downloaded file whose
+        # raft_first_layer_expansion was "-1" (engine min: 0) even though
+        # that file's raft_layers was "0" (raft off, so the value was inert)
+        # -- OrcaSlicer.cpp's m_print_config.validate(true) hard-fails the
+        # whole job on it ("Invalid parameter value(s) included in the 3mf
+        # file") since nothing else overrides that specific key. CLI flags
+        # ARE applied on top of a 3mf's embedded config before validation
+        # runs (m_print_config.apply(m_extra_config, true)), so an explicit
+        # override here is enough to clear it -- we just need to know which
+        # key(s) to send, since we're not otherwise touching raft settings.
+        for key, default_value in _out_of_range_overrides(model_path, setting_overrides).items():
+            cmd.append(f"--{key.replace('_', '-')}={default_value}")
     for key, value in setting_overrides.items():
         # ConfigOptionDef::cli_args() (libslic3r/Config.cpp) derives the CLI flag
         # from the config key by replacing underscores with dashes, unless the

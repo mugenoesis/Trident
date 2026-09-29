@@ -1,4 +1,5 @@
 import json
+import zipfile
 from pathlib import Path
 
 from app import cli_runner
@@ -125,6 +126,89 @@ def test_run_slice_3mf_forces_arrange(tmp_path: Path, monkeypatch, data_dirs):
     )
     assert result.succeeded
     assert (output_dir / "arrange_arg.txt").read_text() == "1"
+
+
+def _write_project_3mf(path: Path, project_settings: dict) -> None:
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("3D/3dmodel.model", "<model/>")
+        zf.writestr("Metadata/project_settings.config", json.dumps(project_settings))
+
+
+def test_run_slice_3mf_corrects_out_of_range_embedded_setting(tmp_path: Path, monkeypatch, data_dirs):
+    # Real-world shape (a downloaded "bee+multicolor.3mf"): the file's own
+    # baked-in raft_first_layer_expansion was "-1", outside the engine's
+    # declared [0, inf) range for that key, even though raft_layers was "0"
+    # (raft off, so the value could never have actually mattered) --
+    # confirmed against a real build: m_print_config.validate(true)
+    # (OrcaSlicer.cpp) still hard-fails the whole job on it regardless,
+    # with "Invalid parameter value(s) included in the 3mf file". See
+    # cli_runner._out_of_range_overrides.
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    monkeypatch.setattr(cli_runner, "_option_bounds_cache", None)
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "bee_multicolor.3mf"
+    _write_project_3mf(model_path, {"raft_first_layer_expansion": "-1", "raft_layers": "0"})
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "raft_first_layer_expansion_arg.txt").read_text() == "2"
+
+
+def test_run_slice_3mf_leaves_in_range_embedded_setting_alone(tmp_path: Path, monkeypatch, data_dirs):
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    monkeypatch.setattr(cli_runner, "_option_bounds_cache", None)
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "fine.3mf"
+    _write_project_3mf(model_path, {"raft_first_layer_expansion": "3", "raft_layers": "0"})
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "raft_first_layer_expansion_arg.txt").read_text() == ""
+
+
+def test_run_slice_3mf_does_not_override_callers_own_setting(tmp_path: Path, monkeypatch, data_dirs):
+    # A caller-supplied setting_overrides entry is a deliberate choice --
+    # even if the 3mf's own baked value for that same key is out of range,
+    # don't second-guess what the caller explicitly asked for.
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    monkeypatch.setattr(cli_runner, "_option_bounds_cache", None)
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+
+    model_path = tmp_path / "explicit.3mf"
+    _write_project_3mf(model_path, {"raft_first_layer_expansion": "-1", "raft_layers": "0"})
+    output_dir = tmp_path / "out"
+
+    result = cli_runner.run_slice(
+        model_path=model_path,
+        output_dir=output_dir,
+        printer_profile="Generic Printer",
+        process_profile="0.20mm Standard",
+        filament_profiles=["Generic PLA"],
+        setting_overrides={"raft_first_layer_expansion": 5},
+        timeout_s=10,
+    )
+    assert result.succeeded
+    assert (output_dir / "raft_first_layer_expansion_arg.txt").read_text() == "5"
 
 
 def test_run_slice_stl_does_not_force_arrange(tmp_path: Path, monkeypatch, data_dirs):

@@ -506,6 +506,38 @@ def _parse_embedded_filament_info(zf: zipfile.ZipFile) -> tuple[list[str], list[
     return _string_list(data, "filament_colour"), _string_list(data, "filament_settings_id")
 
 
+def read_project_scalar_settings(path: Path) -> dict[str, str]:
+    """The file's own Metadata/project_settings.config, filtered to only the
+    plain-string-valued top-level keys (drops list/dict values like
+    `filament_colour` -- those are vector settings, out of scope for the
+    scalar-bounds sanity check this feeds, see cli_runner.py).
+
+    A saved 3mf project bakes in a full settings snapshot from whatever
+    slicer/profile last touched it -- confirmed against a real downloaded
+    file whose `raft_first_layer_expansion` was "-1", a value our engine's
+    own PrintConfig.cpp declares `min = 0` for. That value is completely
+    inert here (the same file's `raft_layers` is "0", i.e. no raft at all),
+    but `m_print_config.validate(true)` (OrcaSlicer.cpp) checks every
+    present key's bounds unconditionally, regardless of whether anything
+    else in the config actually uses it -- failing the whole job with
+    "Invalid parameter value(s) included in the 3mf file" over a setting
+    that was never going to affect the print. Never raises; empty dict on
+    anything missing/malformed.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            raw = zf.read(_PROJECT_SETTINGS_PATH)
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, str)}
+
+
 def inspect_3mf(path: Path) -> ThreeMfInspection:
     """Never raises -- degrades to a single implicit plate with no known
     material split on any missing/malformed/unreadable input."""
