@@ -1363,6 +1363,9 @@ function MainApp({
       enable_support: quickSettings.enable_support,
       enable_prime_tower: quickSettings.enable_prime_tower,
     }
+    // Empty means "use the process profile's own value" -- see QuickSettings.
+    if (quickSettings.seam_position) overrides.seam_position = quickSettings.seam_position
+    if (quickSettings.brim_type) overrides.brim_type = quickSettings.brim_type
     // Only meaningful (and only worth sending) when support is actually on.
     if (quickSettings.enable_support === '1') {
       overrides.support_type = quickSettings.support_type

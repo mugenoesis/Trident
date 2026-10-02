@@ -19,6 +19,12 @@ export interface QuickSettingsValues {
   // configured (a color change becomes possible), but it's a plain toggle
   // here same as any other -- the user can always turn it back off.
   enable_prime_tower: string
+  // Seam position and brim type start empty ("Profile default") and are
+  // only sent as overrides once the user picks something -- unlike the
+  // fields above, a schema default here would silently replace whatever the
+  // selected process profile (e.g. a belt printer's own brim choice) sets.
+  seam_position: string
+  brim_type: string
 }
 
 interface QuickSettingsProps {
@@ -37,7 +43,28 @@ const KEYS: (keyof QuickSettingsValues)[] = [
   'support_type',
   'support_buildplate_only',
   'enable_prime_tower',
+  'seam_position',
+  'brim_type',
 ]
+
+// The engine's raw enum values read poorly in a dropdown ("aligned_back").
+const SEAM_LABELS: Record<string, string> = {
+  nearest: 'Nearest',
+  aligned: 'Aligned',
+  aligned_back: 'Aligned (back)',
+  back: 'Rear',
+  random: 'Random',
+}
+const BRIM_LABELS: Record<string, string> = {
+  auto_brim: 'Auto',
+  brim_ears: 'Mouse ears',
+  painted: 'Painted',
+  outer_only: 'Outer only',
+  inner_only: 'Inner only',
+  outer_and_inner: 'Outer and inner',
+  no_brim: 'None',
+  leading_edge_only: 'Leading edge only',
+}
 
 function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
   return schema.find((s) => s.key === key)
@@ -52,6 +79,8 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
   const patternDef = findDef(schema, 'sparse_infill_pattern')
   const bedTypeDef = findDef(schema, 'curr_bed_type')
   const supportTypeDef = findDef(schema, 'support_type')
+  const seamDef = findDef(schema, 'seam_position')
+  const brimDef = findDef(schema, 'brim_type')
   const supportEnabled = values.enable_support === '1'
 
   return (
@@ -101,6 +130,30 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
           {(patternDef?.enum_values ?? [values.sparse_infill_pattern]).map((v) => (
             <option key={v} value={v}>
               {v}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label>
+        Seam position
+        <select value={values.seam_position} onChange={(e) => set('seam_position', e.target.value)}>
+          <option value="">Profile default</option>
+          {(seamDef?.enum_values ?? []).map((v) => (
+            <option key={v} value={v}>
+              {SEAM_LABELS[v] ?? v}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label>
+        Brim type
+        <select value={values.brim_type} onChange={(e) => set('brim_type', e.target.value)}>
+          <option value="">Profile default</option>
+          {(brimDef?.enum_values ?? []).map((v) => (
+            <option key={v} value={v}>
+              {BRIM_LABELS[v] ?? v}
             </option>
           ))}
         </select>
@@ -183,6 +236,8 @@ export function defaultQuickSettings(schema: SettingDef[]): QuickSettingsValues 
     // Matches OrcaSlicer's own baseline default (false) -- App.tsx turns
     // this on automatically once a multi-slot printer is selected.
     enable_prime_tower: def('enable_prime_tower', '0'),
+    seam_position: '',
+    brim_type: '',
   }
 }
 
