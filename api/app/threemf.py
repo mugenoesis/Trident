@@ -556,8 +556,11 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
     except (OSError, zipfile.BadZipFile):
         return _SINGLE_IMPLICIT_PLATE
 
+    from .threemf_objects import list_objects  # local: threemf_objects imports schemas, not this module
+
     return ThreeMfInspection(
         plates=plates or [PlateInfo(index=1)],
+        objects=list_objects(path),
         extruder_indices=extruder_indices,
         embedded_filament_colors=embedded_filament_colors,
         embedded_filament_names=embedded_filament_names,

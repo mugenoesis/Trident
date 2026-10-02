@@ -218,3 +218,120 @@ def test_create_job_failure_path(client, monkeypatch):
 def test_get_missing_job_404s(client):
     resp = client.get("/jobs/does-not-exist")
     assert resp.status_code == 404
+
+
+# --- object selection / belt layout (.3mf) ---------------------------------
+
+
+def _upload_project(client, tmp_path) -> str:
+    from test_threemf_objects import _write_project
+
+    project = _write_project(tmp_path)
+    resp = client.post("/models", files={"file": ("p.3mf", project.read_bytes(), "model/3mf")})
+    assert resp.status_code == 200
+    return resp.json()["model_id"]
+
+
+def _capture_slice(monkeypatch) -> dict:
+    captured: dict = {}
+
+    def fake_run_slice(**kwargs):
+        captured.update(kwargs)
+        return SliceResult(
+            return_code=0,
+            result_json={"return_code": 0, "error_string": ""},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    return captured
+
+
+def _job(model_id: str, **extra) -> dict:
+    return {
+        "model_id": model_id,
+        "printer_profile": "Generic Printer",
+        "process_profile": "0.20mm Standard",
+        **extra,
+    }
+
+
+def test_upload_lists_objects_in_inspection(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    body = client.get(f"/models/{model_id}/plates").json()
+    assert [o["name"] for o in body["objects"]] == ["Block A", "Tall B", "Wide C", "Cube D"]
+
+
+def test_exclusion_rejected_for_non_3mf(client):
+    model_id = _upload_model(client)
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[0]))
+    assert resp.status_code == 400
+
+
+def test_all_objects_excluded_rejected(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[0, 1, 2, 3]))
+    assert resp.status_code == 400
+
+
+def test_unknown_excluded_index_rejected(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[17]))
+    assert resp.status_code == 400
+
+
+def test_chosen_plate_with_everything_excluded_rejected(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    # object 2 ("Wide C") is the only one on plate 2
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[2], plate_index=2))
+    assert resp.status_code == 400
+
+
+def test_exclusion_slices_a_derived_copy_and_keeps_arranging(client, tmp_path, monkeypatch):
+    from app.threemf_objects import list_objects
+
+    model_id = _upload_project(client, tmp_path)
+    captured = _capture_slice(monkeypatch)
+    from app.routers import jobs as jobs_router
+
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (False, 125.0))
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1], plate_index=1))
+    assert resp.status_code == 200
+    assert captured["model_path"].name == "input.3mf"
+    assert captured["plate_index"] == 1
+    assert captured["arrange"] is True
+    assert [o.name for o in list_objects(captured["model_path"])] == ["Block A", "Wide C", "Cube D"]
+
+
+def test_belt_layout_slices_one_plate_without_rearranging(client, tmp_path, monkeypatch):
+    from app.threemf_objects import list_objects
+
+    model_id = _upload_project(client, tmp_path)
+    captured = _capture_slice(monkeypatch)
+    from app.routers import jobs as jobs_router
+
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (True, 125.0))
+    resp = client.post(
+        "/jobs",
+        json=_job(model_id, excluded_objects=[1], belt_layout={"order": [3, 0, 2], "gap_mm": 12}),
+    )
+    assert resp.status_code == 200
+    assert captured["plate_index"] == 1
+    assert captured["arrange"] is False
+    objs = list_objects(captured["model_path"])
+    assert [o.name for o in objs] == ["Block A", "Wide C", "Cube D"]
+    assert {o.plate for o in objs} == {1}
+
+
+def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
+    model_id = _upload_project(client, tmp_path)
+    captured = _capture_slice(monkeypatch)
+    from app.routers import jobs as jobs_router
+
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (False, 125.0))
+    resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [0, 1, 2, 3]}, plate_index=2))
+    assert resp.status_code == 200
+    assert captured["plate_index"] == 2
+    assert captured["arrange"] is True

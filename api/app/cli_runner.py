@@ -191,6 +191,7 @@ def run_slice(
     filament_profiles: list[str],
     setting_overrides: dict[str, Any],
     plate_index: int | None = None,
+    arrange: bool = True,
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
 ) -> SliceResult:
@@ -242,6 +243,9 @@ def run_slice(
     if filament_paths:
         cmd += ["--load-filaments", ";".join(filament_paths)]
     if model_path.suffix.lower() == ".3mf":
+        # (`arrange` is False only when the caller has already placed every
+        # object itself -- see threemf_objects.write_derived_3mf -- which a
+        # forced re-arrange would undo.)
         # A .3mf project bakes in the exact bed position(s) it was arranged
         # at on whatever printer authored it -- fine when re-sliced on that
         # same printer, but there's no guarantee here: a project built for a
@@ -255,7 +259,8 @@ def run_slice(
         # object itself is perfectly printable once positioned correctly).
         # Force a re-arrange so the object lands somewhere actually valid
         # for the printer this job is actually using.
-        cmd.append("--arrange=1")
+        if arrange:
+            cmd.append("--arrange=1")
         # Same "don't trust what's baked in" reasoning, for scalar settings
         # this specific project's config carries outside the engine's own
         # declared bounds (see _out_of_range_overrides/threemf.read_project_

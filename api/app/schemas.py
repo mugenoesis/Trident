@@ -49,6 +49,14 @@ class SettingsSchema(BaseModel):
     settings: list[SettingDef]
 
 
+class BeltLayout(BaseModel):
+    """Belt printers only: lay the selected objects out in a row along the
+    belt, in `order` (object indices, first printed first), `gap_mm` apart."""
+
+    order: list[int]
+    gap_mm: float = Field(default=10.0, ge=0, le=500)
+
+
 class JobCreateRequest(BaseModel):
     model_id: str
     printer_profile: str
@@ -60,6 +68,10 @@ class JobCreateRequest(BaseModel):
     # from JobProgress.plate_index/plate_count below, which are populated
     # from the --pipe progress stream (an output of slicing), not an input.
     plate_index: int | None = None
+    # .3mf only: indices (see ObjectInfo.index) of objects NOT to print.
+    excluded_objects: list[int] = Field(default_factory=list)
+    # .3mf on a belt printer only: place the kept objects in a row (see above).
+    belt_layout: BeltLayout | None = None
     # Raw base64 PNG (no "data:" prefix) of the browser's own 3D preview at
     # the moment slicing starts -- the OrcaSlicer CLI never renders a gcode
     # thumbnail itself (its thumbnail_cb is hardcoded null on the plain
@@ -139,8 +151,23 @@ class ColorNode(BaseModel):
     triangle_colors: list[str | None] | None = None
 
 
+class ObjectInfo(BaseModel):
+    """One <build><item> of a .3mf, in file order. `index` is that position
+    (0-based) -- the same order three.js's 3MFLoader builds its children in,
+    so the browser's per-object meshes line up with this list."""
+
+    index: int
+    name: str
+    plate: int
+    width_mm: float
+    depth_mm: float
+    height_mm: float
+
+
 class ThreeMfInspection(BaseModel):
     plates: list[PlateInfo]
+    # Empty for a non-3mf or a file whose objects could not be read.
+    objects: list[ObjectInfo] = Field(default_factory=list)
     extruder_indices: list[int] = Field(default_factory=list)
     # The file's own author's filament_colour array (Metadata/
     # project_settings.config), one entry per filament role the file was

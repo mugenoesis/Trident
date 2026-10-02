@@ -6,14 +6,20 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import cli_runner, gcode_stats, gcode_thumbnail
+from .. import cli_runner, gcode_stats, gcode_thumbnail, threemf_objects
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
 from ..jobstore import store
 from ..schemas import JobCreateRequest, JobRecord, JobStatus
 from ..userstore import User
-from .models import delete_model, resolve_model_original_name, resolve_model_owner, resolve_model_path
+from .models import (
+    delete_model,
+    resolve_model_original_name,
+    resolve_model_owner,
+    resolve_model_path,
+    resolve_model_plates,
+)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -22,9 +28,50 @@ def _job_output_dir(job_id: str) -> Path:
     return settings.output_dir / job_id
 
 
+def _machine_bed(printer_profile: str) -> tuple[bool, float]:
+    """(is a belt printer, X centre of the bed in mm) for a machine profile."""
+    detail = cli_runner._resolve_profile_detail("machine", printer_profile)
+    belt_flag = detail.data.get("belt_printer_infinite_y")
+    is_belt = belt_flag in ("1", 1, True)
+    xs: list[float] = []
+    for point in detail.data.get("printable_area") or []:
+        try:
+            xs.append(float(str(point).split("x")[0]))
+        except ValueError:
+            continue
+    return is_belt, (min(xs) + max(xs)) / 2 if xs else 0.0
+
+
+def _prepare_model(job_id: str, model_path: Path, request: JobCreateRequest) -> tuple[Path, int | None, bool]:
+    """(model to slice, plate to slice, whether the CLI may re-arrange).
+
+    Unchanged unless the user excluded objects or asked for a belt layout, in
+    which case a derived copy of the .3mf is written next to the job output.
+    """
+    if not request.excluded_objects and not request.belt_layout:
+        return model_path, request.plate_index, True
+    derived = _job_output_dir(job_id) / "input.3mf"
+    excluded = set(request.excluded_objects)
+    is_belt, center_x = _machine_bed(request.printer_profile)
+    if request.belt_layout and is_belt:
+        threemf_objects.write_derived_3mf(
+            model_path,
+            derived,
+            excluded=excluded,
+            order=request.belt_layout.order,
+            gap_mm=request.belt_layout.gap_mm,
+            center_x=center_x,
+        )
+        # Everything now sits on plate 1, placed explicitly.
+        return derived, 1, False
+    threemf_objects.write_derived_3mf(model_path, derived, excluded=excluded)
+    return derived, request.plate_index, True
+
+
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
+        model_path, plate_index, arrange = _prepare_model(job_id, model_path, request)
         result = cli_runner.run_slice(
             model_path=model_path,
             output_dir=_job_output_dir(job_id),
@@ -32,7 +79,8 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
             process_profile=request.process_profile,
             filament_profiles=request.filament_profiles,
             setting_overrides=request.setting_overrides,
-            plate_index=request.plate_index,
+            plate_index=plate_index,
+            arrange=arrange,
             on_progress=lambda p: store.update_progress(job_id, p),
         )
     except Exception as exc:  # noqa: BLE001 - report to job record, don't crash the worker
@@ -79,6 +127,20 @@ def create_job(
     owner = resolve_model_owner(request.model_id)
     if owner is not None and owner != current.id:
         raise HTTPException(status_code=404, detail="model_id not found")
+
+    if request.excluded_objects or request.belt_layout:
+        if model_path.suffix.lower() != ".3mf":
+            raise HTTPException(status_code=400, detail="Object selection and belt layout need a .3mf")
+        objects = resolve_model_plates(request.model_id).objects
+        known = {o.index for o in objects}
+        if not set(request.excluded_objects) <= known:
+            raise HTTPException(status_code=400, detail="excluded_objects has an unknown object index")
+        kept = [o for o in objects if o.index not in set(request.excluded_objects)]
+        if not kept:
+            raise HTTPException(status_code=400, detail="Every object is excluded; nothing to print")
+        if request.plate_index is not None and not request.belt_layout:
+            if not any(o.plate == request.plate_index for o in kept):
+                raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
 
     job = store.create(
         user_id=current.id,

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from .. import threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ColorNode, ModelUploadResponse, PlateInfo, ThreeMfInspection
+from ..schemas import ColorNode, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -61,6 +61,7 @@ def finalize_new_model(
         try:
             inspection = threemf.inspect_3mf(dest)
             meta["plates"] = [p.model_dump() for p in inspection.plates]
+            meta["objects"] = [o.model_dump() for o in inspection.objects]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
             meta["embedded_filament_names"] = inspection.embedded_filament_names
@@ -188,9 +189,10 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
     whose parse genuinely failed) gets a synthetic single implicit plate.
     """
     meta = _read_meta(model_id) or {}
-    if "plates" in meta:
+    if "plates" in meta and "objects" in meta:
         return ThreeMfInspection(
             plates=[PlateInfo(**p) for p in meta["plates"]],
+            objects=[ObjectInfo(**o) for o in meta["objects"]],
             extruder_indices=meta.get("extruder_indices", []),
             embedded_filament_colors=meta.get("embedded_filament_colors", []),
             embedded_filament_names=meta.get("embedded_filament_names", []),
@@ -202,6 +204,7 @@ def resolve_model_plates(model_id: str) -> ThreeMfInspection:
         inspection = threemf.inspect_3mf(model_path)
         try:
             meta["plates"] = [p.model_dump() for p in inspection.plates]
+            meta["objects"] = [o.model_dump() for o in inspection.objects]
             meta["extruder_indices"] = inspection.extruder_indices
             meta["embedded_filament_colors"] = inspection.embedded_filament_colors
             meta["embedded_filament_names"] = inspection.embedded_filament_names
