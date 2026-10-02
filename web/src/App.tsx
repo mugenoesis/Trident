@@ -45,6 +45,7 @@ import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
+import CopiesControl from './components/CopiesControl'
 import ObjectPicker from './components/ObjectPicker'
 import PlatePicker from './components/PlatePicker'
 import PositionPanel from './components/PositionPanel'
@@ -348,6 +349,8 @@ function MainApp({
   // Where the user put the model on the plate (Position panel); null = the
   // slicer's own default spot.
   const [placement, setPlacement] = useState<Placement | null>(null)
+  // How many copies of the (selected) model to print.
+  const [copies, setCopies] = useState(1)
   const [positionBusy, setPositionBusy] = useState<'orient' | 'arrange' | null>(null)
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -735,6 +738,7 @@ function MainApp({
     setObjectThumbs({})
     setObjectPickerOpen(false)
     setPlacement(null)
+    setCopies(1)
     setMeshReport(null)
     setMeshToastDismissed(false)
     uploadModel(selected)
@@ -806,6 +810,7 @@ function MainApp({
     setObjectThumbs({})
     setObjectPickerOpen(false)
     setPlacement(null)
+    setCopies(1)
     setMeshReport(null)
     return loadSampleModel(sampleId)
       .then((res) => {
@@ -835,16 +840,17 @@ function MainApp({
   const isBeltPrinter = bedSize?.beltPrinterInfiniteY === true
   // On a belt printer every kept object goes in one row along the belt, so
   // which plate it came from no longer matters and the plate picker is moot.
-  const beltRowActive = isBeltPrinter && hasObjectChoice && beltLineUp
+  const beltRowActive = isBeltPrinter && ((hasObjectChoice && beltLineUp) || copies > 1)
   const keptObjects = useMemo(() => objects.filter((o) => !excludedObjects.has(o.index)), [objects, excludedObjects])
   // Position sliders: a model on a chosen printer, on a single plate, and not
   // already laid out by the belt row.
   const showPositionPanel =
-    Boolean(file && modelId && printerName && bedSize && dimensions) && !beltRowActive && (plateInfo?.plates.length ?? 1) <= 1
+    Boolean(file && modelId && printerName && bedSize && dimensions) && !beltRowActive && copies === 1 && (plateInfo?.plates.length ?? 1) <= 1
   const objectSelectionSignature = JSON.stringify({
     excluded: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : [],
     row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm } : null,
     placement: showPositionPanel ? placement : null,
+    copies,
   })
   // What will actually print. A belt row is the kept objects end to end; for
   // any other multi-plate file the viewer's combined extent across plates
@@ -853,12 +859,16 @@ function MainApp({
     beltRowActive && keptObjects.length > 0
       ? {
           x: Math.max(...keptObjects.map((o) => o.width_mm)),
-          y: keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) + beltGapMm * (keptObjects.length - 1),
+          y:
+            keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) * copies +
+            beltGapMm * (keptObjects.length * copies - 1),
           z: Math.max(...keptObjects.map((o) => o.height_mm)),
         }
-      : hasObjectChoice && (plateInfo?.plates.length ?? 0) > 1
-        ? null
-        : dimensions
+      : beltRowActive && dimensions
+        ? { x: dimensions.x, y: dimensions.y * copies + beltGapMm * (copies - 1), z: dimensions.z }
+        : hasObjectChoice && (plateInfo?.plates.length ?? 0) > 1
+          ? null
+          : dimensions
   const fitScale =
     fitDimensions && bedSize && printerName ? computeFitScale(fitDimensions, bedSize) : null
   const showScaleToast = fitScale !== null && !scaleToastDismissed
@@ -1598,6 +1608,7 @@ function MainApp({
       setting_overrides: overrides,
       plate_index: plateIndex ?? undefined,
       placement: showPositionPanel && placement ? placement : undefined,
+      copies: copies > 1 ? copies : undefined,
       excluded_objects: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : undefined,
       belt_layout: beltRowActive
         ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap_mm: beltGapMm }
@@ -1618,6 +1629,7 @@ function MainApp({
     hasObjectChoice,
     showPositionPanel,
     placement,
+    copies,
     excludedObjects,
     beltRowActive,
     beltOrder,
@@ -1993,6 +2005,24 @@ function MainApp({
             onChange={handleAdvancedOverridesChange}
             excludeKeys={QUICK_SETTING_KEYS}
           />
+
+          {modelId && printerName && (
+            <CopiesControl
+              copies={copies}
+              onCopiesChange={(n) => {
+                setCopies(n)
+                setViewMode('model')
+              }}
+              isBelt={isBeltPrinter}
+              gapMm={beltGapMm}
+              onGapChange={setBeltGapMm}
+              copyLengthMm={
+                keptObjects.length > 0
+                  ? keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) + beltGapMm * (keptObjects.length - 1)
+                  : (dimensions?.y ?? 0)
+              }
+            />
+          )}
 
           <JobPanel
             canSlice={canSlice}

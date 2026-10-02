@@ -1,4 +1,5 @@
 import json
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -188,3 +189,48 @@ def test_project_settings_are_updated_not_replaced(tmp_path):
     with zipfile.ZipFile(dst) as zf:
         project = json.loads(zf.read("Metadata/project_settings.config"))
     assert project["layer_height"] == "0.2" and project["printable_area"][1] == "300x0"
+
+
+def test_copies_repeat_the_selection_in_a_row(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "c.3mf"
+    write_derived_3mf(src, dst, excluded={1, 2, 3}, order=[], gap_mm=10, center_x=125, copies=3)
+    objs = list_objects(dst)
+    assert len(objs) == 3 and {o.plate for o in objs} == {1}
+    assert [o.center_y_mm for o in objs] == [10.0, 40.0, 70.0]  # Block A is 20 deep: 0..20, 30..50, 60..80
+    assert {o.center_x_mm for o in objs} == {125.0}
+    with zipfile.ZipFile(dst) as zf:
+        cfg = ET.fromstring(zf.read("Metadata/model_settings.config"))
+    ids = [
+        next(m.get("value") for m in inst.findall("metadata") if m.get("key") == "instance_id")
+        for inst in cfg.find("plate").findall("model_instance")
+    ]
+    assert ids == ["0", "1", "2"]  # numbered per object
+
+
+def test_copies_of_a_selection_repeat_the_whole_set(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "c.3mf"
+    kept = write_derived_3mf(src, dst, excluded={2, 3}, order=[1, 0], copies=2, gap_mm=5, center_x=100)
+    assert kept == [1, 0]
+    names = [o.name for o in list_objects(dst)]
+    assert names == ["Tall B", "Block A", "Tall B", "Block A"]
+
+
+def test_copies_without_a_row_stay_stacked_and_get_their_own_uuid(tmp_path):
+    prod = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+    root = (
+        f'<?xml version="1.0"?><model unit="millimeter" {_NS} xmlns:p="{prod}"><resources>'
+        f'<object id="1" type="model">{_mesh(10, 10, 10)}</object></resources>'
+        '<build><item objectid="1" p:UUID="aaaaaaaa-0000-0000-0000-000000000001" transform="1 0 0 0 1 0 0 0 1 50 50 0" printable="1"/></build></model>'
+    )
+    path = tmp_path / "u.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("3D/3dmodel.model", root)
+    out = tmp_path / "o.3mf"
+    write_derived_3mf(path, out, excluded=set(), copies=3)
+    objs = list_objects(out)
+    assert len(objs) == 3 and {(o.center_x_mm, o.center_y_mm) for o in objs} == {(55.0, 55.0)}
+    with zipfile.ZipFile(out) as zf:
+        uuids = re.findall(r'p:UUID="([^"]*)"', zf.read("3D/3dmodel.model").decode())
+    assert len(uuids) == 3 and len(set(uuids)) == 3 and uuids[0] == "aaaaaaaa-0000-0000-0000-000000000001"

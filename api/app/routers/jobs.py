@@ -64,7 +64,8 @@ def _prepare_model(
     placed the model, in which case a derived copy of the .3mf is written
     next to the job output (an STL/OBJ/STEP is first converted to a .3mf).
     """
-    if not request.excluded_objects and not request.belt_layout and not request.placement:
+    copies = request.copies
+    if not request.excluded_objects and not request.belt_layout and not request.placement and copies == 1:
         return model_path, request.plate_index, True, False
     out_dir = _job_output_dir(job_id)
     derived = out_dir / "input.3mf"
@@ -74,19 +75,27 @@ def _prepare_model(
     source = model_path
     if model_path.suffix.lower() != ".3mf":
         source = cli_runner.convert_model(model_path, out_dir / "converted.3mf")
-    if request.belt_layout and is_belt:
+    if is_belt and (request.belt_layout or copies > 1):
+        layout = request.belt_layout
         threemf_objects.write_derived_3mf(
             source,
             derived,
             excluded=excluded,
-            order=request.belt_layout.order,
-            gap_mm=request.belt_layout.gap_mm,
+            order=layout.order if layout else [],
+            gap_mm=layout.gap_mm if layout else 10.0,
             center_x=center_x,
+            copies=copies,
             bed_area=bed_area,
             bed_height=bed_height,
         )
         # Everything now sits on plate 1, placed explicitly.
         return derived, 1, False, False
+    if copies > 1:
+        # Copies start stacked; the slicer's own arrange spreads them out.
+        threemf_objects.write_derived_3mf(
+            source, derived, excluded=excluded, copies=copies, bed_area=bed_area, bed_height=bed_height
+        )
+        return derived, request.plate_index, True, False
     if request.placement:
         threemf_objects.write_derived_3mf(
             source,
@@ -165,9 +174,12 @@ def create_job(
 
     if request.placement and request.belt_layout:
         raise HTTPException(status_code=400, detail="placement and belt_layout cannot be combined")
-    if request.excluded_objects or request.belt_layout:
+    # Any other file type is converted to a .3mf before slicing (see
+    # _prepare_model), so a belt layout or copies work on it; picking objects
+    # does not, because the browser has no object list to pick from.
+    if request.excluded_objects or (request.belt_layout and model_path.suffix.lower() == ".3mf"):
         if model_path.suffix.lower() != ".3mf":
-            raise HTTPException(status_code=400, detail="Object selection and belt layout need a .3mf")
+            raise HTTPException(status_code=400, detail="Object selection needs a .3mf")
         objects = resolve_model_plates(request.model_id).objects
         known = {o.index for o in objects}
         if not set(request.excluded_objects) <= known:

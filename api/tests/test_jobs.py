@@ -270,6 +270,26 @@ def test_exclusion_rejected_for_non_3mf(client):
     assert resp.status_code == 400
 
 
+def test_belt_layout_and_copies_are_accepted_for_non_3mf(client, monkeypatch, tmp_path):
+    from app.routers import jobs as jobs_router
+    from test_threemf_objects import _write_project
+
+    model_id = _upload_model(client)
+    captured = _capture_slice(monkeypatch)
+    project = _write_project(tmp_path)
+
+    def fake_convert(src, dest, **kw):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(project.read_bytes())
+        return dest
+
+    monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [], "gap_mm": 10}, copies=2))
+    assert resp.status_code == 200 and captured["plate_index"] == 1
+
+
 def test_all_objects_excluded_rejected(client, tmp_path):
     model_id = _upload_project(client, tmp_path)
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[0, 1, 2, 3]))
@@ -323,7 +343,8 @@ def test_belt_layout_slices_one_plate_without_rearranging(client, tmp_path, monk
     assert captured["plate_index"] == 1
     assert captured["arrange"] is False
     objs = list_objects(captured["model_path"])
-    assert [o.name for o in objs] == ["Block A", "Wide C", "Cube D"]
+    # the build follows the layout order (order [3, 0, 2], with Tall B excluded)
+    assert [o.name for o in objs] == ["Cube D", "Block A", "Wide C"]
     assert {o.plate for o in objs} == {1}
 
 
@@ -391,3 +412,37 @@ def test_orient_and_arrange_store_a_new_3mf_model(client, tmp_path, monkeypatch)
     assert client.post(f"/models/{model_id}/arrange", json={}).status_code == 400  # needs the printer
     arranged = client.post(f"/models/{model_id}/arrange", json={"printer_profile": "P", "process_profile": "Q"})
     assert arranged.status_code == 200 and calls[-1]["arrange"] is True and calls[-1]["printer_profile"] == "P"
+
+
+def test_copies_on_a_belt_printer_become_a_row(client, tmp_path, monkeypatch):
+    from app.routers import jobs as jobs_router
+    from app.threemf_objects import list_objects
+
+    model_id = _upload_project(client, tmp_path)
+    captured = _capture_slice(monkeypatch)
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1, 2, 3], copies=4))
+    assert resp.status_code == 200
+    assert captured["plate_index"] == 1 and captured["arrange"] is False
+    assert len(list_objects(captured["model_path"])) == 4
+
+
+def test_copies_on_a_normal_printer_are_arranged_by_the_slicer(client, tmp_path, monkeypatch):
+    from app.routers import jobs as jobs_router
+    from app.threemf_objects import list_objects
+
+    model_id = _upload_project(client, tmp_path)
+    captured = _capture_slice(monkeypatch)
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+    resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1, 2, 3], copies=3))
+    assert resp.status_code == 200
+    assert captured["arrange"] is True and captured["keep_positions"] is False
+    assert len(list_objects(captured["model_path"])) == 3
+
+
+def test_copies_limits(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    assert client.post("/jobs", json=_job(model_id, copies=0)).status_code == 422
+    assert client.post("/jobs", json=_job(model_id, copies=51)).status_code == 422

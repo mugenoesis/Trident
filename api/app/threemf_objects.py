@@ -20,8 +20,10 @@ the Production Extension attributes.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
+import uuid
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -253,22 +255,26 @@ def _format_matrix(m: Matrix) -> str:
 
 
 def _row_layout(
-    items: list[_Item], order: list[int], gap_mm: float, center_x: float
-) -> dict[int, tuple[float, float]]:
-    """index -> (dx, dy): objects in `order`, each centred on center_x in X and
-    stacked along Y starting at 0 with gap_mm between neighbours."""
+    items: list[_Item], sequence: list[int], gap_mm: float, center_x: float
+) -> list[tuple[float, float]]:
+    """One (dx, dy) per entry of `sequence` (item indices, repeats allowed):
+    the objects centred on center_x in X and stacked along Y starting at 0 with
+    gap_mm between neighbours."""
     by_index = {it.index: it for it in items}
     cursor = 0.0
-    shifts: dict[int, tuple[float, float]] = {}
-    for idx in order:
+    shifts: list[tuple[float, float]] = []
+    for idx in sequence:
         it = by_index[idx]
         if it.box is None:
-            shifts[idx] = (0.0, 0.0)
+            shifts.append((0.0, 0.0))
             continue
         (x0, y0, _), (x1, y1, _) = it.box
-        shifts[idx] = (center_x - (x0 + x1) / 2, cursor - y0)
+        shifts.append((center_x - (x0 + x1) / 2, cursor - y0))
         cursor += (y1 - y0) + gap_mm
     return shifts
+
+
+_UUID_ATTR = re.compile(r'(p:UUID=")[^"]*(")')
 
 
 def write_derived_3mf(
@@ -280,6 +286,7 @@ def write_derived_3mf(
     gap_mm: float = 10.0,
     center_x: float = 0.0,
     placement: tuple[float, float] | None = None,
+    copies: int = 1,
     bed_area: list[str] | None = None,
     bed_height: float | None = None,
 ) -> list[int]:
@@ -289,6 +296,9 @@ def write_derived_3mf(
     laid out in that order along Y (see module docstring). `order` may be a
     partial or stale list: unknown indices are ignored and kept objects it
     leaves out follow in file order. Returns the kept indices in final order.
+    `copies` repeats the whole kept selection that many times: in a row when
+    `order` is given, otherwise stacked where they are (the caller lets the
+    slicer arrange them).
     `placement` moves the kept objects as a group so the centre of their
     footprint lands on (x, y); it is ignored when `order` is given.
     `bed_area` / `bed_height` (the printer's printable_area strings and
@@ -298,6 +308,7 @@ def write_derived_3mf(
     Raises ValueError if nothing would be left or the file is not one this
     rewrite understands.
     """
+    copies = max(1, int(copies))
     with zipfile.ZipFile(src) as zf:
         items = _read_items(zf)
         kept = [it.index for it in items if it.index not in excluded]
@@ -307,8 +318,11 @@ def write_derived_3mf(
         if order is not None:
             wanted = [i for i in order if i in set(kept)]
             final = wanted + [i for i in kept if i not in set(wanted)]
-        shifts = _row_layout(items, final, gap_mm, center_x) if order is not None else {}
-        if order is None and placement is not None:
+        # One slot per printed object: the whole selection, repeated.
+        sequence = [idx for _ in range(copies) for idx in final]
+        if order is not None:
+            shifts = _row_layout(items, sequence, gap_mm, center_x)
+        elif placement is not None:
             group: Box | None = None
             for it in items:
                 if it.index in set(kept):
@@ -316,39 +330,42 @@ def write_derived_3mf(
             if group is not None:
                 dx = placement[0] - (group[0][0] + group[1][0]) / 2
                 dy = placement[1] - (group[0][1] + group[1][1]) / 2
-                shifts = {i: (dx, dy) for i in kept}
+                shifts = [(dx, dy)] * len(sequence)
+            else:
+                shifts = [(0.0, 0.0)] * len(sequence)
+        else:
+            shifts = [None] * len(sequence)  # type: ignore[list-item]
 
         model_text = zf.read(_ROOT_MODEL).decode("utf-8")
         matches = list(_ITEM_RE.finditer(model_text))
         if len(matches) != len(items):
             raise ValueError("Unsupported 3MF build layout (items could not be rewritten safely)")
-        pieces: list[str] = []
-        last = 0
-        for m, it in zip(matches, items):
-            pieces.append(model_text[last : m.start()])
-            last = m.end()
-            if it.index in excluded:
-                continue
-            tag = m.group(0)
-            if it.index in shifts:
-                dx, dy = shifts[it.index]
+        by_index = {it.index: it for it in items}
+        tags: list[str] = []
+        seen_copy: dict[int, int] = {}
+        for idx, shift in zip(sequence, shifts):
+            it = by_index[idx]
+            tag = matches[idx].group(0)
+            k = seen_copy.get(idx, 0)
+            seen_copy[idx] = k + 1
+            if shift is not None:
                 nm = list(it.transform)
-                nm[9] += dx
-                nm[10] += dy
+                nm[9] += shift[0]
+                nm[10] += shift[1]
                 value = _format_matrix(nm)
                 if _TRANSFORM_RE.search(tag):
                     tag = _TRANSFORM_RE.sub(f'transform="{value}"', tag, count=1)
                 else:
                     tag = tag.replace("<item", f'<item transform="{value}"', 1)
-            pieces.append(tag)
-        pieces.append(model_text[last:])
-        new_model = "".join(pieces)
+            if k > 0:
+                # A copy is its own item, so it needs its own production UUID.
+                tag = _UUID_ATTR.sub(lambda m: f"{m.group(1)}{uuid.uuid4()}{m.group(2)}", tag)
+            tags.append(tag)
+        new_model = model_text[: matches[0].start()] + "".join(tags) + model_text[matches[-1].end() :]
 
         new_settings: bytes | None = None
         if _MODEL_SETTINGS in zf.namelist():
-            new_settings = _rewrite_settings(
-                zf.read(_MODEL_SETTINGS), items, excluded, final if order is not None else None
-            )
+            new_settings = _rewrite_settings(zf.read(_MODEL_SETTINGS), items, sequence, collapse=order is not None)
 
         project_settings: bytes | None = None
         if bed_area:
@@ -377,40 +394,54 @@ def write_derived_3mf(
     return final
 
 
-def _rewrite_settings(
-    raw: bytes, items: list[_Item], excluded: set[int], single_plate_order: list[int] | None
-) -> bytes:
-    """Drop excluded objects' model_instances. With single_plate_order, also
-    merge every plate into plate 1 with the instances in that order."""
+def _instance_fields(inst: ET.Element) -> dict[str, str | None]:
+    return {m.get("key"): m.get("value") for m in inst.findall("metadata")}
+
+
+def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, collapse: bool) -> bytes:
+    """Rebuild the plates' model_instance lists to match the new build: one
+    instance per entry of `sequence` (item indices, repeats allowed; objects
+    not in it are dropped), numbered by occurrence per object. With collapse,
+    every plate is merged into plate 1."""
     root = ET.fromstring(raw)
-    dropped = {(it.object_id, it.instance) for it in items if it.index in excluded}
     by_key = {(it.object_id, it.instance): it.index for it in items}
     plates = root.findall("plate")
-    collected: dict[int, ET.Element] = {}
+    # item index -> (the plate it was on, its instance element)
+    origin: dict[int, tuple[ET.Element, ET.Element]] = {}
     for plate in plates:
         counts: dict[str, int] = {}
         for inst in list(plate.findall("model_instance")):
-            fields = {m.get("key"): m.get("value") for m in inst.findall("metadata")}
+            fields = _instance_fields(inst)
             object_id = fields.get("object_id") or ""
             try:
                 k = int(fields["instance_id"]) if "instance_id" in fields else counts.get(object_id, 0)
             except (TypeError, ValueError):
                 k = counts.get(object_id, 0)
             counts[object_id] = counts.get(object_id, 0) + 1
-            if (object_id, k) in dropped:
-                plate.remove(inst)
-            elif (object_id, k) in by_key:
-                collected[by_key[(object_id, k)]] = inst
-    if single_plate_order is not None and plates:
-        first = plates[0]
+            if (object_id, k) in by_key:
+                origin[by_key[(object_id, k)]] = (plate, inst)
+            plate.remove(inst)
+    if collapse and plates:
         for plate in plates[1:]:
             root.remove(plate)
-        for inst in list(first.findall("model_instance")):
-            first.remove(inst)
-        for idx in single_plate_order:
-            if idx in collected:
-                first.append(collected[idx])
-        for meta in first.findall("metadata"):
+        for meta in plates[0].findall("metadata"):
             if meta.get("key") == "plater_id":
                 meta.set("value", "1")
+    target_default = plates[0] if plates else None
+    numbered: dict[str, int] = {}
+    for idx in sequence:
+        if idx not in origin:
+            continue
+        plate, inst = origin[idx]
+        clone = copy.deepcopy(inst)
+        object_id = _instance_fields(clone).get("object_id") or ""
+        n = numbered.get(object_id, 0)
+        numbered[object_id] = n + 1
+        for meta in clone.findall("metadata"):
+            if meta.get("key") == "instance_id":
+                meta.set("value", str(n))
+                break
+        else:
+            ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
+        (target_default if collapse else plate).append(clone)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)

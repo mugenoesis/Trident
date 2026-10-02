@@ -149,6 +149,10 @@ class JobCreateRequest(BaseModel):
     # Put the whole model at an exact spot instead of letting the slicer place
     # it (not combined with belt_layout, which places the objects itself).
     placement: Placement | None = None
+    # Print this many copies of the whole (selected) model. On a belt printer
+    # they are lined up along the belt (belt_layout.gap_mm, default 10); on
+    # any other printer the slicer arranges them. Placement is ignored.
+    copies: int = Field(default=1, ge=1, le=50)
     # .3mf only: indices (see ObjectInfo.index) of objects NOT to print.
     excluded_objects: list[int] = Field(default_factory=list)
     # .3mf on a belt printer only: place the kept objects in a row (see above).

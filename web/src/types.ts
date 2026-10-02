@@ -82,6 +82,8 @@ export interface JobCreateRequest {
   plate_index?: number | null
   // Put the whole model at an exact spot (not combined with belt_layout).
   placement?: Placement
+  // Print this many copies of the whole (selected) model.
+  copies?: number
   // .3mf only: indices of objects NOT to print.
   excluded_objects?: number[]
   // .3mf on a belt printer only: lay the kept objects out in a row.

@@ -317,10 +317,6 @@ def run_slice(
         # for the printer this job is actually using.
         if arrange:
             cmd.append("--arrange=1")
-    if keep_positions:
-        # Every object is already where the caller wants it (belt printers
-        # otherwise move them to a default spot near the prime lines).
-        cmd.append("--keep-positions=1")
         # Same "don't trust what's baked in" reasoning, for scalar settings
         # this specific project's config carries outside the engine's own
         # declared bounds (see _out_of_range_overrides/threemf.read_project_
@@ -336,6 +332,10 @@ def run_slice(
         # key(s) to send, since we're not otherwise touching raft settings.
         for key, default_value in _out_of_range_overrides(model_path, setting_overrides).items():
             cmd.append(f"--{key.replace('_', '-')}={default_value}")
+    if keep_positions:
+        # Every object is already where the caller wants it (belt printers
+        # otherwise move them to a default spot near the prime lines).
+        cmd.append("--keep-positions=1")
     for key, value in setting_overrides.items():
         # ConfigOptionDef::cli_args() (libslic3r/Config.cpp) derives the CLI flag
         # from the config key by replacing underscores with dashes, unless the

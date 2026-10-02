@@ -1309,3 +1309,60 @@
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+/* Copies (CopiesControl.tsx) */
+.copies-row {
+  display: flex !important;
+  flex-direction: row !important;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.copies-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.copies-stepper button {
+  border: 0;
+  border-radius: 0;
+  padding: 0.35rem 0.8rem;
+}
+
+.copies-stepper input {
+  width: 3.2rem;
+  text-align: center;
+  border: 0;
+  border-radius: 0;
+  background: #171a1f;
+}
+
+.copies-note {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.copies-strip {
+  display: flex;
+  height: 2.6rem;
+  padding: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #171a1f;
+  overflow-x: auto;
+}
+
+.copies-block {
+  flex: 0 0 auto;
+  min-width: 1.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+}
