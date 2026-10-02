@@ -277,6 +277,16 @@ def _row_layout(
 _UUID_ATTR = re.compile(r'(p:UUID=")[^"]*(")')
 
 
+def project_keys(path: Path, keys: tuple[str, ...]) -> set[str]:
+    """Which of `keys` the project's own settings (Metadata/project_settings.config) define."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            project = json.loads(zf.read(_PROJECT_SETTINGS))
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError):
+        return set()
+    return {k for k in keys if isinstance(project, dict) and k in project}
+
+
 def write_derived_3mf(
     src: Path,
     dst: Path,
@@ -289,6 +299,7 @@ def write_derived_3mf(
     copies: int = 1,
     bed_area: list[str] | None = None,
     bed_height: float | None = None,
+    drop_project_keys: set[str] | None = None,
 ) -> list[int]:
     """Copy src to dst without the excluded objects.
 
@@ -305,6 +316,10 @@ def write_derived_3mf(
     height) are written into the project settings: OrcaSlicer's CLI
     re-centres a 3mf whose recorded bed differs from the printer's, which
     would move everything this function just placed.
+    `drop_project_keys` removes those settings from the project settings: a
+    file saved for another printer carries that printer's own values (e.g. a
+    per-nozzle print area), which otherwise leak into a slice for a printer
+    whose profile does not define them.
     Raises ValueError if nothing would be left or the file is not one this
     rewrite understands.
     """
@@ -368,14 +383,17 @@ def write_derived_3mf(
             new_settings = _rewrite_settings(zf.read(_MODEL_SETTINGS), items, sequence, collapse=order is not None)
 
         project_settings: bytes | None = None
-        if bed_area:
+        if bed_area or drop_project_keys:
             try:
                 project = json.loads(zf.read(_PROJECT_SETTINGS)) if _PROJECT_SETTINGS in zf.namelist() else {}
             except (ValueError, KeyError):
                 project = {}
-            project["printable_area"] = list(bed_area)
-            if bed_height:
-                project["printable_height"] = f"{bed_height:g}"
+            if bed_area:
+                project["printable_area"] = list(bed_area)
+                if bed_height:
+                    project["printable_height"] = f"{bed_height:g}"
+            for key in drop_project_keys or ():
+                project.pop(key, None)
             project_settings = json.dumps(project).encode()
 
         dst.parent.mkdir(parents=True, exist_ok=True)

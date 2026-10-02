@@ -309,7 +309,7 @@ def test_chosen_plate_with_everything_excluded_rejected(client, tmp_path):
     assert resp.status_code == 400
 
 
-def test_exclusion_slices_a_derived_copy_and_keeps_arranging(client, tmp_path, monkeypatch):
+def test_exclusion_slices_a_derived_copy_keeping_the_file_layout(client, tmp_path, monkeypatch):
     from app.threemf_objects import list_objects
 
     model_id = _upload_project(client, tmp_path)
@@ -322,7 +322,7 @@ def test_exclusion_slices_a_derived_copy_and_keeps_arranging(client, tmp_path, m
     assert resp.status_code == 200
     assert captured["model_path"].name == "input.3mf"
     assert captured["plate_index"] == 1
-    assert captured["arrange"] is True
+    assert captured["arrange"] is False  # a normal printer keeps the file's own layout
     assert [o.name for o in list_objects(captured["model_path"])] == ["Block A", "Wide C", "Cube D"]
 
 
@@ -358,7 +358,7 @@ def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
     resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [0, 1, 2, 3]}, plate_index=2))
     assert resp.status_code == 200
     assert captured["plate_index"] == 2
-    assert captured["arrange"] is True
+    assert captured["arrange"] is False
 
 
 def test_placement_converts_an_stl_and_keeps_positions(client, tmp_path, monkeypatch):
@@ -446,3 +446,90 @@ def test_copies_limits(client, tmp_path):
     model_id = _upload_project(client, tmp_path)
     assert client.post("/jobs", json=_job(model_id, copies=0)).status_code == 422
     assert client.post("/jobs", json=_job(model_id, copies=51)).status_code == 422
+
+
+
+def _belt_flag(monkeypatch, is_belt):
+    from app.routers import jobs as jobs_router
+
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (is_belt, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+
+
+def test_a_plain_3mf_keeps_its_layout_on_a_normal_printer_and_is_arranged_on_a_belt(client, tmp_path, monkeypatch):
+    model_id = _upload_project(client, tmp_path)
+    for is_belt, expected in ((False, False), (True, True)):
+        captured = _capture_slice(monkeypatch)
+        _belt_flag(monkeypatch, is_belt)
+        assert client.post("/jobs", json=_job(model_id, plate_index=1)).status_code == 200
+        assert captured["arrange"] is expected
+
+
+def test_a_layout_that_does_not_fit_falls_back_to_arranging(client, tmp_path, monkeypatch):
+    model_id = _upload_project(client, tmp_path)
+    _belt_flag(monkeypatch, False)
+    calls = []
+
+    def fake_run_slice(**kwargs):
+        calls.append(kwargs["arrange"])
+        if not kwargs["arrange"]:
+            return SliceResult(
+                return_code=1,
+                result_json={"return_code": 204, "error_string": "Some objects are located over the boundary of the heated bed."},
+                stdout="",
+                stderr="",
+                used_result_json=True,
+            )
+        return SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    resp = client.post("/jobs", json=_job(model_id, plate_index=1))
+    assert resp.status_code == 200
+    assert calls == [False, True]
+    assert client.get(f"/jobs/{resp.json()['id']}").json()["status"] == "succeeded"
+
+
+def test_other_failures_are_not_retried(client, tmp_path, monkeypatch):
+    model_id = _upload_project(client, tmp_path)
+    _belt_flag(monkeypatch, False)
+    calls = []
+
+    def fake_run_slice(**kwargs):
+        calls.append(kwargs["arrange"])
+        return SliceResult(return_code=1, result_json={"return_code": 154, "error_string": "something else"}, stdout="", stderr="", used_result_json=True)
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    client.post("/jobs", json=_job(model_id, plate_index=1))
+    assert calls == [False]
+
+
+def test_printer_specific_keys_from_the_file_are_dropped_when_the_printer_lacks_them(client, tmp_path, monkeypatch):
+    import json as _json
+    import zipfile as _zip
+
+    from app.routers import jobs as jobs_router
+    from app.schemas import ProfileDetail
+
+    project = tmp_path / "multi.3mf"
+    src = __import__("test_threemf_objects")._write_project(tmp_path, "src.3mf")
+    with _zip.ZipFile(src) as zi, _zip.ZipFile(project, "w") as zo:
+        for info in zi.infolist():
+            zo.writestr(info, zi.read(info.filename))
+        zo.writestr("Metadata/project_settings.config", _json.dumps({"extruder_printable_area": ["0x0,256x0,256x256,0x256"], "layer_height": "0.2"}))
+    model_id = client.post("/models", files={"file": ("m.3mf", project.read_bytes(), "model/3mf")}).json()["model_id"]
+    _belt_flag(monkeypatch, False)
+    captured = _capture_slice(monkeypatch)
+    machine = {"printable_area": ["0x0", "250x0", "250x250", "0x250"]}  # no extruder_printable_area
+    monkeypatch.setattr(
+        cli_runner, "_resolve_profile_detail", lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data=machine)
+    )
+    assert client.post("/jobs", json=_job(model_id, plate_index=1)).status_code == 200
+    assert captured["model_path"].name == "input.3mf"
+    with _zip.ZipFile(captured["model_path"]) as zf:
+        settings_json = _json.loads(zf.read("Metadata/project_settings.config"))
+    assert "extruder_printable_area" not in settings_json and settings_json["layer_height"] == "0.2"
+    # a printer that does define it keeps the file as it is
+    machine["extruder_printable_area"] = ["0x0,270x0,270x270,0x270"]
+    captured.clear()
+    client.post("/jobs", json=_job(model_id, plate_index=1))
+    assert captured["model_path"].name != "input.3mf"

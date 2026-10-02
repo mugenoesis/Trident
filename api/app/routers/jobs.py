@@ -55,23 +55,51 @@ def _machine_bed_area(printer_profile: str, user_id: str | None = None) -> tuple
     return ([str(p) for p in area] if isinstance(area, list) and area else None), height
 
 
+# Per-nozzle settings a file saved for another (multi-nozzle) printer carries.
+# If the selected printer's profile does not define them, the file's values
+# would leak into the slice (e.g. an X2D's second-nozzle print area makes the
+# U1 reject objects near the left edge).
+_PRINTER_SPECIFIC_KEYS = ("extruder_printable_area", "extruder_printable_height")
+
+
+def _leaked_printer_keys(model_path: Path, printer_profile: str, user_id: str | None) -> set[str]:
+    if model_path.suffix.lower() != ".3mf":
+        return set()
+    present = threemf_objects.project_keys(model_path, _PRINTER_SPECIFIC_KEYS)
+    if not present:
+        return set()
+    machine = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
+    return {k for k in present if k not in machine}
+
+
 def _prepare_model(
     job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None
 ) -> tuple[Path, int | None, bool, bool]:
     """(model to slice, plate to slice, whether the CLI may re-arrange,
     whether it must keep every object exactly where placed).
 
-    Unchanged unless the user excluded objects, asked for a belt layout or
-    placed the model, in which case a derived copy of the .3mf is written
-    next to the job output (an STL/OBJ/STEP is first converted to a .3mf).
+    A .3mf is sliced with the positions and plates it came with (the slicer
+    re-centres a file saved for a different bed itself); run_job retries with
+    a forced re-arrange if those positions turn out not to fit. Unchanged
+    otherwise unless the user excluded objects, asked for a belt layout,
+    copies or a placement, in which case a derived copy of the .3mf is
+    written next to the job output (an STL/OBJ/STEP is first converted).
     """
     copies = request.copies
-    if not request.excluded_objects and not request.belt_layout and not request.placement and copies == 1:
-        return model_path, request.plate_index, True, False
+    try:
+        is_belt, center_x = _machine_bed(request.printer_profile, user_id)
+        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id)
+    except ValueError:
+        # Unknown profile: run_slice reports it; nothing to decide here.
+        is_belt, center_x, drop = False, 0.0, set()
+    # Belt printers keep the older forced re-arrange (their bed is a narrow strip
+    # a foreign file's positions rarely fit).
+    keep_file_layout = not is_belt
+    if not request.excluded_objects and not request.belt_layout and not request.placement and copies == 1 and not drop:
+        return model_path, request.plate_index, not keep_file_layout, False
     out_dir = _job_output_dir(job_id)
     derived = out_dir / "input.3mf"
     excluded = set(request.excluded_objects)
-    is_belt, center_x = _machine_bed(request.printer_profile, user_id)
     bed_area, bed_height = _machine_bed_area(request.printer_profile, user_id)
     source = model_path
     if model_path.suffix.lower() != ".3mf":
@@ -88,13 +116,14 @@ def _prepare_model(
             copies=copies,
             bed_area=bed_area,
             bed_height=bed_height,
+            drop_project_keys=drop,
         )
         # Everything now sits on plate 1, placed explicitly.
         return derived, 1, False, False
     if copies > 1:
         # Copies start stacked; the slicer's own arrange spreads them out.
         threemf_objects.write_derived_3mf(
-            source, derived, excluded=excluded, copies=copies, bed_area=bed_area, bed_height=bed_height
+            source, derived, excluded=excluded, copies=copies, bed_area=bed_area, bed_height=bed_height, drop_project_keys=drop
         )
         return derived, request.plate_index, True, False
     if request.placement:
@@ -105,10 +134,13 @@ def _prepare_model(
             placement=(request.placement.x, request.placement.y),
             bed_area=bed_area,
             bed_height=bed_height,
+            drop_project_keys=drop,
         )
         return derived, 1, False, True
-    threemf_objects.write_derived_3mf(source, derived, excluded=excluded, bed_area=bed_area, bed_height=bed_height)
-    return derived, request.plate_index, True, False
+    threemf_objects.write_derived_3mf(
+        source, derived, excluded=excluded, bed_area=bed_area, bed_height=bed_height, drop_project_keys=drop
+    )
+    return derived, request.plate_index, not keep_file_layout, False
 
 
 # A print that starts within this of the purge line is left alone.
@@ -209,6 +241,16 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             user_id=user_id,
         )
         result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
+        # The file's own layout did not fit this printer's bed: fall back to
+        # having the slicer arrange everything (what every 3mf used to get).
+        if (
+            not result.succeeded
+            and not arrange
+            and not keep_positions
+            and "boundary of the heated bed" in str((result.result_json or {}).get("error_string", ""))
+        ):
+            shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
+            result = cli_runner.run_slice(**{**slice_args, "arrange": True}, on_progress=lambda p: store.update_progress(job_id, p))
         # An exact position the user chose is never moved.
         if result.succeeded and not keep_positions:
             result = _align_to_purge_line(job_id, request, user_id, slice_args, result)
