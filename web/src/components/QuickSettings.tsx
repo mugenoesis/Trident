@@ -31,6 +31,11 @@ interface QuickSettingsProps {
   schema: SettingDef[]
   values: QuickSettingsValues
   onChange: (values: QuickSettingsValues) => void
+  // Belt printers lay their brim onto the tilted belt, which only has the
+  // modes in BELT_BRIM_TYPES: Auto, Mouse ears and Painted all come out as a
+  // plain outer brim there, so they are not offered. Leading edge only is the
+  // reverse: a belt-only mode (elsewhere it degrades to an outer brim).
+  isBelt?: boolean
 }
 
 const KEYS: (keyof QuickSettingsValues)[] = [
@@ -66,13 +71,15 @@ const BRIM_LABELS: Record<string, string> = {
   leading_edge_only: 'Leading edge only',
 }
 
+export const BELT_BRIM_TYPES = ['outer_only', 'inner_only', 'outer_and_inner', 'leading_edge_only', 'no_brim']
+
 function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
   return schema.find((s) => s.key === key)
 }
 
 // The four settings people adjust for almost every print, kept always
 // visible per the design brief -- everything else lives in AdvancedSettings.
-export default function QuickSettings({ schema, values, onChange }: QuickSettingsProps) {
+export default function QuickSettings({ schema, values, onChange, isBelt }: QuickSettingsProps) {
   const set = (key: keyof QuickSettingsValues, value: string) =>
     onChange({ ...values, [key]: value })
 
@@ -151,7 +158,9 @@ export default function QuickSettings({ schema, values, onChange }: QuickSetting
         Brim type
         <select value={values.brim_type} onChange={(e) => set('brim_type', e.target.value)}>
           <option value="">Profile default</option>
-          {(brimDef?.enum_values ?? []).map((v) => (
+          {(brimDef?.enum_values ?? [])
+            .filter((v) => (isBelt ? BELT_BRIM_TYPES.includes(v) : v !== 'leading_edge_only'))
+            .map((v) => (
             <option key={v} value={v}>
               {BRIM_LABELS[v] ?? v}
             </option>
