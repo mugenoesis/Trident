@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   createJob,
+  deleteImportedProfile,
   createMaterialProfile,
   createPrinter,
   createSettingsProfile,
@@ -44,6 +45,7 @@ import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
 import ObjectPicker from './components/ObjectPicker'
 import PlatePicker from './components/PlatePicker'
+import ProfileImportDialog from './components/ProfileImportDialog'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
   QUICK_SETTING_KEYS,
@@ -338,6 +340,7 @@ function MainApp({
   onUpdateLastSelection,
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
+  const [importOpen, setImportOpen] = useState(false)
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [sampleModels, setSampleModels] = useState<SampleModelSummary[]>([])
@@ -936,6 +939,15 @@ function MainApp({
     setGlobalNozzleType('undefine')
     setSelectedPrinterId(null)
     setViewMode('model')
+  }, [])
+
+  // Reload the dropdowns after profiles were imported or deleted.
+  const refreshProfiles = useCallback(() => {
+    listProfiles()
+      .then(setProfiles)
+      .catch(() => {
+        /* the existing list stays as it was */
+      })
   }, [])
 
   // Any change to a slicing-relevant selection invalidates whatever G-code
@@ -1735,6 +1747,16 @@ function MainApp({
               onVendorChange={handleVendorChange}
               onPrinterChange={handlePrinterChange}
               onProcessChange={handleProcessChange}
+              onImportClick={() => setImportOpen(true)}
+              onDeleteImportedPrinter={() => {
+                if (!printerName) return
+                deleteImportedProfile('machine', printerName)
+                  .then(() => {
+                    handleVendorChange(vendor)
+                    refreshProfiles()
+                  })
+                  .catch((err: Error) => alert(`Failed to delete the imported printer: ${err.message}`))
+              }}
             />
           </details>
 
@@ -1914,6 +1936,7 @@ function MainApp({
         </section>
       </main>
 
+      {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
       {meshReport && !meshToastDismissed && (
         <div className="toast toast-top" role="status">
           <div className="toast-message">

@@ -292,3 +292,24 @@ export interface SettingsProfileUpdateRequest {
   advanced_overrides?: Record<string, string>
   process_profile?: string | null
 }
+
+// Result of importing profile files (api/app/userprofiles.py).
+export interface ImportedProfile {
+  kind: string // 'machine' | 'process' | 'filament'
+  name: string
+  inherits?: string | null
+  warning?: string | null
+}
+
+export interface ImportIssue {
+  file: string
+  name?: string | null
+  reason: string
+}
+
+export interface ImportResult {
+  imported: ImportedProfile[]
+  // Same name already imported earlier and overwrite was off.
+  conflicts: ImportedProfile[]
+  skipped: ImportIssue[]
+}

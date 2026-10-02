@@ -1205,3 +1205,78 @@
 .toast-top .toast-message p:last-child {
   margin-bottom: 0;
 }
+
+/* Profile import (ProfileImportDialog.tsx) */
+.profile-import-link-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.profile-import-help {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.profile-import-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  background: var(--panel-bg);
+}
+
+.profile-import-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+  justify-content: space-between;
+}
+
+.profile-import-tag {
+  font-size: 0.65rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  color: var(--text-dim);
+}
+
+.profile-import-ok {
+  color: var(--success);
+  margin-left: auto;
+}
+
+.profile-import-note {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.profile-import-conflicts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--warning);
+}
+
+.profile-import-conflicts p {
+  margin: 0;
+}
+
+.profile-import-heading {
+  margin: 0.4rem 0 0;
+}
+
+.profile-import-kind {
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}

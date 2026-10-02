@@ -1,4 +1,6 @@
 import type {
+  ImportedProfile,
+  ImportResult,
   AuthStatus,
   JobCreateRequest,
   JobRecord,
@@ -44,6 +46,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${detail}`)
   }
   return res.json() as Promise<T>
+}
+
+export function importProfiles(files: File[], overwrite: boolean): Promise<ImportResult> {
+  const form = new FormData()
+  for (const f of files) form.append('files', f)
+  form.append('overwrite', overwrite ? 'true' : 'false')
+  return request('/profiles/import', { method: 'POST', body: form })
+}
+
+export function listImportedProfiles(): Promise<ImportedProfile[]> {
+  return request('/profiles/imported')
+}
+
+export function deleteImportedProfile(kind: string, name: string): Promise<{ deleted: boolean }> {
+  return request(`/profiles/imported/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
 
 export function listProfiles(): Promise<ProfileSummary[]> {
