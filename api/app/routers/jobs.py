@@ -62,14 +62,17 @@ def _machine_bed_area(printer_profile: str, user_id: str | None = None) -> tuple
 _PRINTER_SPECIFIC_KEYS = ("extruder_printable_area", "extruder_printable_height")
 
 
-def _leaked_printer_keys(model_path: Path, printer_profile: str, user_id: str | None) -> set[str]:
+def _leaked_printer_keys(
+    model_path: Path, printer_profile: str, user_id: str | None, filament_count: int = 1
+) -> set[str]:
     if model_path.suffix.lower() != ".3mf":
         return set()
+    drop = threemf_objects.keys_sized_for_fewer_filaments(model_path, filament_count)
     present = threemf_objects.project_keys(model_path, _PRINTER_SPECIFIC_KEYS)
-    if not present:
-        return set()
-    machine = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
-    return {k for k in present if k not in machine}
+    if present:
+        machine = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
+        drop |= {k for k in present if k not in machine}
+    return drop
 
 
 def _prepare_model(
@@ -88,7 +91,7 @@ def _prepare_model(
     copies = request.copies
     try:
         is_belt, center_x = _machine_bed(request.printer_profile, user_id)
-        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id)
+        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id, len(request.filament_profiles))
     except ValueError:
         # Unknown profile: run_slice reports it; nothing to decide here.
         is_belt, center_x, drop = False, 0.0, set()

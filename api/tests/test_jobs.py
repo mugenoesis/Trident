@@ -533,3 +533,42 @@ def test_printer_specific_keys_from_the_file_are_dropped_when_the_printer_lacks_
     captured.clear()
     client.post("/jobs", json=_job(model_id, plate_index=1))
     assert captured["model_path"].name != "input.3mf"
+
+
+def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_than_the_file_has(client, tmp_path, monkeypatch):
+    import json as _json
+    import zipfile as _zip
+
+    from app.routers import jobs as jobs_router
+    from app.schemas import ProfileDetail
+
+    project = tmp_path / "two_filaments.3mf"
+    src = __import__("test_threemf_objects")._write_project(tmp_path, "src.3mf")
+    saved = {
+        "filament_settings_id": ["PLA A", "PLA B"],
+        "nozzle_diameter": ["0.4", "0.4"],
+        "default_acceleration": ["500", "500", "500", "500", "500", "500"],
+        "layer_height": "0.2",
+    }
+    with _zip.ZipFile(src) as zi, _zip.ZipFile(project, "w") as zo:
+        for info in zi.infolist():
+            zo.writestr(info, zi.read(info.filename))
+        zo.writestr("Metadata/project_settings.config", _json.dumps(saved))
+    model_id = client.post("/models", files={"file": ("m.3mf", project.read_bytes(), "model/3mf")}).json()["model_id"]
+    _belt_flag(monkeypatch, False)
+    captured = _capture_slice(monkeypatch)
+    monkeypatch.setattr(
+        cli_runner, "_resolve_profile_detail", lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data={})
+    )
+    four = ["PLA"] * 4
+    assert client.post("/jobs", json=_job(model_id, plate_index=1, filament_profiles=four)).status_code == 200
+    assert captured["model_path"].name == "input.3mf"
+    with _zip.ZipFile(captured["model_path"]) as zf:
+        settings_json = _json.loads(zf.read("Metadata/project_settings.config"))
+    assert "filament_settings_id" not in settings_json and "nozzle_diameter" not in settings_json
+    assert settings_json["default_acceleration"] == saved["default_acceleration"] and settings_json["layer_height"] == "0.2"
+    # as many filaments as the file has (or fewer) leaves the file as it is
+    for same in (["PLA"] * 2, ["PLA"]):
+        captured.clear()
+        client.post("/jobs", json=_job(model_id, plate_index=1, filament_profiles=same))
+        assert captured["model_path"].name != "input.3mf"

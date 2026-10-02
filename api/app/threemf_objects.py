@@ -287,6 +287,31 @@ def project_keys(path: Path, keys: tuple[str, ...]) -> set[str]:
     return {k for k in keys if isinstance(project, dict) and k in project}
 
 
+def keys_sized_for_fewer_filaments(path: Path, filament_count: int) -> set[str]:
+    """Per-filament settings of a project saved with fewer filaments than are
+    now requested. The slicer refuses a vector whose length no longer matches
+    the filament count, so these have to go and let the chosen profiles
+    supply values of the right size. Some are sized by filaments times
+    extruder variants or by the flush matrix (filaments squared), so they are
+    recognised by name as well as by length."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            project = json.loads(zf.read(_PROJECT_SETTINGS))
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError):
+        return set()
+    if not isinstance(project, dict):
+        return set()
+    ids = project.get("filament_settings_id")
+    saved = len(ids) if isinstance(ids, list) else 0
+    if saved < 1 or filament_count <= saved:
+        return set()
+    return {
+        k
+        for k, v in project.items()
+        if isinstance(v, list) and (len(v) == saved or k.startswith(("filament_", "flush_volumes_")))
+    }
+
+
 def write_derived_3mf(
     src: Path,
     dst: Path,
