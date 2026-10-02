@@ -247,6 +247,7 @@ def run_slice(
     plate_index: int | None = None,
     arrange: bool = True,
     keep_positions: bool = False,
+    belt_shift_y: float = 0.0,
     user_id: str | None = None,
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
@@ -332,6 +333,10 @@ def run_slice(
         # key(s) to send, since we're not otherwise touching raft settings.
         for key, default_value in _out_of_range_overrides(model_path, setting_overrides).items():
             cmd.append(f"--{key.replace('_', '-')}={default_value}")
+    if belt_shift_y:
+        # Belt printers: move the default placement along the belt (see
+        # routers/jobs.py _align_to_purge_line).
+        cmd.append(f"--belt-shift-y={belt_shift_y:.3f}")
     if keep_positions:
         # Every object is already where the caller wants it (belt printers
         # otherwise move them to a default spot near the prime lines).

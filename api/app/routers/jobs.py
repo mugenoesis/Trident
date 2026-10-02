@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import cli_runner, gcode_stats, gcode_thumbnail, threemf_objects
+from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, threemf_objects
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
 from ..jobstore import store
-from ..schemas import JobCreateRequest, JobRecord, JobStatus
+from ..schemas import JobCreateRequest, JobProgress, JobRecord, JobStatus
 from ..userstore import User
 from .models import (
     delete_model,
@@ -110,11 +111,92 @@ def _prepare_model(
     return derived, request.plate_index, True, False
 
 
+# A print that starts within this of the purge line is left alone.
+_ALIGN_TOLERANCE_MM = 0.3
+# Moving the print also changes its support, so the result is measured again
+# and refined (up to this many re-slices), to a looser tolerance (the purge
+# line itself is 0.4 mm wide).
+_ALIGN_PASSES = 3
+_ALIGN_REFINE_TOLERANCE_MM = 0.5
+_ALIGN_BACKOFF_TRIES = 4
+_ALIGN_BACKOFF_STEP_MM = 1.5
+
+
+def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | None, slice_args: dict, result):
+    """Belt printers: make the very start of the print (support and brim
+    included, not just the model) touch the purge line.
+
+    The support is only known once the print is sliced, so this measures the
+    first result and, if the start is off, slices again with the default
+    placement moved along the belt (up to _ALIGN_PASSES times, each shift
+    corrected from the measured response). A re-slice replaces the previous
+    result only if it succeeds.
+    """
+    out_dir = _job_output_dir(job_id)
+    try:
+        machine = cli_runner._resolve_profile_detail("machine", request.printer_profile, user_id).data
+        xs, ys = [], []
+        for point in machine.get("printable_area") or []:
+            px, _, py = str(point).partition("x")
+            xs.append(float(px))
+            ys.append(float(py))
+        transform = belt_align.parse_belt_transform(
+            machine, (max(xs), max(ys), float(machine.get("printable_height", 0)))
+        )
+        applied = 0.0  # the belt shift the current gcode was sliced with
+        history: list[tuple[float, float]] = []  # (shift, where the print started)
+        for attempt in range(_ALIGN_PASSES):
+            gcodes = sorted(out_dir.glob("plate_*.gcode"))
+            if transform is None or not gcodes:
+                break
+            measured = belt_align.measure_start(gcodes[0], transform)
+            if measured is None:
+                break
+            history.append((applied, measured.start_y))
+            error = measured.purge_y - measured.start_y
+            if abs(error) <= (_ALIGN_TOLERANCE_MM if attempt == 0 else _ALIGN_REFINE_TOLERANCE_MM):
+                break
+            # How far the start moves per mm of shift is not 1: moving the
+            # model also changes the support grown under it. Learn it from the
+            # last two slices (secant method); the first guess is 1.
+            slope = 1.0
+            if len(history) >= 2:
+                (s0, y0), (s1, y1) = history[-2], history[-1]
+                if abs(s1 - s0) > 1e-6:
+                    slope = min(5.0, max(0.3, (y1 - y0) / (s1 - s0)))
+            wanted = applied + error / slope
+            store.update_progress(job_id, JobProgress(message="Lining the print up with the purge line…"))
+            redo_dir = out_dir / "realigned"
+            redo = None
+            # The slicer refuses a placement that reaches past the bed's own
+            # edge (a model with no support cannot get as close as the support
+            # would); back off a little at a time until one is accepted.
+            for _ in range(_ALIGN_BACKOFF_TRIES):
+                candidate = cli_runner.run_slice(**{**slice_args, "output_dir": redo_dir, "belt_shift_y": wanted, "on_progress": None})
+                if candidate.succeeded:
+                    redo = candidate
+                    applied = wanted
+                    break
+                shutil.rmtree(redo_dir, ignore_errors=True)
+                wanted -= math.copysign(min(_ALIGN_BACKOFF_STEP_MM, abs(wanted - applied)), wanted - applied)
+            if redo is None:
+                break
+            for src in [*redo_dir.glob("plate_*.gcode"), *redo_dir.glob("result.json")]:
+                shutil.move(str(src), out_dir / src.name)
+            shutil.rmtree(redo_dir, ignore_errors=True)
+            result = redo
+        return result
+    except Exception:  # noqa: BLE001 - alignment is an improvement, never a reason to fail the slice
+        return result
+    finally:
+        shutil.rmtree(out_dir / "realigned", ignore_errors=True)
+
+
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
         model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, model_path, request, user_id)
-        result = cli_runner.run_slice(
+        slice_args = dict(
             model_path=model_path,
             output_dir=_job_output_dir(job_id),
             printer_profile=request.printer_profile,
@@ -125,8 +207,11 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             arrange=arrange,
             keep_positions=keep_positions,
             user_id=user_id,
-            on_progress=lambda p: store.update_progress(job_id, p),
         )
+        result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
+        # An exact position the user chose is never moved.
+        if result.succeeded and not keep_positions:
+            result = _align_to_purge_line(job_id, request, user_id, slice_args, result)
     except Exception as exc:  # noqa: BLE001 - report to job record, don't crash the worker
         store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
         return
