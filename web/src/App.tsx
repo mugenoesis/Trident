@@ -62,6 +62,7 @@ import type {
   ColorNode,
   JobRecord,
   MaterialProfileRecord,
+  MeshReport,
   ObjectInfo,
   PrinterConnection,
   PrinterRecord,
@@ -375,6 +376,9 @@ function MainApp({
   const [beltGapMm, setBeltGapMm] = useState(10)
   const [objectThumbs, setObjectThumbs] = useState<Record<number, string>>({})
   const [objectPickerOpen, setObjectPickerOpen] = useState(false)
+  // Result of the upload-time STL check, and whether its notice was dismissed.
+  const [meshReport, setMeshReport] = useState<MeshReport | null>(null)
+  const [meshToastDismissed, setMeshToastDismissed] = useState(false)
   // A newly loaded file starts with everything selected, in file order.
   useEffect(() => {
     setExcludedObjects(new Set())
@@ -719,8 +723,11 @@ function MainApp({
     setPlateIndex(null)
     setObjectThumbs({})
     setObjectPickerOpen(false)
+    setMeshReport(null)
+    setMeshToastDismissed(false)
     uploadModel(selected)
       .then((res) => {
+        setMeshReport(res.mesh_report ?? null)
         setModelId(res.model_id)
         setUploadStatus('done')
         // Always fetch (even for non-3mf uploads): the endpoint always
@@ -752,6 +759,7 @@ function MainApp({
     setPlateIndex(null)
     setObjectThumbs({})
     setObjectPickerOpen(false)
+    setMeshReport(null)
     return loadSampleModel(sampleId)
       .then((res) => {
         setModelId(res.model_id)
@@ -1605,6 +1613,7 @@ function MainApp({
                 onFileSelected={handleFileSelected}
                 fileName={file?.name ?? null}
                 uploadStatus={uploadStatus}
+                meshNote={meshReport?.fixed.length ? 'auto-fixed' : meshReport?.warnings.length ? 'mesh not watertight' : null}
               />
               <Viewer
                 ref={viewerRef}
@@ -1905,6 +1914,25 @@ function MainApp({
         </section>
       </main>
 
+      {meshReport && !meshToastDismissed && (
+        <div className="toast toast-top" role="status">
+          <div className="toast-message">
+            {meshReport.fixed.length > 0 && (
+              <p>
+                <strong>Auto-fixed a non-manifold file.</strong> {meshReport.fixed.join('; ')}.
+              </p>
+            )}
+            {meshReport.warnings.map((w) => (
+              <p key={w}>{w}</p>
+            ))}
+          </div>
+          <div className="toast-actions">
+            <button type="button" className="toast-dismiss" onClick={() => setMeshToastDismissed(true)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       {showScaleToast && fitDimensions && bedSize && fitScale !== null && (
         <div className="toast">
           <div className="toast-message">

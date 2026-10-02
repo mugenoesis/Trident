@@ -26,9 +26,17 @@ export interface SettingsSchema {
   settings: SettingDef[]
 }
 
+// What the upload-time STL check found (api/app/meshcheck.py): `fixed` are
+// defects the slicer repairs by itself, `warnings` ones it does not.
+export interface MeshReport {
+  fixed: string[]
+  warnings: string[]
+}
+
 export interface ModelUploadResponse {
   model_id: string
   filename: string
+  mesh_report?: MeshReport | null
 }
 
 export interface SampleModelSummary {

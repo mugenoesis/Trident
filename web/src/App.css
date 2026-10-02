@@ -1191,3 +1191,17 @@
   color: var(--danger);
   font-size: 0.8rem;
 }
+
+/* The mesh-repair notice sits at the top so it never stacks on the scale toast. */
+.toast-top {
+  bottom: auto;
+  top: max(1rem, env(safe-area-inset-top, 0px));
+}
+
+.toast-top .toast-message p {
+  margin: 0 0 0.4rem;
+}
+
+.toast-top .toast-message p:last-child {
+  margin-bottom: 0;
+}

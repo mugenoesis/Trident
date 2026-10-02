@@ -7,11 +7,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
-from .. import threemf
+from .. import meshcheck, threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ColorNode, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
+from ..schemas import ColorNode, MeshReport, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -68,9 +69,18 @@ def finalize_new_model(
             meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
         except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
             pass
+    mesh_report: MeshReport | None = None
+    if suffix == ".stl":
+        try:
+            report = meshcheck.analyze_stl(dest)
+            if report is not None and (report.fixed or report.warnings):
+                mesh_report = report
+                meta["mesh_report"] = report.model_dump()
+        except Exception:  # noqa: BLE001 - a check bug must never fail an upload
+            pass
     _meta_path(model_id).write_text(json.dumps(meta))
 
-    return ModelUploadResponse(model_id=model_id, filename=original_name)
+    return ModelUploadResponse(model_id=model_id, filename=original_name, mesh_report=mesh_report)
 
 
 @router.post("", response_model=ModelUploadResponse)
@@ -97,7 +107,8 @@ async def upload_model(file: UploadFile, current: User = Depends(require_user)) 
             out.write(chunk)
 
     original_name = file.filename or dest.name
-    return finalize_new_model(model_id, suffix, dest, original_name, current.id)
+    # The mesh check is CPU-bound Python; keep it off the event loop.
+    return await run_in_threadpool(finalize_new_model, model_id, suffix, dest, original_name, current.id)
 
 
 @router.get("/{model_id}/file")

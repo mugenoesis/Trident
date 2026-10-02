@@ -93,3 +93,20 @@ def test_plates_endpoint_parses_multiplate_3mf(client):
 
 def test_plates_endpoint_404s_for_unknown_model(client):
     assert client.get("/models/does-not-exist/plates").status_code == 404
+
+
+def test_upload_reports_repairable_stl(client, tmp_path):
+    from test_meshcheck import _T, _binary
+
+    path = _binary(tmp_path, "dup.stl", [*_T, _T[0]])
+    resp = client.post("/models", files={"file": ("dup.stl", path.read_bytes(), "model/stl")})
+    assert resp.status_code == 200
+    assert resp.json()["mesh_report"]["fixed"] == ["1 duplicate face removed"]
+
+
+def test_upload_of_clean_stl_has_no_report(client, tmp_path):
+    from test_meshcheck import _T, _binary
+
+    path = _binary(tmp_path, "ok.stl", _T)
+    resp = client.post("/models", files={"file": ("ok.stl", path.read_bytes(), "model/stl")})
+    assert resp.json()["mesh_report"] is None

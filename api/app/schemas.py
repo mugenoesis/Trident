@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class JobStatus(StrEnum):
@@ -13,9 +13,57 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+class MeshReport(BaseModel):
+    """What the upload-time STL check found (see app/meshcheck.py)."""
+
+    degenerate_faces: int = 0
+    duplicate_faces: int = 0
+    # Edges whose two faces disagree about orientation (flipped faces).
+    inconsistent_edges: int = 0
+    # The whole mesh is inside out.
+    inverted: bool = False
+    open_edges: int = 0
+    nonmanifold_edges: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def fixed(self) -> list[str]:
+        """Defects the slicer repairs by itself when it loads the file."""
+        out: list[str] = []
+        if self.duplicate_faces:
+            out.append(f"{self.duplicate_faces} duplicate {'face' if self.duplicate_faces == 1 else 'faces'} removed")
+        if self.degenerate_faces:
+            out.append(f"{self.degenerate_faces} degenerate {'face' if self.degenerate_faces == 1 else 'faces'} removed")
+        if self.inconsistent_edges:
+            out.append("flipped faces corrected")
+        if self.inverted:
+            out.append("inside-out mesh turned the right way round")
+        return out
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def warnings(self) -> list[str]:
+        """Defects the slicer does not repair. Small gaps usually still slice
+        (real models often have a few dozen); a large missing area does not."""
+        if not (self.open_edges or self.nonmanifold_edges):
+            return []
+        parts = []
+        if self.open_edges:
+            parts.append(f"{self.open_edges} open edges")
+        if self.nonmanifold_edges:
+            parts.append(f"{self.nonmanifold_edges} edges shared by more than two faces")
+        return [
+            "The mesh is not watertight (" + ", ".join(parts) + "). "
+            "Slicing usually still works; if it fails or the print has gaps, repair the model."
+        ]
+
+
 class ModelUploadResponse(BaseModel):
     model_id: str
     filename: str
+    # Set only for an STL with something to report; None when it is clean,
+    # not an STL, or could not be analysed.
+    mesh_report: MeshReport | None = None
 
 
 class SampleModelSummary(BaseModel):

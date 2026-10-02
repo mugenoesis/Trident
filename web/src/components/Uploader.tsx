@@ -4,11 +4,13 @@ interface UploaderProps {
   onFileSelected: (file: File) => void
   fileName: string | null
   uploadStatus: 'idle' | 'uploading' | 'done' | 'error'
+  // Set when the upload-time check auto-fixed (or flagged) the mesh.
+  meshNote?: string | null
 }
 
 const ACCEPT = '.stl,.3mf,.obj,.step,.stp'
 
-export default function Uploader({ onFileSelected, fileName, uploadStatus }: UploaderProps) {
+export default function Uploader({ onFileSelected, fileName, uploadStatus, meshNote }: UploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
 
@@ -43,8 +45,8 @@ export default function Uploader({ onFileSelected, fileName, uploadStatus }: Upl
         <>
           <strong>{fileName}</strong>
           <span className="uploader-status">
-            {uploadStatus === 'uploading' && 'Uploading…'}
-            {uploadStatus === 'done' && 'Ready to slice'}
+            {uploadStatus === 'uploading' && (fileName.toLowerCase().endsWith('.stl') ? 'Uploading and checking the mesh…' : 'Uploading…')}
+            {uploadStatus === 'done' && (meshNote ? `Ready to slice · ${meshNote}` : 'Ready to slice')}
             {uploadStatus === 'error' && 'Upload failed — click to retry'}
           </span>
         </>
