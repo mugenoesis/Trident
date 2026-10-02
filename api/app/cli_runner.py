@@ -101,8 +101,8 @@ def _out_of_range_overrides(model_path: Path, setting_overrides: dict[str, Any])
     return fixes
 
 
-def _resolve_profile_detail(kind: str, name: str) -> ProfileDetail:
-    detail = profiles_module.catalog.get_by_name(kind, name)
+def _resolve_profile_detail(kind: str, name: str, user_id: str | None = None) -> ProfileDetail:
+    detail = profiles_module.catalog.get_by_name(kind, name, user_id)
     if detail is None:
         raise ValueError(f"Unknown {kind} profile: {name!r}")
     return detail
@@ -192,14 +192,15 @@ def run_slice(
     setting_overrides: dict[str, Any],
     plate_index: int | None = None,
     arrange: bool = True,
+    user_id: str | None = None,
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
 ) -> SliceResult:
     # Resolved before the FIFO/reader thread exist so an unknown profile name
     # fails fast without leaking a thread blocked forever on open()-for-read.
-    printer_detail = _resolve_profile_detail("machine", printer_profile)
-    process_detail = _resolve_profile_detail("process", process_profile)
-    filament_details = [_resolve_profile_detail("filament", f) for f in filament_profiles]
+    printer_detail = _resolve_profile_detail("machine", printer_profile, user_id)
+    process_detail = _resolve_profile_detail("process", process_profile, user_id)
+    filament_details = [_resolve_profile_detail("filament", f, user_id) for f in filament_profiles]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     fifo_path = output_dir / "progress.pipe"

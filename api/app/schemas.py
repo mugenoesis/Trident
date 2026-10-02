@@ -83,6 +83,28 @@ class ProfileDetail(ProfileSummary):
     data: dict[str, Any]
 
 
+class ImportedProfile(BaseModel):
+    kind: str  # "machine" | "process" | "filament"
+    name: str
+    inherits: str | None = None
+    warning: str | None = None
+
+
+class ImportIssue(BaseModel):
+    file: str
+    name: str | None = None
+    reason: str
+
+
+class ImportResult(BaseModel):
+    """Outcome of POST /profiles/import (see app/userprofiles.py)."""
+
+    imported: list[ImportedProfile]
+    # Same name already imported earlier and overwrite was off; not saved.
+    conflicts: list[ImportedProfile]
+    skipped: list[ImportIssue]
+
+
 class SettingDef(BaseModel):
     key: str
     type: str

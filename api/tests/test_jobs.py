@@ -296,7 +296,7 @@ def test_exclusion_slices_a_derived_copy_and_keeps_arranging(client, tmp_path, m
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (False, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1], plate_index=1))
     assert resp.status_code == 200
     assert captured["model_path"].name == "input.3mf"
@@ -312,7 +312,7 @@ def test_belt_layout_slices_one_plate_without_rearranging(client, tmp_path, monk
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (True, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
     resp = client.post(
         "/jobs",
         json=_job(model_id, excluded_objects=[1], belt_layout={"order": [3, 0, 2], "gap_mm": 12}),
@@ -330,7 +330,7 @@ def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name: (False, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [0, 1, 2, 3]}, plate_index=2))
     assert resp.status_code == 200
     assert captured["plate_index"] == 2

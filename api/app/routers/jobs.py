@@ -28,9 +28,9 @@ def _job_output_dir(job_id: str) -> Path:
     return settings.output_dir / job_id
 
 
-def _machine_bed(printer_profile: str) -> tuple[bool, float]:
+def _machine_bed(printer_profile: str, user_id: str | None = None) -> tuple[bool, float]:
     """(is a belt printer, X centre of the bed in mm) for a machine profile."""
-    detail = cli_runner._resolve_profile_detail("machine", printer_profile)
+    detail = cli_runner._resolve_profile_detail("machine", printer_profile, user_id)
     belt_flag = detail.data.get("belt_printer_infinite_y")
     is_belt = belt_flag in ("1", 1, True)
     xs: list[float] = []
@@ -42,7 +42,9 @@ def _machine_bed(printer_profile: str) -> tuple[bool, float]:
     return is_belt, (min(xs) + max(xs)) / 2 if xs else 0.0
 
 
-def _prepare_model(job_id: str, model_path: Path, request: JobCreateRequest) -> tuple[Path, int | None, bool]:
+def _prepare_model(
+    job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None
+) -> tuple[Path, int | None, bool]:
     """(model to slice, plate to slice, whether the CLI may re-arrange).
 
     Unchanged unless the user excluded objects or asked for a belt layout, in
@@ -52,7 +54,7 @@ def _prepare_model(job_id: str, model_path: Path, request: JobCreateRequest) -> 
         return model_path, request.plate_index, True
     derived = _job_output_dir(job_id) / "input.3mf"
     excluded = set(request.excluded_objects)
-    is_belt, center_x = _machine_bed(request.printer_profile)
+    is_belt, center_x = _machine_bed(request.printer_profile, user_id)
     if request.belt_layout and is_belt:
         threemf_objects.write_derived_3mf(
             model_path,
@@ -68,10 +70,10 @@ def _prepare_model(job_id: str, model_path: Path, request: JobCreateRequest) -> 
     return derived, request.plate_index, True
 
 
-def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
+def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
-        model_path, plate_index, arrange = _prepare_model(job_id, model_path, request)
+        model_path, plate_index, arrange = _prepare_model(job_id, model_path, request, user_id)
         result = cli_runner.run_slice(
             model_path=model_path,
             output_dir=_job_output_dir(job_id),
@@ -81,6 +83,7 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest) -> None:
             setting_overrides=request.setting_overrides,
             plate_index=plate_index,
             arrange=arrange,
+            user_id=user_id,
             on_progress=lambda p: store.update_progress(job_id, p),
         )
     except Exception as exc:  # noqa: BLE001 - report to job record, don't crash the worker
@@ -151,7 +154,7 @@ def create_job(
         setting_overrides=request.setting_overrides,
         plate_index=request.plate_index,
     )
-    background_tasks.add_task(_run_job, job.id, model_path, request)
+    background_tasks.add_task(_run_job, job.id, model_path, request, current.id)
     return job
 
 

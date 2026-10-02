@@ -17,8 +17,9 @@ import json
 import logging
 from pathlib import Path
 
+from . import userprofiles
 from .config import settings
-from .schemas import ProfileDetail, ProfileSummary
+from .schemas import ImportedProfile, ImportIssue, ImportResult, ProfileDetail, ProfileSummary
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +51,14 @@ class ProfileCatalog:
         # base/template presets (e.g. "fdm_belt_common") -- kept around
         # purely as `inherits` merge sources; never exposed via list()/get().
         self._raw_by_key: dict[tuple[str, str, str], dict] = {}
+        # Per-user imported profiles (userprofiles.py), merged lazily and
+        # cached; dropped whenever that user imports or deletes something.
+        self._user_cache: dict[str, dict[tuple[str, str, str], ProfileDetail]] = {}
 
     def load(self) -> None:
         self._by_key.clear()
         self._raw_by_key.clear()
+        self._user_cache.clear()
         if not self._profiles_dir.is_dir():
             logger.warning("profiles_dir %s does not exist; catalog is empty", self._profiles_dir)
             return
@@ -127,7 +132,13 @@ class ProfileCatalog:
         logger.info("Loaded %d profiles from %s", len(self._by_key), self._profiles_dir)
 
     def _resolve_merged(
-        self, vendor: str, kind: str, name: str, data: dict, _seen: frozenset[tuple[str, str, str]] = frozenset()
+        self,
+        vendor: str,
+        kind: str,
+        name: str,
+        data: dict,
+        _seen: frozenset[tuple[str, str, str]] = frozenset(),
+        raw: dict[tuple[str, str, str], dict] | None = None,
     ) -> dict:
         """Merge `data` over its full `inherits` ancestor chain, root-first so
         the child's own keys always win. `inherits` is a bare name (no
@@ -145,11 +156,12 @@ class ProfileCatalog:
         if not isinstance(inherits, str) or not inherits or (vendor, kind, name) in _seen:
             return dict(data)
 
+        raw = self._raw_by_key if raw is None else raw
         seen = _seen | {(vendor, kind, name)}
         parent_key = (vendor, kind, inherits)
-        parent_data = self._raw_by_key.get(parent_key)
+        parent_data = raw.get(parent_key)
         if parent_data is None:
-            for (other_vendor, other_kind, other_name), other_data in self._raw_by_key.items():
+            for (other_vendor, other_kind, other_name), other_data in raw.items():
                 if other_kind == kind and other_name == inherits:
                     parent_key = (other_vendor, other_kind, other_name)
                     parent_data = other_data
@@ -160,21 +172,89 @@ class ProfileCatalog:
             # whole catalog load.
             return dict(data)
 
-        merged_parent = self._resolve_merged(*parent_key, parent_data, seen)
+        merged_parent = self._resolve_merged(*parent_key, parent_data, seen, raw)
         merged = dict(merged_parent)
         merged.update(data)
         return merged
 
-    def list(self) -> list[ProfileSummary]:
-        return [
-            ProfileSummary(vendor=d.vendor, kind=d.kind, name=d.name, path=d.path)
-            for d in self._by_key.values()
-        ]
+    def _user_details(self, user_id: str | None) -> dict[tuple[str, str, str], ProfileDetail]:
+        """The user's imported presets, each merged over its `inherits` chain
+        (built-in presets and the user's other imports are both valid parents)."""
+        if user_id is None:
+            return {}
+        cached = self._user_cache.get(user_id)
+        if cached is not None:
+            return cached
+        user_raw = userprofiles.store.load_all(user_id)
+        raw = dict(self._raw_by_key)
+        for (kind, name), data in user_raw.items():
+            raw[(userprofiles.IMPORTED_VENDOR, kind, name)] = data
+        out: dict[tuple[str, str, str], ProfileDetail] = {}
+        for (kind, name), data in user_raw.items():
+            merged = self._resolve_merged(userprofiles.IMPORTED_VENDOR, kind, name, data, raw=raw)
+            merged.pop("inherits", None)  # see load(): already folded in
+            out[(userprofiles.IMPORTED_VENDOR, kind, name)] = ProfileDetail(
+                vendor=userprofiles.IMPORTED_VENDOR,
+                kind=kind,
+                name=name,
+                path=f"{userprofiles.IMPORTED_VENDOR}/{kind}/{name}",
+                data=merged,
+            )
+        self._user_cache[user_id] = out
+        return out
 
-    def get(self, vendor: str, kind: str, name: str) -> ProfileDetail | None:
+    def list(self, user_id: str | None = None) -> list[ProfileSummary]:
+        details = [*self._by_key.values(), *self._user_details(user_id).values()]
+        return [ProfileSummary(vendor=d.vendor, kind=d.kind, name=d.name, path=d.path) for d in details]
+
+    def get(self, vendor: str, kind: str, name: str, user_id: str | None = None) -> ProfileDetail | None:
+        if vendor == userprofiles.IMPORTED_VENDOR:
+            return self._user_details(user_id).get((vendor, kind, name))
         return self._by_key.get((vendor, kind, name))
 
-    def get_by_name(self, kind: str, name: str) -> ProfileDetail | None:
+    def imported(self, user_id: str) -> list[ProfileDetail]:
+        return list(self._user_details(user_id).values())
+
+    def import_for_user(
+        self, user_id: str, presets: list[userprofiles.ParsedPreset], issues: list[userprofiles.ImportIssue], overwrite: bool
+    ) -> ImportResult:
+        """Save parsed presets for a user. A name that a built-in preset
+        already uses is refused (as OrcaSlicer does); one the user already
+        imported is reported as a conflict and only replaced with overwrite."""
+        existing = userprofiles.store.load_all(user_id)
+        builtin_names = {(kind, name) for (_, kind, name) in self._by_key}
+        batch_names = {(pr.kind, pr.name) for pr in presets}
+        result = ImportResult(
+            imported=[],
+            conflicts=[],
+            skipped=[ImportIssue(file=i.file, name=i.name, reason=i.reason) for i in issues],
+        )
+        for pr in presets:
+            ref = ImportedProfile(kind=pr.kind, name=pr.name, inherits=pr.data.get("inherits") or None)
+            if (pr.kind, pr.name) in builtin_names:
+                result.skipped.append(
+                    ImportIssue(file=pr.name, name=pr.name, reason="A built-in profile already uses this name; rename it and import again")
+                )
+                continue
+            if (pr.kind, pr.name) in existing and not overwrite:
+                result.conflicts.append(ref)
+                continue
+            parent = ref.inherits
+            if parent and not any(
+                k == pr.kind and n == parent for (_, k, n) in self._raw_by_key
+            ) and (pr.kind, parent) not in existing and (pr.kind, parent) not in batch_names:
+                ref.warning = f"Based on '{parent}', which was not found, so it is imported on its own and may be missing settings"
+            userprofiles.store.save(user_id, pr)
+            result.imported.append(ref)
+        self._user_cache.pop(user_id, None)
+        return result
+
+    def delete_imported(self, user_id: str, kind: str, name: str) -> bool:
+        removed = userprofiles.store.delete(user_id, kind, name)
+        self._user_cache.pop(user_id, None)
+        return removed
+
+    def get_by_name(self, kind: str, name: str, user_id: str | None = None) -> ProfileDetail | None:
         """Look up a profile by (kind, name) alone, ignoring vendor.
 
         Used to resolve JobCreateRequest's printer_profile/process_profile/
@@ -186,7 +266,7 @@ class ProfileCatalog:
         "@<printer>" suffix by convention, and machine names are themselves
         vendor+model-specific in practice.
         """
-        for detail in self._by_key.values():
+        for detail in [*self._user_details(user_id).values(), *self._by_key.values()]:
             if detail.kind == kind and detail.name == name:
                 return detail
         return None
