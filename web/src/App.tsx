@@ -352,6 +352,10 @@ function MainApp({
   const [placement, setPlacement] = useState<Placement | null>(null)
   // How many copies of the (selected) model to print.
   const [copies, setCopies] = useState(1)
+  // The job whose "line them up instead?" question was already answered, and
+  // whether to slice again as soon as line-up is switched on.
+  const [lineUpAnsweredFor, setLineUpAnsweredFor] = useState<string | null>(null)
+  const [retryAfterLineUp, setRetryAfterLineUp] = useState(false)
   const [positionBusy, setPositionBusy] = useState<'orient' | 'arrange' | null>(null)
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -1656,6 +1660,23 @@ function MainApp({
     currentSignature,
   ])
 
+  // On a belt printer a multi-object file with "line up" off goes through the
+  // slicer's own arrange, which can fail to fit the objects on the bed. Offer
+  // the row layout instead, and slice again if the user agrees.
+  const needsLineUpQuestion =
+    currentJob?.status === 'failed' &&
+    Boolean(currentJob.error?.includes('over the boundary of the heated bed')) &&
+    isBeltPrinter &&
+    hasObjectChoice &&
+    !beltRowActive &&
+    lineUpAnsweredFor !== currentJob.id
+  useEffect(() => {
+    if (retryAfterLineUp && beltRowActive) {
+      setRetryAfterLineUp(false)
+      handleSlice()
+    }
+  }, [retryAfterLineUp, beltRowActive, handleSlice])
+
   return (
     <div className="app">
       <header className="app-header">
@@ -2052,6 +2073,31 @@ function MainApp({
         </section>
       </main>
 
+      {needsLineUpQuestion && currentJob && (
+        <div className="confirm-backdrop" role="alertdialog" aria-modal="true" aria-label="Line the objects up along the belt?">
+          <div className="confirm-dialog">
+            <p>
+              These objects don&rsquo;t fit side by side when the slicer arranges them on the belt bed. Slice them lined up along the belt
+              instead?
+            </p>
+            <div className="confirm-actions">
+              <button type="button" className="toast-dismiss" onClick={() => setLineUpAnsweredFor(currentJob.id)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLineUpAnsweredFor(currentJob.id)
+                  setBeltLineUp(true)
+                  setRetryAfterLineUp(true)
+                }}
+              >
+                Line them up and slice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
       {meshReport && !meshToastDismissed && (
         <div className="toast toast-top" role="status">

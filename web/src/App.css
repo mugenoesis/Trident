@@ -1366,3 +1366,34 @@
   color: #fff;
   font-size: 0.7rem;
 }
+
+/* Small yes/no question (App.tsx) */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.confirm-dialog {
+  max-width: 26rem;
+  padding: 1.1rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog p {
+  margin: 0 0 1rem;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
