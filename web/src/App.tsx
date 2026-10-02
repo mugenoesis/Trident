@@ -81,6 +81,7 @@ import type {
   SettingsProfileRecord,
   ThreeMfInspection,
 } from './types'
+import { pickBedType, supportedBedTypes } from './bedTypes'
 import { useAuth } from './useAuth'
 
 const ACTIVE_STATUSES: JobRecord['status'][] = ['queued', 'running']
@@ -347,6 +348,10 @@ function MainApp({
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [importOpen, setImportOpen] = useState(false)
+  // Build plates the selected material(s) can print on (null = no restriction
+  // known), and the printer's own default plate.
+  const [allowedBedTypes, setAllowedBedTypes] = useState<string[] | null>(null)
+  const [printerDefaultBed, setPrinterDefaultBed] = useState<string | null>(null)
   // Where the user put the model on the plate (Position panel); null = the
   // slicer's own default spot.
   const [placement, setPlacement] = useState<Placement | null>(null)
@@ -981,6 +986,13 @@ function MainApp({
           // define.
           setFilamentSlots(buildFilamentSlots(1, filament, diameters, types))
           setBedSize(parseBedSize(detail.data))
+          // A newly picked printer starts on its own default plate; the
+          // material check below then moves it if the material cannot use it.
+          const printerBed = typeof detail.data.default_bed_type === 'string' ? detail.data.default_bed_type : null
+          setPrinterDefaultBed(printerBed)
+          if (printerBed && schema.find((s) => s.key === 'curr_bed_type')?.enum_values?.includes(printerBed)) {
+            setQuickSettings((prev) => ({ ...prev, curr_bed_type: printerBed }))
+          }
           setNozzleDiameters(diameters)
           setNozzleTypes(types)
           setGlobalNozzleDiameter(diameters[0] != null ? String(diameters[0]) : '')
@@ -993,7 +1005,7 @@ function MainApp({
           setNozzleTypes([])
         })
     },
-    [vendor, profiles],
+    [vendor, profiles, schema],
   )
 
   const handleVendorChange = useCallback((v: string) => {
@@ -1018,6 +1030,39 @@ function MainApp({
       setQuickSettings((prev) => ({ ...prev, brim_type: '' }))
     }
   }, [bedSize, quickSettings.brim_type])
+
+  // The materials in use decide which build plates make sense: read their
+  // supported plates, and if the current plate is not one of them move to one
+  // that is (the printer's own default when the material allows it).
+  const slotProfilesKey = filamentSlots.map((s) => s.profile).filter(Boolean).join('\u0001')
+  useEffect(() => {
+    const names = [...new Set(slotProfilesKey ? slotProfilesKey.split('\u0001') : [])]
+    if (names.length === 0) {
+      setAllowedBedTypes(null)
+      return
+    }
+    let live = true
+    Promise.all(
+      names.map((name) => {
+        const vendorOf = profiles.find((p) => p.kind === 'filament' && p.name === name)?.vendor
+        return vendorOf ? getProfileDetail(vendorOf, 'filament', name).then((d) => d.data) : Promise.resolve(null)
+      }),
+    )
+      .then((details) => {
+        if (!live) return
+        const known = details.filter((d): d is Record<string, unknown> => d !== null)
+        setAllowedBedTypes(known.length === names.length ? supportedBedTypes(known) : null)
+      })
+      .catch(() => live && setAllowedBedTypes(null))
+    return () => {
+      live = false
+    }
+  }, [slotProfilesKey, profiles])
+  useEffect(() => {
+    if (allowedBedTypes && allowedBedTypes.length > 0 && !allowedBedTypes.includes(quickSettings.curr_bed_type)) {
+      setQuickSettings((prev) => ({ ...prev, curr_bed_type: pickBedType(allowedBedTypes, printerDefaultBed) }))
+    }
+  }, [allowedBedTypes, printerDefaultBed, quickSettings.curr_bed_type])
 
   // Reload the dropdowns after profiles were imported or deleted.
   const refreshProfiles = useCallback(() => {
@@ -2030,6 +2075,7 @@ function MainApp({
               values={quickSettings}
               onChange={handleQuickSettingsChange}
               isBelt={bedSize?.beltPrinterInfiniteY === true}
+              allowedBedTypes={allowedBedTypes}
             />
             {selectedPrinterId && (
               <SavedProfilePicker

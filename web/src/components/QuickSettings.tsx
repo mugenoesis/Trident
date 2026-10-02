@@ -36,6 +36,8 @@ interface QuickSettingsProps {
   // plain outer brim there, so they are not offered. Leading edge only is the
   // reverse: a belt-only mode (elsewhere it degrades to an outer brim).
   isBelt?: boolean
+  // Build plates the selected material supports; others are not offered.
+  allowedBedTypes?: string[] | null
 }
 
 const KEYS: (keyof QuickSettingsValues)[] = [
@@ -79,7 +81,7 @@ function findDef(schema: SettingDef[], key: string): SettingDef | undefined {
 
 // The four settings people adjust for almost every print, kept always
 // visible per the design brief -- everything else lives in AdvancedSettings.
-export default function QuickSettings({ schema, values, onChange, isBelt }: QuickSettingsProps) {
+export default function QuickSettings({ schema, values, onChange, isBelt, allowedBedTypes }: QuickSettingsProps) {
   const set = (key: keyof QuickSettingsValues, value: string) =>
     onChange({ ...values, [key]: value })
 
@@ -174,7 +176,9 @@ export default function QuickSettings({ schema, values, onChange, isBelt }: Quic
           value={values.curr_bed_type}
           onChange={(e) => set('curr_bed_type', e.target.value)}
         >
-          {(bedTypeDef?.enum_values ?? [values.curr_bed_type]).map((v) => (
+          {(bedTypeDef?.enum_values ?? [values.curr_bed_type])
+            .filter((v) => !allowedBedTypes || allowedBedTypes.length === 0 || allowedBedTypes.includes(v))
+            .map((v) => (
             <option key={v} value={v}>
               {v}
             </option>
