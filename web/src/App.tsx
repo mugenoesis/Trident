@@ -732,6 +732,13 @@ function MainApp({
       .finally(() => setSettingsRestorationDone(true))
   }, [selectedPrinterId, applySettingsProfile])
 
+  // A multi-plate file opens on its first plate, like OrcaSlicer: the preview
+  // shows that plate, and the picker can switch it.
+  const applyInspection = useCallback((inspection: ThreeMfInspection) => {
+    setPlateInfo(inspection)
+    setPlateIndex(inspection.plates.length > 1 ? inspection.plates[0].index : null)
+  }, [])
+
   const handleFileSelected = useCallback((selected: File) => {
     setFile(selected)
     setModelId(null)
@@ -757,11 +764,11 @@ function MainApp({
         // picker/nozzle-assignment UI never need a separate "is this even
         // a 3mf" branch.
         getModelPlates(res.model_id)
-          .then(setPlateInfo)
+          .then(applyInspection)
           .catch(() => setPlateInfo(null))
       })
       .catch(() => setUploadStatus('error'))
-  }, [])
+  }, [applyInspection])
 
   // Auto-orient / Auto-arrange: the slicer's own helpers run server-side and
   // produce a new .3mf, which replaces the loaded model. After an arrange the
@@ -776,7 +783,7 @@ function MainApp({
       request
         .then(async (res) => {
           const [downloaded, inspection] = await Promise.all([downloadModelFile(res.model_id), getModelPlates(res.model_id)])
-          setPlateInfo(inspection)
+          applyInspection(inspection)
           setFile(downloaded)
           setModelId(res.model_id)
           setViewMode('model')
@@ -794,7 +801,7 @@ function MainApp({
         .catch((err: Error) => alert(`Could not ${op === 'orient' ? 'orient' : 'arrange'} the model: ${err.message}`))
         .finally(() => setPositionBusy(null))
     },
-    [modelId, printerName, processName],
+    [modelId, printerName, processName, applyInspection],
   )
 
   // Loads one of the built-in sample models (SettingsMenu's "Load a sample
@@ -821,7 +828,7 @@ function MainApp({
       .then((res) => {
         setModelId(res.model_id)
         getModelPlates(res.model_id)
-          .then(setPlateInfo)
+          .then(applyInspection)
           .catch(() => setPlateInfo(null))
         return downloadModelFile(res.model_id)
       })
@@ -833,7 +840,7 @@ function MainApp({
         setUploadStatus('error')
         throw err
       })
-  }, [])
+  }, [applyInspection])
 
   // Stable reference: Viewer's effect depends on this, and an inline arrow
   // function would make it re-run (tearing down/rebuilding the three.js
@@ -871,9 +878,7 @@ function MainApp({
         }
       : beltRowActive && dimensions
         ? { x: dimensions.x, y: dimensions.y * copies + beltGapMm * (copies - 1), z: dimensions.z }
-        : hasObjectChoice && (plateInfo?.plates.length ?? 0) > 1
-          ? null
-          : dimensions
+        : dimensions
   const fitScale =
     fitDimensions && bedSize && printerName ? computeFitScale(fitDimensions, bedSize) : null
   const showScaleToast = fitScale !== null && !scaleToastDismissed
@@ -1446,6 +1451,12 @@ function MainApp({
     return substitute(plateInfo?.color_tree ?? [])
   }, [plateInfo, roleNozzleAssignments, filamentSlots])
   const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1 && !beltRowActive
+  // One plate of a multi-plate file at a time in the preview (not when a belt
+  // row lays everything out end to end).
+  const shownObjects = useMemo(
+    () => (showPlatePicker && plateIndex !== null ? objects.filter((o) => o.plate === plateIndex).map((o) => o.index) : undefined),
+    [showPlatePicker, plateIndex, objects],
+  )
 
   // Part of the slice signature (below) so a nozzle diameter/type edit
   // counts as "you changed something" the same way any other slice-
@@ -1735,6 +1746,7 @@ function MainApp({
                 supportEnabled={quickSettings.enable_support === '1'}
                 excludedObjects={hasObjectChoice ? [...excludedObjects] : undefined}
                 placement={showPositionPanel ? placement : null}
+                shownObjects={shownObjects}
                 onObjectThumbnails={setObjectThumbs}
               />
               {dimensions && (

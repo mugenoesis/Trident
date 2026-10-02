@@ -40,6 +40,10 @@ interface ViewerProps {
   // see BedSize.minX/minY); null/undefined = the slicer's default spot. Needs
   // bedSize; moving it never rebuilds the scene.
   placement?: { x: number; y: number } | null
+  // .3mf only: show just these objects (indices as in ObjectInfo.index), centred
+  // on the bed, and report their size -- used to preview one plate of a
+  // multi-plate file. null/undefined shows everything.
+  shownObjects?: number[] | null
   // .3mf with more than one object: called after each load with one small
   // rendered picture (a data: URL) per build item, keyed by index, for the
   // object picker. Must be a stable reference (it is an effect dependency).
@@ -62,7 +66,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails, placement },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails, placement, shownObjects },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -208,6 +212,13 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   // effect) that moves the loaded model to it.
   const placementRef = useRef(placement)
   const placeRef = useRef<(() => void) | null>(null)
+  // Where the loaded model sits (before the placement offset) when centred on
+  // the origin -- the whole scene, or just the shown objects of a plate.
+  const centeredRef = useRef<THREE.Vector3 | null>(null)
+  const onDimensionsRef = useRef(onDimensions)
+  useEffect(() => {
+    onDimensionsRef.current = onDimensions
+  }, [onDimensions])
   // Declared before the scene effect on purpose: effects run in order, and a
   // freshly built scene must see the placement of this very render.
   useEffect(() => {
@@ -321,7 +332,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       // The user's own placement (Position panel) wins over that default;
       // both are applied by placeModel, which also runs when only the
       // placement changes.
-      const centered = object.position.clone()
+      centeredRef.current = object.position.clone()
       const modelCenter = new THREE.Vector3(0, 0, 0)
       const placeModel = () => {
         let offsetX = 0
@@ -336,6 +347,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             : BELT_PRINTER_PREVIEW_MARGIN_MM
           offsetY = -plateDepth / 2 + margin
         }
+        const centered = centeredRef.current ?? object.position
         object.position.set(centered.x + offsetX, centered.y + offsetY, centered.z)
         modelCenter.set(offsetX, offsetY, 0)
       }
@@ -665,6 +677,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     return () => {
       disposed = true
       placeRef.current = null
+      centeredRef.current = null
       if (loadedGroupRef.current === loadedObject) loadedGroupRef.current = null
       cancelAnimationFrame(animationId)
       resizeObserver.disconnect()
@@ -709,6 +722,38 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   useEffect(() => {
     placeRef.current?.()
   }, [placementKey, loadVersion])
+
+  // Show only some objects (one plate of a multi-plate file): hide the rest,
+  // centre what is left on the bed (x/y only, so everything keeps sitting on
+  // the plate), and report its size.
+  const shownKey = shownObjects ? shownObjects.join(',') : ''
+  useEffect(() => {
+    const group = loadedGroupRef.current
+    const base = centeredRef.current
+    if (!group || !base) return
+    const shown = shownObjects ? new Set(shownObjects) : null
+    group.children.forEach((item, i) => {
+      item.visible = shown === null || shown.has(i)
+    })
+    const saved = group.position.clone()
+    group.position.set(0, 0, 0)
+    group.updateMatrixWorld(true)
+    const box = new THREE.Box3()
+    group.children.forEach((item) => {
+      if (item.visible) box.expandByObject(item)
+    })
+    group.position.copy(saved)
+    group.updateMatrixWorld(true)
+    if (box.isEmpty()) return
+    const centre = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    // finishLoad centred the full scene as position = -centre; the same here
+    // for x/y, with z left alone.
+    centeredRef.current = new THREE.Vector3(-centre.x, -centre.y, base.z)
+    placeRef.current?.()
+    onDimensionsRef.current?.({ x: size.x, y: size.y, z: size.z })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownKey, loadVersion])
 
   // Dim the objects the user excluded. Swapping materials (rather than
   // editing the shared ones) keeps every other object's color untouched, and
