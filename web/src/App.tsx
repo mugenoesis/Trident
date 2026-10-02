@@ -42,6 +42,7 @@ import FilamentSelect from './components/FilamentSelect'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
+import ObjectPicker from './components/ObjectPicker'
 import PlatePicker from './components/PlatePicker'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
@@ -61,6 +62,7 @@ import type {
   ColorNode,
   JobRecord,
   MaterialProfileRecord,
+  ObjectInfo,
   PrinterConnection,
   PrinterRecord,
   PrinterUpdateRequest,
@@ -105,6 +107,9 @@ function computeSliceSignature(
   quickSettings: QuickSettingsValues,
   advancedOverrides: Record<string, string>,
   nozzleSettingsSignature: string,
+  // Which objects of a multi-object file are printed, and (belt) how they
+  // are laid out -- see objectSelectionSignature below.
+  objectSelectionSignature: string,
   // Two different physical-slot assignments can resolve to the identical
   // effectiveFilamentProfiles array whenever the slots involved share a
   // material profile (exactly the case that caused a real print to come
@@ -123,6 +128,7 @@ function computeSliceSignature(
     quickSettings: sortedEntries(quickSettings as unknown as Record<string, unknown>),
     advancedOverrides: sortedEntries(advancedOverrides),
     nozzleSettingsSignature,
+    objectSelectionSignature,
     roleNozzleAssignments,
   })
 }
@@ -360,6 +366,20 @@ function MainApp({
   // below can render unconditionally off its shape.
   const [plateInfo, setPlateInfo] = useState<ThreeMfInspection | null>(null)
   const [plateIndex, setPlateIndex] = useState<number | null>(null)
+  // Which objects of a multi-object .3mf to leave out of the print, and how
+  // a belt printer lines the rest up (ObjectPicker). Indices are
+  // ObjectInfo.index, i.e. build-item order.
+  const [excludedObjects, setExcludedObjects] = useState<Set<number>>(new Set())
+  const [beltLineUp, setBeltLineUp] = useState(true)
+  const [beltOrder, setBeltOrder] = useState<number[]>([])
+  const [beltGapMm, setBeltGapMm] = useState(10)
+  const [objectThumbs, setObjectThumbs] = useState<Record<number, string>>({})
+  const [objectPickerOpen, setObjectPickerOpen] = useState(false)
+  // A newly loaded file starts with everything selected, in file order.
+  useEffect(() => {
+    setExcludedObjects(new Set())
+    setBeltOrder((plateInfo?.objects ?? []).map((o) => o.index))
+  }, [plateInfo])
   // Which of the printer's configured filamentSlots (by index) supplies
   // each "role" (color/material) the uploaded file itself needs -- see
   // fileRoles below. null means "not chosen yet". Sending a mismatched
@@ -697,6 +717,8 @@ function MainApp({
     setViewMode('model')
     setPlateInfo(null)
     setPlateIndex(null)
+    setObjectThumbs({})
+    setObjectPickerOpen(false)
     uploadModel(selected)
       .then((res) => {
         setModelId(res.model_id)
@@ -728,6 +750,8 @@ function MainApp({
     setViewMode('model')
     setPlateInfo(null)
     setPlateIndex(null)
+    setObjectThumbs({})
+    setObjectPickerOpen(false)
     return loadSampleModel(sampleId)
       .then((res) => {
         setModelId(res.model_id)
@@ -751,8 +775,32 @@ function MainApp({
   // scene) on every unrelated App re-render.
   const handleDimensions = useCallback((dims: Dimensions | null) => setDimensions(dims), [])
 
+  const objects: ObjectInfo[] = useMemo(() => plateInfo?.objects ?? [], [plateInfo])
+  const hasObjectChoice = objects.length > 1
+  const isBeltPrinter = bedSize?.beltPrinterInfiniteY === true
+  // On a belt printer every kept object goes in one row along the belt, so
+  // which plate it came from no longer matters and the plate picker is moot.
+  const beltRowActive = isBeltPrinter && hasObjectChoice && beltLineUp
+  const keptObjects = useMemo(() => objects.filter((o) => !excludedObjects.has(o.index)), [objects, excludedObjects])
+  const objectSelectionSignature = JSON.stringify({
+    excluded: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : [],
+    row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm } : null,
+  })
+  // What will actually print. A belt row is the kept objects end to end; for
+  // any other multi-plate file the viewer's combined extent across plates
+  // means nothing, so no fit suggestion is made at all.
+  const fitDimensions: Dimensions | null =
+    beltRowActive && keptObjects.length > 0
+      ? {
+          x: Math.max(...keptObjects.map((o) => o.width_mm)),
+          y: keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) + beltGapMm * (keptObjects.length - 1),
+          z: Math.max(...keptObjects.map((o) => o.height_mm)),
+        }
+      : hasObjectChoice && (plateInfo?.plates.length ?? 0) > 1
+        ? null
+        : dimensions
   const fitScale =
-    dimensions && bedSize && printerName ? computeFitScale(dimensions, bedSize) : null
+    fitDimensions && bedSize && printerName ? computeFitScale(fitDimensions, bedSize) : null
   const showScaleToast = fitScale !== null && !scaleToastDismissed
 
   // Shared by the auto-fit toast (uniform factor on all three axes) and the
@@ -1301,7 +1349,7 @@ function MainApp({
       })
     return substitute(plateInfo?.color_tree ?? [])
   }, [plateInfo, roleNozzleAssignments, filamentSlots])
-  const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1
+  const showPlatePicker = (plateInfo?.plates.length ?? 0) > 1 && !beltRowActive
 
   // Part of the slice signature (below) so a nozzle diameter/type edit
   // counts as "you changed something" the same way any other slice-
@@ -1321,6 +1369,7 @@ function MainApp({
         quickSettings,
         advancedOverrides,
         nozzleSettingsSignature,
+        objectSelectionSignature,
         roleNozzleAssignments,
       ),
     [
@@ -1332,6 +1381,7 @@ function MainApp({
       quickSettings,
       advancedOverrides,
       nozzleSettingsSignature,
+      objectSelectionSignature,
       roleNozzleAssignments,
     ],
   )
@@ -1343,13 +1393,18 @@ function MainApp({
   // -- there's no good "slice all of them" default once a specific plate
   // picker exists (see plan: pre-slice picker, not slice-everything).
   const plateChosenIfNeeded = !showPlatePicker || plateIndex !== null
+  // Something must be left to print -- and, when one plate is picked, on that plate.
+  const objectSelectionOk =
+    !hasObjectChoice ||
+    (keptObjects.length > 0 && (showPlatePicker && plateIndex !== null ? keptObjects.some((o) => o.plate === plateIndex) : true))
   const canSlice =
     Boolean(modelId && printerName && processName && allRolesAssigned) &&
     plateChosenIfNeeded &&
+    objectSelectionOk &&
     !alreadySliced
 
   const handleSlice = useCallback(() => {
-    if (!modelId || !printerName || !processName || !allRolesAssigned || !plateChosenIfNeeded) return
+    if (!modelId || !printerName || !processName || !allRolesAssigned || !plateChosenIfNeeded || !objectSelectionOk) return
     setSlicing(true)
     setViewMode('model')
     setLastSlicedSignature(currentSignature)
@@ -1470,6 +1525,10 @@ function MainApp({
       filament_profiles: needsRemap ? filamentSlots.map((s) => s.profile) : effectiveFilamentProfiles,
       setting_overrides: overrides,
       plate_index: plateIndex ?? undefined,
+      excluded_objects: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : undefined,
+      belt_layout: beltRowActive
+        ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap_mm: beltGapMm }
+        : undefined,
     })
       .then(setCurrentJob)
       .catch((err: Error) => {
@@ -1482,6 +1541,12 @@ function MainApp({
     processName,
     allRolesAssigned,
     plateChosenIfNeeded,
+    objectSelectionOk,
+    hasObjectChoice,
+    excludedObjects,
+    beltRowActive,
+    beltOrder,
+    beltGapMm,
     effectiveFilamentProfiles,
     plateIndex,
     quickSettings,
@@ -1549,6 +1614,8 @@ function MainApp({
                 colorTree={renderColorTree}
                 filamentUsedGrams={filamentGramsOf(currentJob)}
                 supportEnabled={quickSettings.enable_support === '1'}
+                excludedObjects={hasObjectChoice ? [...excludedObjects] : undefined}
+                onObjectThumbnails={setObjectThumbs}
               />
               {dimensions && (
                 <>
@@ -1557,6 +1624,33 @@ function MainApp({
                   </div>
                   <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
                 </>
+              )}
+              {hasObjectChoice && (
+                <div className="field-group objects-button-row">
+                  <button type="button" className="link-button" onClick={() => setObjectPickerOpen(true)}>
+                    Objects ({keptObjects.length} of {objects.length} selected)
+                  </button>
+                  {keptObjects.length === 0 && <span className="field-error">Nothing selected to print</span>}
+                  {keptObjects.length > 0 && !objectSelectionOk && (
+                    <span className="field-error">Every object on the chosen plate is left out</span>
+                  )}
+                </div>
+              )}
+              {objectPickerOpen && hasObjectChoice && (
+                <ObjectPicker
+                  objects={objects}
+                  thumbnails={objectThumbs}
+                  excluded={excludedObjects}
+                  onExcludedChange={setExcludedObjects}
+                  isBelt={isBeltPrinter}
+                  lineUp={beltLineUp}
+                  onLineUpChange={setBeltLineUp}
+                  order={beltOrder}
+                  onOrderChange={setBeltOrder}
+                  gapMm={beltGapMm}
+                  onGapChange={setBeltGapMm}
+                  onClose={() => setObjectPickerOpen(false)}
+                />
               )}
               {showPlatePicker && plateInfo && (
                 <PlatePicker plates={plateInfo.plates} plateIndex={plateIndex} onChange={setPlateIndex} />
@@ -1811,11 +1905,11 @@ function MainApp({
         </section>
       </main>
 
-      {showScaleToast && dimensions && bedSize && fitScale !== null && (
+      {showScaleToast && fitDimensions && bedSize && fitScale !== null && (
         <div className="toast">
           <div className="toast-message">
-            This model ({dimensions.x.toFixed(0)} × {dimensions.y.toFixed(0)} ×{' '}
-            {dimensions.z.toFixed(0)} mm) is larger than {printerName}&rsquo;s build volume (
+            This model ({fitDimensions.x.toFixed(0)} × {fitDimensions.y.toFixed(0)} ×{' '}
+            {fitDimensions.z.toFixed(0)} mm) is larger than {printerName}&rsquo;s build volume (
             {bedSize.width.toFixed(0)} × {bedSize.depth.toFixed(0)} × {bedSize.height.toFixed(0)}{' '}
             mm). Scale it down to {Math.round(fitScale * 100)}% to fit?
           </div>

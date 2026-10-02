@@ -32,6 +32,14 @@ interface ViewerProps {
   // preview consistent with the same enable_support-conditioned margin the
   // slicer itself now uses (vendor/orcaslicer/src/OrcaSlicer.cpp).
   supportEnabled?: boolean
+  // .3mf only: indices of build items (see ObjectInfo.index) the user chose
+  // not to print. They stay visible but dimmed, so it is clear what is left
+  // out. Ignored for anything but a .3mf Group.
+  excludedObjects?: number[]
+  // .3mf with more than one object: called after each load with one small
+  // rendered picture (a data: URL) per build item, keyed by index, for the
+  // object picker. Must be a stable reference (it is an effect dependency).
+  onObjectThumbnails?: (thumbnails: Record<number, string>) => void
 }
 
 export interface ViewerHandle {
@@ -50,7 +58,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -187,6 +195,11 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   // scratch, not just recoloring in place. Surfaced as a loading overlay
   // rather than left silent so a slow model/reassignment doesn't look hung.
   const [isRendering, setIsRendering] = useState(false)
+  // The loaded .3mf Group (null for STL/DRC), plus a counter bumped on every
+  // load so the dimming effect below re-applies after the scene is rebuilt.
+  const loadedGroupRef = useRef<THREE.Group | null>(null)
+  const dimMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const [loadVersion, setLoadVersion] = useState(0)
 
   useEffect(() => {
     const container = containerRef.current
@@ -454,6 +467,54 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       })
     }
 
+    // One small picture per top-level build item of a .3mf, for the object
+    // picker. Clones share geometry/materials with the originals (cheap) and
+    // are rendered one at a time on a short-lived second renderer, framed on
+    // each object's own bounding sphere.
+    const renderObjectThumbnails = (group: THREE.Group) => {
+      const items = group.children
+      if (!onObjectThumbnails || items.length < 2) return
+      const SIZE = 160
+      const thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true })
+      try {
+        thumbRenderer.setPixelRatio(1)
+        thumbRenderer.setSize(SIZE, SIZE)
+        const thumbScene = new THREE.Scene()
+        thumbScene.add(new THREE.AmbientLight(0xffffff, 0.6))
+        const sun = new THREE.DirectionalLight(0xffffff, 1.1)
+        sun.position.set(1, -1, 2)
+        thumbScene.add(sun)
+        const thumbCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 100000)
+        thumbCamera.up.set(0, 0, 1)
+        const out: Record<number, string> = {}
+        items.forEach((item, i) => {
+          const clone = item.clone(true)
+          thumbScene.add(clone)
+          clone.updateMatrixWorld(true)
+          const box = new THREE.Box3().setFromObject(clone)
+          if (!box.isEmpty()) {
+            const center = box.getCenter(new THREE.Vector3())
+            const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.001)
+            const distance = (radius / Math.sin(THREE.MathUtils.degToRad(35 / 2))) * 1.05
+            thumbCamera.position.copy(center).addScaledVector(new THREE.Vector3(1, -1, 0.8).normalize(), distance)
+            thumbCamera.lookAt(center)
+            thumbCamera.near = Math.max(distance - radius * 2, 0.01)
+            thumbCamera.far = distance + radius * 2
+            thumbCamera.updateProjectionMatrix()
+            thumbRenderer.render(thumbScene, thumbCamera)
+            out[i] = thumbRenderer.domElement.toDataURL('image/png')
+          }
+          thumbScene.remove(clone)
+        })
+        if (!disposed) onObjectThumbnails(out)
+      } catch (err) {
+        console.error('Failed to render object thumbnails', err)
+      } finally {
+        thumbRenderer.dispose()
+        thumbRenderer.forceContextLoss()
+      }
+    }
+
     if (file) {
       const url = URL.createObjectURL(file)
       const lowerName = file.name.toLowerCase()
@@ -504,7 +565,10 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             }
             scene.add(group)
             loadedObject = group
+            loadedGroupRef.current = group
             finishLoad(group, new THREE.Box3().setFromObject(group))
+            renderObjectThumbnails(group)
+            setLoadVersion((n) => n + 1)
             URL.revokeObjectURL(url)
             setIsRendering(false)
           },
@@ -569,6 +633,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 
     return () => {
       disposed = true
+      if (loadedGroupRef.current === loadedObject) loadedGroupRef.current = null
       cancelAnimationFrame(animationId)
       resizeObserver.disconnect()
       controls.dispose()
@@ -605,7 +670,43 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     // effect (camera resets too), which is an acceptable trade-off for
     // keeping one effect rather than splitting scene setup from plate
     // sizing.
-  }, [file, onDimensions, bedSize, colorTree, supportEnabled])
+  }, [file, onDimensions, bedSize, colorTree, supportEnabled, onObjectThumbnails])
+
+  // Dim the objects the user excluded. Swapping materials (rather than
+  // editing the shared ones) keeps every other object's color untouched, and
+  // the original is remembered on the mesh so un-excluding restores it.
+  const excludedKey = (excludedObjects ?? []).join(',')
+  useEffect(() => {
+    const group = loadedGroupRef.current
+    if (!group) return
+    const excluded = new Set(excludedObjects ?? [])
+    if (!dimMaterialRef.current) {
+      dimMaterialRef.current = new THREE.MeshStandardMaterial({
+        color: 0x8a93a0,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        metalness: 0,
+        roughness: 1,
+      })
+    }
+    group.children.forEach((item, i) => {
+      item.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return
+        if (excluded.has(i)) {
+          if (!node.userData.origMaterial) {
+            node.userData.origMaterial = node.material
+            node.material = dimMaterialRef.current!
+          }
+        } else if (node.userData.origMaterial) {
+          node.material = node.userData.origMaterial
+          delete node.userData.origMaterial
+        }
+      })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludedKey, loadVersion])
+  useEffect(() => () => dimMaterialRef.current?.dispose(), [])
 
   return (
     <div className="viewer-wrap">

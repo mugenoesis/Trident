@@ -72,6 +72,10 @@ export interface JobCreateRequest {
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
   plate_index?: number | null
+  // .3mf only: indices of objects NOT to print.
+  excluded_objects?: number[]
+  // .3mf on a belt printer only: lay the kept objects out in a row.
+  belt_layout?: BeltLayout
   // Raw base64 PNG (no "data:" prefix), a snapshot of the 3D preview at the
   // moment slicing starts -- embedded into the gcode's own thumbnail
   // server-side (api/app/gcode_thumbnail.py), since the OrcaSlicer CLI
@@ -87,8 +91,26 @@ export interface PlateInfo {
   thumbnail: string | null
 }
 
+// One <build><item> of a .3mf, in file order -- index lines up with the
+// viewer's per-object meshes (see api/app/threemf_objects.py).
+export interface ObjectInfo {
+  index: number
+  name: string
+  plate: number
+  width_mm: number
+  depth_mm: number
+  height_mm: number
+}
+
+export interface BeltLayout {
+  order: number[]
+  gap_mm: number
+}
+
 export interface ThreeMfInspection {
   plates: PlateInfo[]
+  // Empty for anything but a .3mf whose objects could be read.
+  objects?: ObjectInfo[]
   extruder_indices: number[]
   // The file's own author's filament_colour array, one entry per filament
   // role the file was originally configured with -- more reliable than
