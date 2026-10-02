@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
+  arrangeModel,
   createJob,
   deleteImportedProfile,
   createMaterialProfile,
@@ -15,6 +16,7 @@ import {
   duplicateSettingsProfile,
   getJob,
   getModelPlates,
+  orientModel,
   getProfileDetail,
   getSettingsSchema,
   listJobs,
@@ -45,6 +47,7 @@ import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
 import ObjectPicker from './components/ObjectPicker'
 import PlatePicker from './components/PlatePicker'
+import PositionPanel from './components/PositionPanel'
 import ProfileImportDialog from './components/ProfileImportDialog'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
@@ -66,6 +69,7 @@ import type {
   MaterialProfileRecord,
   MeshReport,
   ObjectInfo,
+  Placement,
   PrinterConnection,
   PrinterRecord,
   PrinterUpdateRequest,
@@ -341,6 +345,10 @@ function MainApp({
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [importOpen, setImportOpen] = useState(false)
+  // Where the user put the model on the plate (Position panel); null = the
+  // slicer's own default spot.
+  const [placement, setPlacement] = useState<Placement | null>(null)
+  const [positionBusy, setPositionBusy] = useState<'orient' | 'arrange' | null>(null)
   const [schema, setSchema] = useState<SettingDef[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [sampleModels, setSampleModels] = useState<SampleModelSummary[]>([])
@@ -726,6 +734,7 @@ function MainApp({
     setPlateIndex(null)
     setObjectThumbs({})
     setObjectPickerOpen(false)
+    setPlacement(null)
     setMeshReport(null)
     setMeshToastDismissed(false)
     uploadModel(selected)
@@ -745,6 +754,40 @@ function MainApp({
       .catch(() => setUploadStatus('error'))
   }, [])
 
+  // Auto-orient / Auto-arrange: the slicer's own helpers run server-side and
+  // produce a new .3mf, which replaces the loaded model. After an arrange the
+  // sliders show where it put the model; after an orient the position goes
+  // back to the slicer's default.
+  const runModelOp = useCallback(
+    (op: 'orient' | 'arrange') => {
+      if (!modelId || !printerName || !processName) return
+      setPositionBusy(op)
+      const request =
+        op === 'orient' ? orientModel(modelId, printerName, processName) : arrangeModel(modelId, printerName, processName)
+      request
+        .then(async (res) => {
+          const [downloaded, inspection] = await Promise.all([downloadModelFile(res.model_id), getModelPlates(res.model_id)])
+          setPlateInfo(inspection)
+          setFile(downloaded)
+          setModelId(res.model_id)
+          setViewMode('model')
+          const objs = inspection.objects ?? []
+          if (op === 'arrange' && objs.length > 0) {
+            const minX = Math.min(...objs.map((o) => o.center_x_mm - o.width_mm / 2))
+            const maxX = Math.max(...objs.map((o) => o.center_x_mm + o.width_mm / 2))
+            const minY = Math.min(...objs.map((o) => o.center_y_mm - o.depth_mm / 2))
+            const maxY = Math.max(...objs.map((o) => o.center_y_mm + o.depth_mm / 2))
+            setPlacement({ x: (minX + maxX) / 2, y: (minY + maxY) / 2 })
+          } else {
+            setPlacement(null)
+          }
+        })
+        .catch((err: Error) => alert(`Could not ${op === 'orient' ? 'orient' : 'arrange'} the model: ${err.message}`))
+        .finally(() => setPositionBusy(null))
+    },
+    [modelId, printerName, processName],
+  )
+
   // Loads one of the built-in sample models (SettingsMenu's "Load a sample
   // model…") instead of a local upload. The model is created server-side
   // (routers/sample_models.py copies the bundled file into a fresh
@@ -762,6 +805,7 @@ function MainApp({
     setPlateIndex(null)
     setObjectThumbs({})
     setObjectPickerOpen(false)
+    setPlacement(null)
     setMeshReport(null)
     return loadSampleModel(sampleId)
       .then((res) => {
@@ -793,9 +837,14 @@ function MainApp({
   // which plate it came from no longer matters and the plate picker is moot.
   const beltRowActive = isBeltPrinter && hasObjectChoice && beltLineUp
   const keptObjects = useMemo(() => objects.filter((o) => !excludedObjects.has(o.index)), [objects, excludedObjects])
+  // Position sliders: a model on a chosen printer, on a single plate, and not
+  // already laid out by the belt row.
+  const showPositionPanel =
+    Boolean(file && modelId && printerName && bedSize && dimensions) && !beltRowActive && (plateInfo?.plates.length ?? 1) <= 1
   const objectSelectionSignature = JSON.stringify({
     excluded: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : [],
     row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm } : null,
+    placement: showPositionPanel ? placement : null,
   })
   // What will actually print. A belt row is the kept objects end to end; for
   // any other multi-plate file the viewer's combined extent across plates
@@ -1030,6 +1079,9 @@ function MainApp({
             width: printer.bed_width,
             depth: printer.bed_depth,
             height: printer.bed_height,
+            // Also backfilled with the machine profile below.
+            minX: 0,
+            minY: 0,
             // Backfilled a moment later once the machine profile itself
             // loads below (a saved printer record doesn't snapshot these) --
             // false/null here just means the belt-specific placement in
@@ -1545,6 +1597,7 @@ function MainApp({
       filament_profiles: needsRemap ? filamentSlots.map((s) => s.profile) : effectiveFilamentProfiles,
       setting_overrides: overrides,
       plate_index: plateIndex ?? undefined,
+      placement: showPositionPanel && placement ? placement : undefined,
       excluded_objects: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : undefined,
       belt_layout: beltRowActive
         ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap_mm: beltGapMm }
@@ -1563,6 +1616,8 @@ function MainApp({
     plateChosenIfNeeded,
     objectSelectionOk,
     hasObjectChoice,
+    showPositionPanel,
+    placement,
     excludedObjects,
     beltRowActive,
     beltOrder,
@@ -1636,6 +1691,7 @@ function MainApp({
                 filamentUsedGrams={filamentGramsOf(currentJob)}
                 supportEnabled={quickSettings.enable_support === '1'}
                 excludedObjects={hasObjectChoice ? [...excludedObjects] : undefined}
+                placement={showPositionPanel ? placement : null}
                 onObjectThumbnails={setObjectThumbs}
               />
               {dimensions && (
@@ -1645,6 +1701,21 @@ function MainApp({
                   </div>
                   <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
                 </>
+              )}
+              {showPositionPanel && bedSize && dimensions && (
+                <PositionPanel
+                  bedSize={bedSize}
+                  dimensions={dimensions}
+                  supportEnabled={quickSettings.enable_support === '1'}
+                  placement={placement}
+                  onPlacementChange={(p) => {
+                    setPlacement(p)
+                    setViewMode('model')
+                  }}
+                  onAutoOrient={() => runModelOp('orient')}
+                  onAutoArrange={() => runModelOp('arrange')}
+                  busy={positionBusy}
+                />
               )}
               {hasObjectChoice && (
                 <div className="field-group objects-button-row">

@@ -296,6 +296,7 @@ def test_exclusion_slices_a_derived_copy_and_keeps_arranging(client, tmp_path, m
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1], plate_index=1))
     assert resp.status_code == 200
@@ -312,6 +313,7 @@ def test_belt_layout_slices_one_plate_without_rearranging(client, tmp_path, monk
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
     resp = client.post(
         "/jobs",
@@ -330,8 +332,62 @@ def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [0, 1, 2, 3]}, plate_index=2))
     assert resp.status_code == 200
     assert captured["plate_index"] == 2
     assert captured["arrange"] is True
+
+
+def test_placement_converts_an_stl_and_keeps_positions(client, tmp_path, monkeypatch):
+    from app.routers import jobs as jobs_router
+    from app.threemf_objects import list_objects
+    from test_threemf_objects import _write_project
+
+    model_id = _upload_model(client)  # a plain "stl"
+    captured = _capture_slice(monkeypatch)
+    project = _write_project(tmp_path)
+
+    def fake_convert(src, dest, **kw):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(project.read_bytes())
+        return dest
+
+    monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
+    monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
+    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+    resp = client.post("/jobs", json=_job(model_id, placement={"x": 60, "y": 70}))
+    assert resp.status_code == 200
+    assert captured["arrange"] is False and captured["keep_positions"] is True and captured["plate_index"] == 1
+    objs = list_objects(captured["model_path"])
+    assert len(objs) == 4  # every object of the converted file is kept, moved as a group
+
+
+def test_placement_and_belt_layout_cannot_be_combined(client, tmp_path):
+    model_id = _upload_project(client, tmp_path)
+    resp = client.post("/jobs", json=_job(model_id, placement={"x": 1, "y": 2}, belt_layout={"order": [0]}))
+    assert resp.status_code == 400
+
+
+def test_orient_and_arrange_store_a_new_3mf_model(client, tmp_path, monkeypatch):
+    model_id = _upload_model(client)
+    project = None
+    from test_threemf_objects import _write_project
+
+    project = _write_project(tmp_path)
+    calls = []
+
+    def fake_convert(src, dest, **kw):
+        calls.append(kw)
+        dest.write_bytes(project.read_bytes())
+        return dest
+
+    monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
+    oriented = client.post(f"/models/{model_id}/orient", json={})
+    assert oriented.status_code == 200 and oriented.json()["filename"].endswith(".3mf")
+    assert oriented.json()["model_id"] != model_id
+    assert calls[-1]["orient"] is True and calls[-1]["arrange"] is False
+    assert client.post(f"/models/{model_id}/arrange", json={}).status_code == 400  # needs the printer
+    arranged = client.post(f"/models/{model_id}/arrange", json={"printer_profile": "P", "process_profile": "Q"})
+    assert arranged.status_code == 200 and calls[-1]["arrange"] is True and calls[-1]["printer_profile"] == "P"

@@ -42,38 +42,69 @@ def _machine_bed(printer_profile: str, user_id: str | None = None) -> tuple[bool
     return is_belt, (min(xs) + max(xs)) / 2 if xs else 0.0
 
 
+def _machine_bed_area(printer_profile: str, user_id: str | None = None) -> tuple[list[str] | None, float | None]:
+    """The printer's printable_area strings and height, as the derived 3mf
+    must declare them (see threemf_objects.write_derived_3mf)."""
+    data = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
+    area = data.get("printable_area")
+    try:
+        height = float(data.get("printable_height"))
+    except (TypeError, ValueError):
+        height = None
+    return ([str(p) for p in area] if isinstance(area, list) and area else None), height
+
+
 def _prepare_model(
     job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None
-) -> tuple[Path, int | None, bool]:
-    """(model to slice, plate to slice, whether the CLI may re-arrange).
+) -> tuple[Path, int | None, bool, bool]:
+    """(model to slice, plate to slice, whether the CLI may re-arrange,
+    whether it must keep every object exactly where placed).
 
-    Unchanged unless the user excluded objects or asked for a belt layout, in
-    which case a derived copy of the .3mf is written next to the job output.
+    Unchanged unless the user excluded objects, asked for a belt layout or
+    placed the model, in which case a derived copy of the .3mf is written
+    next to the job output (an STL/OBJ/STEP is first converted to a .3mf).
     """
-    if not request.excluded_objects and not request.belt_layout:
-        return model_path, request.plate_index, True
-    derived = _job_output_dir(job_id) / "input.3mf"
+    if not request.excluded_objects and not request.belt_layout and not request.placement:
+        return model_path, request.plate_index, True, False
+    out_dir = _job_output_dir(job_id)
+    derived = out_dir / "input.3mf"
     excluded = set(request.excluded_objects)
     is_belt, center_x = _machine_bed(request.printer_profile, user_id)
+    bed_area, bed_height = _machine_bed_area(request.printer_profile, user_id)
+    source = model_path
+    if model_path.suffix.lower() != ".3mf":
+        source = cli_runner.convert_model(model_path, out_dir / "converted.3mf")
     if request.belt_layout and is_belt:
         threemf_objects.write_derived_3mf(
-            model_path,
+            source,
             derived,
             excluded=excluded,
             order=request.belt_layout.order,
             gap_mm=request.belt_layout.gap_mm,
             center_x=center_x,
+            bed_area=bed_area,
+            bed_height=bed_height,
         )
         # Everything now sits on plate 1, placed explicitly.
-        return derived, 1, False
-    threemf_objects.write_derived_3mf(model_path, derived, excluded=excluded)
-    return derived, request.plate_index, True
+        return derived, 1, False, False
+    if request.placement:
+        threemf_objects.write_derived_3mf(
+            source,
+            derived,
+            excluded=excluded,
+            placement=(request.placement.x, request.placement.y),
+            bed_area=bed_area,
+            bed_height=bed_height,
+        )
+        return derived, 1, False, True
+    threemf_objects.write_derived_3mf(source, derived, excluded=excluded, bed_area=bed_area, bed_height=bed_height)
+    return derived, request.plate_index, True, False
 
 
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
-        model_path, plate_index, arrange = _prepare_model(job_id, model_path, request, user_id)
+        model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, model_path, request, user_id)
         result = cli_runner.run_slice(
             model_path=model_path,
             output_dir=_job_output_dir(job_id),
@@ -83,6 +114,7 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             setting_overrides=request.setting_overrides,
             plate_index=plate_index,
             arrange=arrange,
+            keep_positions=keep_positions,
             user_id=user_id,
             on_progress=lambda p: store.update_progress(job_id, p),
         )
@@ -131,6 +163,8 @@ def create_job(
     if owner is not None and owner != current.id:
         raise HTTPException(status_code=404, detail="model_id not found")
 
+    if request.placement and request.belt_layout:
+        raise HTTPException(status_code=400, detail="placement and belt_layout cannot be combined")
     if request.excluded_objects or request.belt_layout:
         if model_path.suffix.lower() != ".3mf":
             raise HTTPException(status_code=400, detail="Object selection and belt layout need a .3mf")

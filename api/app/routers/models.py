@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import meshcheck, threemf
+from .. import cli_runner, meshcheck, threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ColorNode, MeshReport, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
+from ..schemas import ColorNode, MeshReport, ModelOpRequest, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -109,6 +109,44 @@ async def upload_model(file: UploadFile, current: User = Depends(require_user)) 
     original_name = file.filename or dest.name
     # The mesh check is CPU-bound Python; keep it off the event loop.
     return await run_in_threadpool(finalize_new_model, model_id, suffix, dest, original_name, current.id)
+
+
+def _converted_copy(model_id: str, body: ModelOpRequest, current: User, *, orient: bool, arrange: bool) -> ModelUploadResponse:
+    """Run the slicer's own auto-orient / arrange over a model and store the
+    result as a new .3mf model (the original is left alone)."""
+    path = resolve_model_path(model_id)
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    if arrange and not (body.printer_profile and body.process_profile):
+        raise HTTPException(status_code=400, detail="Arranging needs the printer and process profile")
+    new_id = uuid.uuid4().hex
+    dest = settings.models_dir / f"{new_id}.3mf"
+    try:
+        cli_runner.convert_model(
+            path,
+            dest,
+            printer_profile=body.printer_profile,
+            process_profile=body.process_profile,
+            user_id=current.id,
+            orient=orient,
+            arrange=arrange,
+        )
+    except (cli_runner.ConvertError, ValueError) as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    stem = Path(resolve_model_original_name(model_id) or path.name).stem
+    return finalize_new_model(new_id, ".3mf", dest, f"{stem}.3mf", current.id)
+
+
+@router.post("/{model_id}/orient", response_model=ModelUploadResponse)
+def orient_model(model_id: str, body: ModelOpRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+    return _converted_copy(model_id, body, current, orient=True, arrange=False)
+
+
+@router.post("/{model_id}/arrange", response_model=ModelUploadResponse)
+def arrange_model(model_id: str, body: ModelOpRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+    return _converted_copy(model_id, body, current, orient=False, arrange=True)
 
 
 @router.get("/{model_id}/file")

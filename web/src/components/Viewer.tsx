@@ -36,6 +36,10 @@ interface ViewerProps {
   // not to print. They stay visible but dimmed, so it is clear what is left
   // out. Ignored for anything but a .3mf Group.
   excludedObjects?: number[]
+  // Where the model's footprint centre sits on the plate (plate coordinates,
+  // see BedSize.minX/minY); null/undefined = the slicer's default spot. Needs
+  // bedSize; moving it never rebuilds the scene.
+  placement?: { x: number; y: number } | null
   // .3mf with more than one object: called after each load with one small
   // rendered picture (a data: URL) per build item, keyed by index, for the
   // object picker. Must be a stable reference (it is an effect dependency).
@@ -58,7 +62,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails, placement },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -200,6 +204,15 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   const loadedGroupRef = useRef<THREE.Group | null>(null)
   const dimMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const [loadVersion, setLoadVersion] = useState(0)
+  // The latest requested placement, and a function (set up by the scene
+  // effect) that moves the loaded model to it.
+  const placementRef = useRef(placement)
+  const placeRef = useRef<(() => void) | null>(null)
+  // Declared before the scene effect on purpose: effects run in order, and a
+  // freshly built scene must see the placement of this very render.
+  useEffect(() => {
+    placementRef.current = placement
+  }, [placement])
 
   useEffect(() => {
     const container = containerRef.current
@@ -305,13 +318,31 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       // in scene Y around this same object, so the belt's own Y origin is
       // at scene Y = -plateDepth / 2, regardless of the profile's own
       // absolute min-Y coordinate.
+      // The user's own placement (Position panel) wins over that default;
+      // both are applied by placeModel, which also runs when only the
+      // placement changes.
+      const centered = object.position.clone()
       const modelCenter = new THREE.Vector3(0, 0, 0)
-      if (bedSize?.beltPrinterInfiniteY) {
-        const margin = supportEnabled
-          ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT
-          : BELT_PRINTER_PREVIEW_MARGIN_MM
-        modelCenter.y = -plateDepth / 2 + margin
-        object.position.y += modelCenter.y
+      const placeModel = () => {
+        let offsetX = 0
+        let offsetY = 0
+        const wanted = placementRef.current
+        if (bedSize && wanted) {
+          offsetX = wanted.x - bedSize.minX - plateWidth / 2
+          offsetY = wanted.y - bedSize.minY - plateDepth / 2
+        } else if (bedSize?.beltPrinterInfiniteY) {
+          const margin = supportEnabled
+            ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT
+            : BELT_PRINTER_PREVIEW_MARGIN_MM
+          offsetY = -plateDepth / 2 + margin
+        }
+        object.position.set(centered.x + offsetX, centered.y + offsetY, centered.z)
+        modelCenter.set(offsetX, offsetY, 0)
+      }
+      placeModel()
+      placeRef.current = () => {
+        placeModel()
+        controls.target.copy(modelCenter)
       }
 
       // Auto-frame the model itself, regardless of the plate/ceiling size --
@@ -633,6 +664,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 
     return () => {
       disposed = true
+      placeRef.current = null
       if (loadedGroupRef.current === loadedObject) loadedGroupRef.current = null
       cancelAnimationFrame(animationId)
       resizeObserver.disconnect()
@@ -671,6 +703,12 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     // keeping one effect rather than splitting scene setup from plate
     // sizing.
   }, [file, onDimensions, bedSize, colorTree, supportEnabled, onObjectThumbnails])
+
+  // Move the model when only the placement changed (the scene stays).
+  const placementKey = placement ? `${placement.x},${placement.y}` : ''
+  useEffect(() => {
+    placeRef.current?.()
+  }, [placementKey, loadVersion])
 
   // Dim the objects the user excluded. Swapping materials (rather than
   // editing the shared ones) keeps every other object's color untouched, and

@@ -182,6 +182,60 @@ def _pipe_reader(fifo_path: Path, on_progress: ProgressCallback | None) -> None:
         logger.warning("--pipe reader for %s exited: %s", fifo_path, exc)
 
 
+class ConvertError(RuntimeError):
+    pass
+
+
+def convert_model(
+    model_path: Path,
+    dest: Path,
+    *,
+    printer_profile: str | None = None,
+    process_profile: str | None = None,
+    user_id: str | None = None,
+    orient: bool = False,
+    arrange: bool = False,
+    timeout_s: float = 300.0,
+) -> Path:
+    """Write `model_path` out as a project .3mf at `dest`, optionally after
+    OrcaSlicer's own auto-orient and/or arrange. Any input the slicer reads
+    (stl, obj, step, 3mf...) becomes a .3mf whose objects and positions can be
+    inspected and edited (threemf_objects.py). Arrange needs the printer's
+    bed, so it takes the printer and process profile names.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="headless-orca-convert-"))
+    cmd = [
+        settings.orcaslicer_bin,
+        "--datadir",
+        str(settings.orcaslicer_datadir),
+        "--outputdir",
+        str(dest.parent),
+    ]
+    if printer_profile and process_profile:
+        printer_path = _write_resolved_profile(
+            _resolve_profile_detail("machine", printer_profile, user_id), scratch, "printer"
+        )
+        process_path = _write_resolved_profile(
+            _resolve_profile_detail("process", process_profile, user_id), scratch, "process"
+        )
+        cmd += ["--load-settings", f"{printer_path};{process_path}"]
+    if orient:
+        cmd.append("--orient=1")
+    if arrange:
+        cmd.append("--arrange=1")
+    cmd += ["--export-3mf", dest.name, str(model_path)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        raise ConvertError("Converting the model timed out") from exc
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    if proc.returncode != 0 or not dest.is_file():
+        raise ConvertError(f"The slicer could not convert the model (exit code {proc.returncode})")
+    return dest
+
+
 def run_slice(
     *,
     model_path: Path,
@@ -192,6 +246,7 @@ def run_slice(
     setting_overrides: dict[str, Any],
     plate_index: int | None = None,
     arrange: bool = True,
+    keep_positions: bool = False,
     user_id: str | None = None,
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
@@ -262,6 +317,10 @@ def run_slice(
         # for the printer this job is actually using.
         if arrange:
             cmd.append("--arrange=1")
+    if keep_positions:
+        # Every object is already where the caller wants it (belt printers
+        # otherwise move them to a default spot near the prime lines).
+        cmd.append("--keep-positions=1")
         # Same "don't trust what's baked in" reasoning, for scalar settings
         # this specific project's config carries outside the engine's own
         # declared bounds (see _out_of_range_overrides/threemf.read_project_

@@ -127,6 +127,14 @@ class BeltLayout(BaseModel):
     gap_mm: float = Field(default=10.0, ge=0, le=500)
 
 
+class Placement(BaseModel):
+    """Where to put the model: the centre of its footprint, in plate
+    coordinates (mm, the same frame as the printer's printable_area)."""
+
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+
+
 class JobCreateRequest(BaseModel):
     model_id: str
     printer_profile: str
@@ -138,6 +146,9 @@ class JobCreateRequest(BaseModel):
     # from JobProgress.plate_index/plate_count below, which are populated
     # from the --pipe progress stream (an output of slicing), not an input.
     plate_index: int | None = None
+    # Put the whole model at an exact spot instead of letting the slicer place
+    # it (not combined with belt_layout, which places the objects itself).
+    placement: Placement | None = None
     # .3mf only: indices (see ObjectInfo.index) of objects NOT to print.
     excluded_objects: list[int] = Field(default_factory=list)
     # .3mf on a belt printer only: place the kept objects in a row (see above).
@@ -232,6 +243,9 @@ class ObjectInfo(BaseModel):
     width_mm: float
     depth_mm: float
     height_mm: float
+    # Centre of the object in plate coordinates (mm), where the file puts it.
+    center_x_mm: float = 0.0
+    center_y_mm: float = 0.0
 
 
 class ThreeMfInspection(BaseModel):
@@ -453,3 +467,11 @@ class SourceInfo(BaseModel):
     orcaslicer_fork_url: str
     orcaslicer_commit_sha: str
     wrapper_repo_url: str
+
+
+class ModelOpRequest(BaseModel):
+    """Body of POST /models/{id}/orient and /arrange: the printer to do it
+    for (arrange needs its bed; orient does not)."""
+
+    printer_profile: str | None = None
+    process_profile: str | None = None

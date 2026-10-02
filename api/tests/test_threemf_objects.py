@@ -1,3 +1,4 @@
+import json
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -147,3 +148,43 @@ def test_component_objects_in_external_model_file(tmp_path):
         model = zf.read("3D/3dmodel.model").decode()
     assert 'p:UUID="abc"' in model  # production attributes survive the text rewrite
     assert 'transform="1 0 0 0 1 0 0 0 1 40 0 0"' in model  # box spans x 105..115 -> centred on 50 means shift -60
+
+
+def test_list_objects_reports_centres(tmp_path):
+    objs = list_objects(_write_project(tmp_path))
+    assert (objs[0].center_x_mm, objs[0].center_y_mm) == (95.0, 50.0)  # Block A: x 80..110, y 40..60
+
+
+def test_placement_moves_the_group_centre_and_declares_the_bed(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "placed.3mf"
+    write_derived_3mf(
+        src, dst, excluded={1, 2, 3}, placement=(125.0, 40.0), bed_area=["0x0", "250x0", "250x2000", "0x2000"], bed_height=250.0
+    )
+    (obj,) = list_objects(dst)
+    assert (obj.center_x_mm, obj.center_y_mm) == (125.0, 40.0)
+    with zipfile.ZipFile(dst) as zf:
+        project = json.loads(zf.read("Metadata/project_settings.config"))
+    assert project["printable_area"] == ["0x0", "250x0", "250x2000", "0x2000"]
+    assert project["printable_height"] == "250"
+
+
+def test_placement_keeps_the_spacing_between_several_objects(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "placed.3mf"
+    write_derived_3mf(src, dst, excluded={2, 3}, placement=(100.0, 100.0))
+    a, b = list_objects(dst)
+    assert (b.center_x_mm - a.center_x_mm, b.center_y_mm - a.center_y_mm) == (72.5, 17.5)  # unchanged from the file
+    group_centre_x = ((a.center_x_mm - a.width_mm / 2) + (b.center_x_mm + b.width_mm / 2)) / 2
+    assert round(group_centre_x, 3) == 100.0
+
+
+def test_project_settings_are_updated_not_replaced(tmp_path):
+    src = _write_project(tmp_path)
+    with zipfile.ZipFile(src, "a") as zf:
+        zf.writestr("Metadata/project_settings.config", json.dumps({"layer_height": "0.2", "printable_area": ["0x0", "200x0", "200x200", "0x200"]}))
+    dst = tmp_path / "out.3mf"
+    write_derived_3mf(src, dst, excluded=set(), bed_area=["0x0", "300x0", "300x300", "0x300"], bed_height=300.0)
+    with zipfile.ZipFile(dst) as zf:
+        project = json.loads(zf.read("Metadata/project_settings.config"))
+    assert project["layer_height"] == "0.2" and project["printable_area"][1] == "300x0"

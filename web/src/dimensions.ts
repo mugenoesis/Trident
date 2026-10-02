@@ -12,6 +12,10 @@ export interface Dimensions {
 export interface BedSize {
   width: number // X, mm
   depth: number // Y, mm
+  // Where the bed's front-left corner sits in plate coordinates (almost
+  // always 0, 0) -- positions sent to / read from the server are in that frame.
+  minX: number
+  minY: number
   height: number // Z (printable_height), mm
   // True for a belt printer's own (deliberately very long) bed, where Y
   // represents distance traveled along the belt rather than a normal
@@ -78,8 +82,10 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
   const ys = points.map((p) => p[1])
   const maxX = Math.max(...xs)
   const maxY = Math.max(...ys)
-  const width = maxX - Math.min(...xs)
-  const depth = maxY - Math.min(...ys)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const width = maxX - minX
+  const depth = maxY - minY
   const height = Number(heightRaw)
 
   if (!(width > 0) || !(depth > 0) || !Number.isFinite(height) || !(height > 0)) return null
@@ -91,7 +97,7 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
   // against the same reference the slicer itself used.
   const beltTransform = parseBeltTransform(profileData, [maxX, maxY, height])
 
-  return { width, depth, height, beltPrinterInfiniteY, beltTransform }
+  return { width, depth, height, minX, minY, beltPrinterInfiniteY, beltTransform }
 }
 
 /**
@@ -126,3 +132,16 @@ export async function scaleStlFile(file: File, factors: Dimensions): Promise<Fil
   const bytes = new Uint8Array(output.buffer, output.byteOffset, output.byteLength)
   return new File([bytes as unknown as BlobPart], file.name, { type: 'model/stl' })
 }
+
+// Where the slicer puts a lone model when nothing is chosen (plate
+// coordinates of its footprint centre): the middle of the bed, or on a belt
+// printer near the prime lines.
+export function defaultPlacement(bed: BedSize, supportEnabled: boolean): { x: number; y: number } {
+  const x = bed.minX + bed.width / 2
+  if (bed.beltPrinterInfiniteY) {
+    const margin = supportEnabled ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT : BELT_PRINTER_PREVIEW_MARGIN_MM
+    return { x, y: bed.minY + margin }
+  }
+  return { x, y: bed.minY + bed.depth / 2 }
+}
+

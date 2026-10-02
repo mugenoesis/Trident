@@ -80,6 +80,8 @@ export interface JobCreateRequest {
   filament_profiles: string[]
   setting_overrides: Record<string, unknown>
   plate_index?: number | null
+  // Put the whole model at an exact spot (not combined with belt_layout).
+  placement?: Placement
   // .3mf only: indices of objects NOT to print.
   excluded_objects?: number[]
   // .3mf on a belt printer only: lay the kept objects out in a row.
@@ -108,6 +110,15 @@ export interface ObjectInfo {
   width_mm: number
   depth_mm: number
   height_mm: number
+  // Centre of the object in plate coordinates (mm), where the file puts it.
+  center_x_mm: number
+  center_y_mm: number
+}
+
+// Where to put the model: the centre of its footprint, in plate coordinates.
+export interface Placement {
+  x: number
+  y: number
 }
 
 export interface BeltLayout {

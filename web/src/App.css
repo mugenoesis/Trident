@@ -1280,3 +1280,32 @@
   text-transform: uppercase;
   color: var(--text-dim);
 }
+
+/* Position panel (PositionPanel.tsx) */
+.position-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.position-slider {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.25rem !important;
+}
+
+.position-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.position-slider input[type='range'] {
+  width: 100%;
+}
+
+.position-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

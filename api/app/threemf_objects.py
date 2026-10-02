@@ -20,6 +20,7 @@ the Production Extension attributes.
 """
 from __future__ import annotations
 
+import json
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -32,6 +33,7 @@ _CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 _PROD = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
 _ROOT_MODEL = "3D/3dmodel.model"
 _MODEL_SETTINGS = "Metadata/model_settings.config"
+_PROJECT_SETTINGS = "Metadata/project_settings.config"
 
 _ITEM_RE = re.compile(r"<item\b[^>]*?/>")
 _TRANSFORM_RE = re.compile(r'\btransform="([^"]*)"')
@@ -219,6 +221,9 @@ def list_objects(path: Path) -> list[ObjectInfo]:
         size = (
             [round(it.box[1][a] - it.box[0][a], 2) for a in range(3)] if it.box else [0.0, 0.0, 0.0]
         )
+        centre = (
+            [round((it.box[0][a] + it.box[1][a]) / 2, 3) for a in range(2)] if it.box else [0.0, 0.0]
+        )
         out.append(
             ObjectInfo(
                 index=it.index,
@@ -227,6 +232,8 @@ def list_objects(path: Path) -> list[ObjectInfo]:
                 width_mm=size[0],
                 depth_mm=size[1],
                 height_mm=size[2],
+                center_x_mm=centre[0],
+                center_y_mm=centre[1],
             )
         )
     return out
@@ -272,6 +279,9 @@ def write_derived_3mf(
     order: list[int] | None = None,
     gap_mm: float = 10.0,
     center_x: float = 0.0,
+    placement: tuple[float, float] | None = None,
+    bed_area: list[str] | None = None,
+    bed_height: float | None = None,
 ) -> list[int]:
     """Copy src to dst without the excluded objects.
 
@@ -279,6 +289,12 @@ def write_derived_3mf(
     laid out in that order along Y (see module docstring). `order` may be a
     partial or stale list: unknown indices are ignored and kept objects it
     leaves out follow in file order. Returns the kept indices in final order.
+    `placement` moves the kept objects as a group so the centre of their
+    footprint lands on (x, y); it is ignored when `order` is given.
+    `bed_area` / `bed_height` (the printer's printable_area strings and
+    height) are written into the project settings: OrcaSlicer's CLI
+    re-centres a 3mf whose recorded bed differs from the printer's, which
+    would move everything this function just placed.
     Raises ValueError if nothing would be left or the file is not one this
     rewrite understands.
     """
@@ -292,6 +308,15 @@ def write_derived_3mf(
             wanted = [i for i in order if i in set(kept)]
             final = wanted + [i for i in kept if i not in set(wanted)]
         shifts = _row_layout(items, final, gap_mm, center_x) if order is not None else {}
+        if order is None and placement is not None:
+            group: Box | None = None
+            for it in items:
+                if it.index in set(kept):
+                    group = _merge(group, it.box)
+            if group is not None:
+                dx = placement[0] - (group[0][0] + group[1][0]) / 2
+                dy = placement[1] - (group[0][1] + group[1][1]) / 2
+                shifts = {i: (dx, dy) for i in kept}
 
         model_text = zf.read(_ROOT_MODEL).decode("utf-8")
         matches = list(_ITEM_RE.finditer(model_text))
@@ -325,6 +350,17 @@ def write_derived_3mf(
                 zf.read(_MODEL_SETTINGS), items, excluded, final if order is not None else None
             )
 
+        project_settings: bytes | None = None
+        if bed_area:
+            try:
+                project = json.loads(zf.read(_PROJECT_SETTINGS)) if _PROJECT_SETTINGS in zf.namelist() else {}
+            except (ValueError, KeyError):
+                project = {}
+            project["printable_area"] = list(bed_area)
+            if bed_height:
+                project["printable_height"] = f"{bed_height:g}"
+            project_settings = json.dumps(project).encode()
+
         dst.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
             for info in zf.infolist():
@@ -332,8 +368,12 @@ def write_derived_3mf(
                     out.writestr(info.filename, new_model)
                 elif info.filename == _MODEL_SETTINGS and new_settings is not None:
                     out.writestr(info.filename, new_settings)
+                elif info.filename == _PROJECT_SETTINGS and project_settings is not None:
+                    out.writestr(info.filename, project_settings)
                 else:
                     out.writestr(info, zf.read(info.filename))
+            if project_settings is not None and _PROJECT_SETTINGS not in zf.namelist():
+                out.writestr(_PROJECT_SETTINGS, project_settings)
     return final
 
 

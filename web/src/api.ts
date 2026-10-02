@@ -48,6 +48,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// The slicer's own auto-orient / arrange, run over an uploaded model; the
+// result is a new .3mf model (the original is left alone).
+export function orientModel(modelId: string, printerProfile?: string, processProfile?: string): Promise<ModelUploadResponse> {
+  return postJson(`/models/${encodeURIComponent(modelId)}/orient`, {
+    printer_profile: printerProfile ?? null,
+    process_profile: processProfile ?? null,
+  })
+}
+
+export function arrangeModel(modelId: string, printerProfile: string, processProfile: string): Promise<ModelUploadResponse> {
+  return postJson(`/models/${encodeURIComponent(modelId)}/arrange`, {
+    printer_profile: printerProfile,
+    process_profile: processProfile,
+  })
+}
+
 export function importProfiles(files: File[], overwrite: boolean): Promise<ImportResult> {
   const form = new FormData()
   for (const f of files) form.append('files', f)
