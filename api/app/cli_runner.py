@@ -101,6 +101,30 @@ def _out_of_range_overrides(model_path: Path, setting_overrides: dict[str, Any])
     return fixes
 
 
+def _filament_map_overrides(
+    printer_data: dict[str, Any], filament_count: int, overrides: dict[str, Any]
+) -> dict[str, str]:
+    """Which extruder each loaded filament sits on, when the slicer would not know.
+
+    With three or more filaments the slicer is left with a one-entry
+    filament_map, and the brim code then reads past its end for any part
+    printed on extruder 2 or higher (a segfault, e.g. a colour-to-nozzle
+    remap on the Snapmaker U1). Filament N is put on extruder N (the last
+    extruder takes any extra) and the mode is Manual, since the slicer
+    recalculates the map otherwise. A map the caller supplies wins.
+    """
+    if filament_count < 3 or "filament_map" in overrides:
+        return {}
+    nozzles = overrides.get("nozzle_diameter") or printer_data.get("nozzle_diameter")
+    if isinstance(nozzles, str):
+        nozzles = nozzles.split(",")
+    extruders = len(nozzles) if isinstance(nozzles, list) and nozzles else 1
+    return {
+        "filament_map": ",".join(str(min(i + 1, extruders)) for i in range(filament_count)),
+        "filament_map_mode": "Manual",
+    }
+
+
 def _resolve_profile_detail(kind: str, name: str, user_id: str | None = None) -> ProfileDetail:
     detail = profiles_module.catalog.get_by_name(kind, name, user_id)
     if detail is None:
@@ -347,6 +371,8 @@ def run_slice(
         # Every object is already where the caller wants it (belt printers
         # otherwise move them to a default spot near the prime lines).
         cmd.append("--keep-positions=1")
+    for key, value in _filament_map_overrides(printer_detail.data, len(filament_paths), setting_overrides).items():
+        cmd.append(f"--{key.replace('_', '-')}={value}")
     for key, value in setting_overrides.items():
         # ConfigOptionDef::cli_args() (libslic3r/Config.cpp) derives the CLI flag
         # from the config key by replacing underscores with dashes, unless the

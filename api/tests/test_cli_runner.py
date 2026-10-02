@@ -332,3 +332,18 @@ def test_run_slice_lets_a_3mf_from_a_newer_bambu_studio_through(tmp_path: Path, 
         )
         assert result.succeeded
         assert (out / "allow_newer_arg.txt").read_text() == expected
+
+
+def test_filament_map_is_set_for_three_or_more_filaments():
+    four_heads = {"nozzle_diameter": ["0.4"] * 4}
+    assert cli_runner._filament_map_overrides(four_heads, 4, {}) == {"filament_map": "1,2,3,4", "filament_map_mode": "Manual"}
+    assert cli_runner._filament_map_overrides(four_heads, 3, {})["filament_map"] == "1,2,3"
+    # more filaments than extruders: the extras share the last one
+    assert cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4", "0.4"]}, 4, {})["filament_map"] == "1,2,2,2"
+    assert cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4"]}, 3, {})["filament_map"] == "1,1,1"
+    # the job's own nozzle list counts, and so does a caller-supplied map
+    assert cli_runner._filament_map_overrides({}, 3, {"nozzle_diameter": "0.4,0.4,0.4"})["filament_map"] == "1,2,3"
+    assert cli_runner._filament_map_overrides(four_heads, 4, {"filament_map": "1,1,2,2"}) == {}
+    # one or two filaments are left to the slicer
+    assert cli_runner._filament_map_overrides(four_heads, 2, {}) == {}
+    assert cli_runner._filament_map_overrides(four_heads, 1, {}) == {}
