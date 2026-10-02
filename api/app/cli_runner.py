@@ -224,6 +224,8 @@ def convert_model(
         cmd.append("--orient=1")
     if arrange:
         cmd.append("--arrange=1")
+    if model_path.suffix.lower() == ".3mf":
+        cmd.append("--allow-newer-file=1")  # see run_slice
     cmd += ["--export-3mf", dest.name, str(model_path)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
@@ -300,6 +302,10 @@ def run_slice(
     if filament_paths:
         cmd += ["--load-filaments", ";".join(filament_paths)]
     if model_path.suffix.lower() == ".3mf":
+        # A project saved by a newer Bambu Studio (e.g. 2.8) than this slicer
+        # build (2.5) is refused unless told otherwise ("Unsupported 3MF
+        # version"); the loader copes with the newer file.
+        cmd.append("--allow-newer-file=1")
         # (`arrange` is False only when the caller has already placed every
         # object itself -- see threemf_objects.write_derived_3mf -- which a
         # forced re-arrange would undo.)

@@ -306,3 +306,29 @@ def test_run_slice_keep_positions_does_not_disturb_the_3mf_corrections(tmp_path:
         assert (output_dir / "raft_first_layer_expansion_arg.txt").read_text() == "2"
         assert (output_dir / "keep_positions_arg.txt").read_text() == ("1" if keep else "")
         assert (output_dir / "arrange_arg.txt").read_text() == ("" if keep else "1")
+
+
+def test_run_slice_lets_a_3mf_from_a_newer_bambu_studio_through(tmp_path: Path, monkeypatch, data_dirs):
+    # A real project from Bambu Studio 02.08 failed with "Unsupported 3MF
+    # version" because the slicer build is older; --allow-newer-file clears it.
+    monkeypatch.setattr(settings, "orcaslicer_bin", str(_FAKE_BIN))
+    monkeypatch.setattr(cli_runner, "_option_bounds_cache", None)
+    _seed_catalog(data_dirs["profiles"], "Generic", "Generic Printer", "0.20mm Standard", "Generic PLA")
+    for name, expected in (("p.3mf", "1"), ("p.stl", "")):
+        model = tmp_path / name
+        if name.endswith(".3mf"):
+            _write_project_3mf(model, {})
+        else:
+            model.write_bytes(b"solid x\nendsolid x\n")
+        out = tmp_path / ("out_" + name)
+        result = cli_runner.run_slice(
+            model_path=model,
+            output_dir=out,
+            printer_profile="Generic Printer",
+            process_profile="0.20mm Standard",
+            filament_profiles=["Generic PLA"],
+            setting_overrides={},
+            timeout_s=10,
+        )
+        assert result.succeeded
+        assert (out / "allow_newer_arg.txt").read_text() == expected
