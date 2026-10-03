@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="headless-orca",
+    title="TridentSlicer",
     description=(
         "HTTP wrapper around a headless, patched OrcaSlicer CLI. "
         "AGPL-3.0 — see GET /source."

@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'headless-orca',
-        short_name: 'Orca',
+        name: 'TridentSlicer',
+        short_name: 'Trident',
         description: 'Slice STL/3MF files with a headless OrcaSlicer backend',
         theme_color: '#1b1f24',
         background_color: '#1b1f24',

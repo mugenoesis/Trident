@@ -1736,7 +1736,7 @@ function MainApp({
   return (
     <div className="app">
       <header className="app-header">
-        <h1>headless-orca</h1>
+        <h1>TridentSlicer</h1>
         <SettingsMenu
           status={authStatus}
           onSwitchToMulti={onSwitchToMulti}
