@@ -1,4 +1,4 @@
-# headless-orca
+# Trident slicer
 
 A Docker container that runs [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer)'s slicing engine headlessly (no display), with source patches to harden its existing CLI mode, fronted by a FastAPI service (+ a web UI) that exposes slicing over HTTP.
 
@@ -19,7 +19,7 @@ Every slicing-related endpoint degrades gracefully without a real `orca-slicer` 
 
 OrcaSlicer is licensed under AGPL-3.0. This project vendors a patched fork of it (see `vendor/orcaslicer`, tracked as a git submodule pointing at a public fork). If you interact with a hosted instance of this service over a network, you are entitled to the corresponding source code:
 
-- Patched OrcaSlicer fork: https://github.com/mugenoesis/OrcaSlicer/tree/headless-cli
+- Patched OrcaSlicer fork: https://github.com/mugenoesis/OrcaSlicer/tree/headless-orca
 - This wrapper repository: _link added once pushed_
 
 The exact commit SHA the running container was built from is exposed via the API's `/source` and `/version` endpoints.
