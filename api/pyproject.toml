@@ -3,6 +3,8 @@ name = "headless-orca-api"
 version = "0.1.0"
 description = "FastAPI wrapper around a headless, patched OrcaSlicer CLI"
 requires-python = ">=3.11"
+license = {text = "AGPL-3.0-only"}
+authors = [{name = "mugenoesis"}]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
