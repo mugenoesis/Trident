@@ -5,7 +5,7 @@
 # FastAPI wrapper. See docs/ARCHITECTURE.md for the full design and
 # docs/AGPL-COMPLIANCE.md for why the fork commit SHA is baked in below.
 #
-# `vendor/orcaslicer` is a git submodule pointing at the headless-cli
+# `vendor/orcaslicer` is a git submodule pointing at the headless-orca
 # branch of https://github.com/mugenoesis/OrcaSlicer — run
 # `git submodule update --init` before building.
 

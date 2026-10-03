@@ -4,7 +4,7 @@ OrcaSlicer is AGPL-3.0. Since this service may be hosted for others (not purely 
 
 ## What we're doing about it
 
-- The patched OrcaSlicer fork stays **public** on GitHub at all times — the single most important, cheapest compliance action. _Fork URL: TBD, add once created._
+- The patched OrcaSlicer fork stays **public** on GitHub at all times — the single most important, cheapest compliance action. Fork URL: https://github.com/mugenoesis/OrcaSlicer (branch `headless-orca`)._
 - The API exposes `GET /source` (mirrored as a response header) linking to:
   - the patched fork/branch **and exact commit SHA** the running image was built from (baked into the image at build time, e.g. via an env var or `/version` endpoint)
   - this wrapper repo itself, since the FastAPI layer directly driving OrcaSlicer's engine is plausibly a "combined work" under AGPL even as a separate process
