@@ -9,11 +9,11 @@ Status: builds end-to-end and runs, including a real upload → preview → slic
 ```bash
 cd api
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                       # 24 tests, all mocked/stubbed — no OrcaSlicer binary needed
+.venv/bin/pytest                       # all mocked/stubbed — no OrcaSlicer binary needed
 .venv/bin/uvicorn app.main:app --reload  # http://localhost:8000/docs
 ```
 
-Every slicing-related endpoint degrades gracefully without a real `orca-slicer` binary on `PATH` (`GET /profiles` returns empty, `GET /settings/schema` falls back, `POST /jobs` fails the job with a clear error) — useful for iterating on the API surface before M1's build is done.
+Every slicing-related endpoint degrades gracefully without a real `orca-slicer` binary on `PATH` (`GET /profiles` returns empty, `GET /settings/schema` falls back, `POST /jobs` fails the job with a clear error) — useful for iterating on the API surface without building OrcaSlicer.
 
 ## License / AGPL-3.0 notice
 

@@ -56,19 +56,20 @@ RUN rm -rf .git \
 
 # Dependency build: slow (multi-hour, ~15-30GB) and cacheable in its own
 # layer, kept separate from the main-build layer below so source-only
-# changes don't invalidate it. -j6 (not $(nproc)=8) + nice -n 10 on both
-# compile steps below: this host also runs other services (Plex, Immich,
-# etc.) that need CPU headroom during a multi-hour build.
+# changes don't invalidate it. Both compile steps run under nice -n 10 and
+# use $(nproc) jobs by default; pass --build-arg BUILD_JOBS=<n> to leave CPU
+# headroom for other workloads on the build host.
+ARG BUILD_JOBS
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/sccache \
     cmake -S deps -B deps/build -G Ninja \
-    && nice -n 10 cmake --build deps/build -j6
+    && nice -n 10 cmake --build deps/build -j${BUILD_JOBS:-$(nproc)}
 
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/sccache \
     cmake -S . -B build -G "Ninja Multi-Config" \
         -DSLIC3R_PCH=ON -DORCA_TOOLS=ON \
-    && nice -n 10 cmake --build build --config Release --target OrcaSlicer -j6
+    && nice -n 10 cmake --build build --config Release --target OrcaSlicer -j${BUILD_JOBS:-$(nproc)}
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -89,7 +90,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # compile time, plus Xvfb + software Mesa as the offscreen-rendering path
 # for thumbnail generation (GLFW's actual backend is X11/GLX, not EGL).
 # libegl1/libgstreamer1.0-0/libgstreamer-plugins-base1.0-0/libwebkit2gtk-4.1-0
-# were found by `ldd`'ing the actual M1 binary once it first linked successfully
+# were found by `ldd`'ing the built binary
 # (wx's WebView backend and GStreamer media backend, both compiled in
 # unconditionally regardless of whether they're ever exercised headlessly).
 RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-runtime,sharing=locked \

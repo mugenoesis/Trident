@@ -45,9 +45,9 @@ npm run build       # -> dist/
 
 `smoke-test.mjs` drives a real browser (Playwright) against a *running*
 headless-orca instance: uploads `fixtures/test-cube.stl`, picks a printer and
-material, slices, and waits for success. This host can't install Playwright's
-browser binaries directly (no system package manager outside Docker), so run
-it in a container that already has them:
+material, slices, and waits for success. It needs Playwright's browser
+binaries; the simplest way to get them is to run it in a container that
+already has them:
 
 ```bash
 docker run --rm --network host -v "$(pwd):/work" -w /work \

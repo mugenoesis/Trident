@@ -1,8 +1,8 @@
 // End-to-end smoke test against a *running* headless-orca container: loads
 // the app, uploads fixtures/test-cube.stl, picks a printer/material, slices,
 // and waits for success. Not a unit test -- it needs real Playwright browser
-// binaries, which this host can't install directly (no apt-get outside
-// Docker), so run it in a container that already has them:
+// binaries; the simplest way to get them is to run it in a container that
+// already has them:
 //
 //   docker run --rm --network host -v "$(pwd):/work" -w /work \
 //     mcr.microsoft.com/playwright:v1.63.0-jammy npm run smoke
