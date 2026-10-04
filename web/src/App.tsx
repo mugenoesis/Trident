@@ -38,6 +38,8 @@ import {
   computeFitScale,
   parseBedSize,
   scaleStlFile,
+  canScaleFile,
+  SCALE_UNSUPPORTED_MESSAGE,
 } from './dimensions'
 import type { BeltTransform } from './beltTransform'
 import AdvancedSettings from './components/AdvancedSettings'
@@ -886,7 +888,8 @@ function MainApp({
         : dimensions
   const fitScale =
     fitDimensions && bedSize && printerName ? computeFitScale(fitDimensions, bedSize) : null
-  const showScaleToast = fitScale !== null && !scaleToastDismissed
+  const scalable = file ? canScaleFile(file) : true
+  const showScaleToast = fitScale !== null && !scaleToastDismissed && scalable
 
   // Shared by the auto-fit toast (uniform factor on all three axes) and the
   // manual ScaleControls panel (which can send different factors per axis).
@@ -1802,7 +1805,12 @@ function MainApp({
                   <div className="dimensions-readout">
                     {dimensions.x.toFixed(1)} × {dimensions.y.toFixed(1)} × {dimensions.z.toFixed(1)} mm
                   </div>
-                  <ScaleControls dimensions={dimensions} onApply={handleApplyScale} applying={scaling} />
+                  <ScaleControls
+                    dimensions={dimensions}
+                    onApply={handleApplyScale}
+                    applying={scaling}
+                    unsupportedReason={scalable ? undefined : SCALE_UNSUPPORTED_MESSAGE}
+                  />
                 </>
               )}
               {showPositionPanel && bedSize && dimensions && (

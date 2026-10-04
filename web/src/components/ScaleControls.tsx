@@ -5,6 +5,8 @@ interface ScaleControlsProps {
   dimensions: Dimensions
   onApply: (factors: Dimensions) => void
   applying: boolean
+  // Set when this file cannot be scaled (a 3MF or STEP): the inputs are disabled and this is shown.
+  unsupportedReason?: string
 }
 
 type DraftDimensions = Record<keyof Dimensions, string>
@@ -22,7 +24,7 @@ const toDraft = (dims: Dimensions): DraftDimensions => ({
 // (App.tsx) -- that one reacts to a printer's bed size, this is a plain
 // "type the size you want" control. Both end up calling the same
 // scaleStlFile() + re-upload path.
-export default function ScaleControls({ dimensions, onApply, applying }: ScaleControlsProps) {
+export default function ScaleControls({ dimensions, onApply, applying, unsupportedReason }: ScaleControlsProps) {
   // Kept as strings, not numbers: a controlled numeric input showing a
   // derived number snaps back on every keystroke otherwise (can't clear the
   // box to type a new value) -- same reason QuickSettings' values are
@@ -75,7 +77,12 @@ export default function ScaleControls({ dimensions, onApply, applying }: ScaleCo
   return (
     <div className="scale-controls">
       <label className="checkbox-label">
-        <input type="checkbox" checked={uniform} onChange={(e) => setUniform(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={uniform}
+          disabled={Boolean(unsupportedReason)}
+          onChange={(e) => setUniform(e.target.checked)}
+        />
         Uniform scaling
       </label>
 
@@ -88,15 +95,17 @@ export default function ScaleControls({ dimensions, onApply, applying }: ScaleCo
               min="0.1"
               step="0.1"
               value={draft[axis]}
+              disabled={Boolean(unsupportedReason)}
               onChange={(e) => handleChange(axis, e.target.value)}
             />
           </label>
         ))}
       </div>
 
-      <button type="button" onClick={handleApply} disabled={!hasChanges || applying}>
+      <button type="button" onClick={handleApply} disabled={!hasChanges || applying || Boolean(unsupportedReason)}>
         {applying ? 'Scaling…' : 'Apply scale'}
       </button>
+      {unsupportedReason && <p className="auth-hint">{unsupportedReason}</p>}
     </div>
   )
 }
