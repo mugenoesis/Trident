@@ -149,7 +149,7 @@ Studio, PrusaSlicer and Slic3r. This project is not affiliated with or endorsed 
 container is a patched fork (see `vendor/orcaslicer`, a git submodule). If you use a hosted instance over a network,
 you are entitled to the corresponding source:
 
-- Patched OrcaSlicer fork: <https://github.com/mugenoesis/OrcaSlicer/tree/headless-orca>
+- Pseudorca, the patched OrcaSlicer fork: <https://github.com/mugenoesis/Pseudorca/tree/headless-orca>
 - This repository: <https://github.com/mugenoesis/Trident>
 
 The exact commit the running container was built from is shown by the app's `/source` and `/version` endpoints.

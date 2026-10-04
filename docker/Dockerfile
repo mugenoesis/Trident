@@ -6,7 +6,7 @@
 # docs/AGPL-COMPLIANCE.md for why the fork commit SHA is baked in below.
 #
 # `vendor/orcaslicer` is a git submodule pointing at the headless-orca
-# branch of https://github.com/mugenoesis/OrcaSlicer — run
+# branch of https://github.com/mugenoesis/Pseudorca — run
 # `git submodule update --init` before building.
 
 ARG UBUNTU_VERSION=24.04
