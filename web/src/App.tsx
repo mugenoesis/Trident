@@ -1736,7 +1736,10 @@ function MainApp({
   return (
     <div className="app">
       <header className="app-header">
-        <h1>TridentSlicer</h1>
+        <h1>
+          <img src="/icon-192.png" alt="" width={46} height={46} />
+          TridentSlicer
+        </h1>
         <SettingsMenu
           status={authStatus}
           onSwitchToMulti={onSwitchToMulti}
