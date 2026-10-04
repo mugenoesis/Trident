@@ -93,7 +93,8 @@
     overflow-y: auto;
   }
 
-  .panel-viewer .viewer-wrap {
+  .panel-viewer .viewer-wrap,
+  .panel-viewer .gcode-viewer-wrap {
     flex: none;
     min-height: 0;
     height: clamp(360px, 52vh, 800px);
