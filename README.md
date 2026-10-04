@@ -73,6 +73,8 @@ docker run -d --name trident --restart unless-stopped \
 
 Then open `http://<your-server>:8000/`. The first visit asks whether it's just you (no login) or several people.
 
+> **Security:** in single-user mode there is no login, so anyone who can reach port 8000 can use Trident, see your models and use your saved printers. Keep it on your home network. Before exposing it to the internet, switch on multi-user mode (accounts) and put it behind an HTTPS reverse proxy.
+
 ### Docker Compose
 
 ```yaml
@@ -99,7 +101,7 @@ Use the template in [`unraid/trident.xml`](unraid/trident.xml). It maps port 800
 - **Architecture:** the image is `linux/amd64` only.
 - **Size:** about 1.4 GB on disk (about 560 MB to download).
 - **Your data** lives only in the three mounted folders; the container itself keeps nothing.
-- **Put it behind a reverse proxy** (with HTTPS) if you expose it beyond your home network, and use multi-user mode.
+- **Exposing it outside your network:** see the security note above (multi-user mode and an HTTPS reverse proxy).
 
 ## Build it yourself
 
