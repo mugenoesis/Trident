@@ -2,7 +2,7 @@
   <img src="docs/assets/trident-icon-512.png" alt="Trident" width="160">
 </p>
 
-<h1 align="center">Trident</h1>
+<h1 align="center">TridentSlicer</h1>
 
 <p align="center">
   <b>A self-hosted slicer for your server.</b><br>
