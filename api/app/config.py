@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # AGPL-3.0 source-offer info (see docs/AGPL-COMPLIANCE.md).
     orcaslicer_fork_url: str = "https://github.com/mugenoesis/OrcaSlicer/tree/headless-orca"
     orcaslicer_commit_sha: str = "unknown"
-    wrapper_repo_url: str = "https://github.com/TBD/headless-orca"
+    wrapper_repo_url: str = "https://github.com/mugenoesis/Trident"
 
     # How long the --pipe FIFO reader waits for the subprocess to open it,
     # mirroring cli_callback_mgr_t::start()'s ~1s open retry loop.

@@ -38,7 +38,7 @@ export default function SetupGate({ onChooseSingle, onChooseMulti }: SetupGatePr
   return (
     <div className="auth-gate">
       <div className="auth-card">
-        <h2>Welcome to headless-orca</h2>
+        <h2>Welcome to TridentSlicer</h2>
         {mode === 'choose' && (
           <>
             <p className="auth-copy">How do you want to use this?</p>

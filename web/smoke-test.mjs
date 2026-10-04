@@ -25,7 +25,7 @@ page.on('pageerror', (err) => pageErrors.push(String(err)))
 
 console.log(`[1/8] Loading ${BASE_URL} ...`)
 await page.goto(BASE_URL, { waitUntil: 'networkidle' })
-await page.waitForSelector('text=headless-orca', { timeout: 10000 })
+await page.waitForSelector('text=TridentSlicer', { timeout: 10000 })
 await page.screenshot({ path: 'smoke-1-initial.png' })
 
 console.log('[2/8] Uploading test STL ...')
