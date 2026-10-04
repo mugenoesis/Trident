@@ -421,7 +421,7 @@
 .download-button {
   display: inline-block;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   padding: 0.5rem 0.8rem;
   border-radius: 6px;
   font-weight: 600;
@@ -663,7 +663,7 @@
 
 .gcode-mode-toggle button.active {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .gcode-layer-slider {
@@ -996,7 +996,7 @@
 .object-picker-tab.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-picker-scroll {
@@ -1075,7 +1075,7 @@
   display: grid;
   place-items: center;
   font-size: 0.7rem;
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-tile-check.on {
@@ -1135,7 +1135,7 @@
   place-items: center;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.75rem;
   overflow: hidden;
   cursor: grab;
@@ -1199,7 +1199,7 @@
 .object-picker-done {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-picker-done:disabled {
@@ -1383,7 +1383,7 @@
   place-items: center;
   border-radius: 5px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.7rem;
 }
 
