@@ -5,7 +5,7 @@
 }
 
 .app-header {
-  padding: 0.75rem 1rem;
+  padding: 0.9rem 1rem;
   border-bottom: 1px solid var(--panel-border);
   display: flex;
   align-items: center;
@@ -13,7 +13,27 @@
 }
 
 .app-header h1 {
-  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 1.35rem;
+  letter-spacing: 0.2px;
+}
+
+.app-header h1 img {
+  flex: none;
+  width: 46px;
+  height: 46px;
+}
+
+.auth-logo {
+  align-self: center;
+  width: 96px;
+  height: 96px;
+}
+
+.auth-logo + h2 {
+  text-align: center;
 }
 
 .banner-error {
@@ -57,6 +77,27 @@
   flex-direction: column;
   gap: 0.75rem;
   min-width: 0;
+}
+
+/* Desktop: the 3D viewer is a fixed size tied to the window, not to the height of the
+   settings column next to it (which grows as material slots and settings are added and
+   used to stretch the viewer, zooming the model in). The panel stays pinned while the
+   settings scroll, and scrolls internally if its own controls are taller than the window. */
+@media (min-width: 801px) {
+  .panel-viewer {
+    align-self: flex-start;
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+  }
+
+  .panel-viewer .viewer-wrap {
+    flex: none;
+    min-height: 0;
+    height: clamp(360px, 52vh, 800px);
+  }
 }
 
 .panel-settings {
@@ -401,7 +442,7 @@
 .download-button {
   display: inline-block;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   padding: 0.5rem 0.8rem;
   border-radius: 6px;
   font-weight: 600;
@@ -643,7 +684,7 @@
 
 .gcode-mode-toggle button.active {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .gcode-layer-slider {
@@ -976,7 +1017,7 @@
 .object-picker-tab.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-picker-scroll {
@@ -1055,7 +1096,7 @@
   display: grid;
   place-items: center;
   font-size: 0.7rem;
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-tile-check.on {
@@ -1115,7 +1156,7 @@
   place-items: center;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.75rem;
   overflow: hidden;
   cursor: grab;
@@ -1179,7 +1220,7 @@
 .object-picker-done {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .object-picker-done:disabled {
@@ -1363,7 +1404,7 @@
   place-items: center;
   border-radius: 5px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.7rem;
 }
 

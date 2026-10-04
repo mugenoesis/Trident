@@ -23,6 +23,7 @@ export default function LoginGate({ onLogin }: LoginGateProps) {
   return (
     <div className="auth-gate">
       <div className="auth-card">
+        <img className="auth-logo" src="/icon-192.png" alt="Trident logo" width={96} height={96} />
         <h2>Sign in</h2>
         <form onSubmit={submit} className="auth-form">
           <label>

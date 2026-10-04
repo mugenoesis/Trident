@@ -5,8 +5,9 @@
   --panel-border: #343a42;
   --text: #e8eaed;
   --text-dim: #9aa2ad;
-  --accent: #7e14ff;
-  --accent-hover: #9b3dff;
+  --accent: #c08a2e;
+  --accent-hover: #dba74a;
+  --on-accent: #1a1204;
   --danger: #ff5c5c;
   --success: #3ecf6e;
   --warning: #e8b53a;
@@ -65,7 +66,7 @@ button {
   cursor: pointer;
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -74,7 +75,7 @@ button:hover:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
