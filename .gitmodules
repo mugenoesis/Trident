@@ -1,4 +1,4 @@
 [submodule "vendor/orcaslicer"]
 	path = vendor/orcaslicer
-	url = https://github.com/mugenoesis/OrcaSlicer.git
+	url = https://github.com/mugenoesis/Pseudorca.git
 	branch = headless-orca
