@@ -79,6 +79,27 @@
   min-width: 0;
 }
 
+/* Desktop: the 3D viewer is a fixed size tied to the window, not to the height of the
+   settings column next to it (which grows as material slots and settings are added and
+   used to stretch the viewer, zooming the model in). The panel stays pinned while the
+   settings scroll, and scrolls internally if its own controls are taller than the window. */
+@media (min-width: 801px) {
+  .panel-viewer {
+    align-self: flex-start;
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+  }
+
+  .panel-viewer .viewer-wrap {
+    flex: none;
+    min-height: 0;
+    height: clamp(360px, 52vh, 800px);
+  }
+}
+
 .panel-settings {
   flex: 1;
   min-width: 320px;
