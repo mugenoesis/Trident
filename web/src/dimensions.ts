@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { parseBeltTransform, type BeltTransform } from './beltTransform'
 
@@ -113,24 +114,55 @@ export function computeFitScale(model: Dimensions, bed: BedSize): number | null 
 }
 
 /**
+ * Models the browser can re-export as an STL after scaling: STL files and the bundled
+ * Draco (.drc) samples. A 3MF carries plates, colours and settings, and a STEP file is
+ * CAD geometry; flattening either to an STL would lose that, so they are not scaled here.
+ */
+export function canScaleFile(file: File): boolean {
+  return /\.(stl|drc)$/i.test(file.name)
+}
+
+export const SCALE_UNSUPPORTED_MESSAGE =
+  'Scaling is available for STL models and the bundled samples. A 3MF or STEP file would lose its plates, colours or CAD data if converted, so scale it in your modelling tool.'
+
+/**
  * Re-parses `file` and scales the mesh by `factors` (pass the same value
- * three times for uniform scaling), returning a new STL File (binary, same
- * filename) -- not just a visual scale on the preview. Used so the model
- * actually slices at the scaled size instead of only *looking* different in
- * the viewer.
+ * three times for uniform scaling), returning a new binary STL File -- not just a
+ * visual scale on the preview. Used so the model actually slices at the scaled size
+ * instead of only *looking* different in the viewer.
+ *
+ * Reads STL and Draco (.drc, the bundled samples). The result is always an STL,
+ * so the file name's extension is replaced: the server picks the format from it.
  */
 export async function scaleStlFile(file: File, factors: Dimensions): Promise<File> {
-  const buffer = await file.arrayBuffer()
-  const geometry = new STLLoader().parse(buffer)
-  geometry.scale(factors.x, factors.y, factors.z)
-  const mesh = new THREE.Mesh(geometry)
-  const output = new STLExporter().parse(mesh, { binary: true }) as unknown as DataView
+  const lower = file.name.toLowerCase()
+  let object: THREE.Object3D
+  if (lower.endsWith('.stl')) {
+    object = new THREE.Mesh(new STLLoader().parse(await file.arrayBuffer()))
+  } else if (lower.endsWith('.drc')) {
+    const buffer = await file.arrayBuffer()
+    const loader = new DRACOLoader()
+    try {
+      const geometry = await new Promise<THREE.BufferGeometry>((resolve, reject) => {
+        loader.parse(buffer, resolve, reject)
+      })
+      object = new THREE.Mesh(geometry)
+    } finally {
+      loader.dispose()
+    }
+  } else {
+    throw new Error(SCALE_UNSUPPORTED_MESSAGE)
+  }
+  object.scale.set(factors.x, factors.y, factors.z)
+  object.updateMatrixWorld(true)
+  const output = new STLExporter().parse(object, { binary: true }) as unknown as DataView
   // TS's BlobPart type requires .buffer to be exactly ArrayBuffer, not the
   // wider ArrayBufferLike DataView/TypedArray carry (in case they wrap a
   // SharedArrayBuffer) -- STLExporter always allocates a plain
   // `new ArrayBuffer(...)`, so this is safe at runtime.
   const bytes = new Uint8Array(output.buffer, output.byteOffset, output.byteLength)
-  return new File([bytes as unknown as BlobPart], file.name, { type: 'model/stl' })
+  const stem = file.name.replace(/\.[^.]*$/, '') || 'model'
+  return new File([bytes as unknown as BlobPart], stem + '.stl', { type: 'model/stl' })
 }
 
 // Where the slicer puts a lone model when nothing is chosen (plate
