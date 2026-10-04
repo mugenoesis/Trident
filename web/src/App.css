@@ -646,6 +646,37 @@
   text-decoration: underline;
 }
 
+/* Link-style buttons must not keep their accent-coloured text on the accent fill that
+   the global button:hover rule applies (gold on gold). Hover, press and keyboard focus
+   invert them: filled highlight with dark text. The halo is a box-shadow so the layout
+   does not shift. */
+.link-button:hover:not(:disabled),
+.link-button:active:not(:disabled),
+.link-button:focus-visible {
+  background: var(--accent);
+  color: var(--on-accent);
+  text-decoration: none;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+.link-button.danger-text:hover:not(:disabled),
+.link-button.danger-text:active:not(:disabled),
+.link-button.danger-text:focus-visible {
+  background: var(--danger);
+  color: #fff !important;
+  box-shadow: 0 0 0 3px var(--danger);
+}
+
+.sample-model-option:hover:not(:disabled) .sample-model-name,
+.sample-model-option:hover:not(:disabled) .sample-model-description,
+.sample-model-option:active:not(:disabled) .sample-model-name,
+.sample-model-option:active:not(:disabled) .sample-model-description,
+.sample-model-option:focus-visible .sample-model-name,
+.sample-model-option:focus-visible .sample-model-description {
+  color: var(--on-accent);
+  text-decoration: none;
+}
+
 .gcode-viewer-wrap {
   position: relative;
   flex: 1;
