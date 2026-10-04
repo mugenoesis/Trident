@@ -21,7 +21,7 @@
 ## What it does
 
 Upload a model, pick a printer and material, slice, preview the G-code layer by layer, and download it or send it
-straight to your printer. It runs on a NAS or home server, so you can slice from the couch, from your phone, or from a
+straight to your printer. It runs on a NAS or home server, so you can slice from your phone, or from a
 machine that has no slicer installed.
 
 - **Your printer is probably already in it.** OrcaSlicer's whole printer, filament and process library is built in,
