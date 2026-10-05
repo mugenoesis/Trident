@@ -14,9 +14,12 @@ interface RotateMoveDialogProps {
   supportEnabled: boolean
   // Where the model sits now; null = the slicer's default spot.
   placement: Placement | null
-  // Names and little pictures of the file's objects (by index), when there are several.
+  // Names and little pictures of the file's objects (by file index), when there are several.
   objectNames: string[]
   thumbnails: Record<number, string>
+  // A file with several plates: the file indices of the objects on the chosen plate. Only those are
+  // shown and changed; objects on other plates are left exactly as they are.
+  plateObjects?: number[]
   busyOp: 'orient' | 'arrange' | null
   onClose: () => void
   // Keep a new position without turning anything.
@@ -88,7 +91,9 @@ interface SceneOptions {
   container: HTMLDivElement
   file: File
   bed: BedSize
-  onLoaded: (objects: { centre: Placement; footprint: Footprint }[]) => void
+  // Only these objects (file indices) are shown; undefined shows them all.
+  only?: number[]
+  onLoaded: (objects: { fileIndex: number; centre: Placement; footprint: Footprint }[]) => void
   onError: (message: string) => void
   onPickObject: (index: number) => void
 }
@@ -237,8 +242,20 @@ function buildScene(options: SceneOptions): SceneApi {
   loadObject(file)
     .then((loaded) => {
       if (disposed) return
-      const info: { centre: Placement; footprint: Footprint }[] = []
-      splitObjects(loaded).forEach((part, index) => {
+      const info: { fileIndex: number; centre: Placement; footprint: Footprint }[] = []
+      splitObjects(loaded).forEach((part, fileIndex) => {
+        if (options.only && !options.only.includes(fileIndex)) {
+          // Not on this plate: not shown, and its memory given back.
+          part.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose()
+              const mats = Array.isArray(child.material) ? child.material : [child.material]
+              mats.forEach((m) => m.dispose())
+            }
+          })
+          return
+        }
+        const index = objects.length
         // Centre the object on the origin inside its own rotator, remembering where it started.
         const box = new THREE.Box3().setFromObject(part, true)
         const centre0 = box.getCenter(new THREE.Vector3())
@@ -259,7 +276,7 @@ function buildScene(options: SceneOptions): SceneApi {
         allMeshes.push(...meshes)
         objects.push({ rotator, meshes })
         const size = box.getSize(new THREE.Vector3())
-        info.push({ centre: { x: centre0.x, y: centre0.y }, footprint: { w: size.x, d: size.y, h: size.z } })
+        info.push({ fileIndex, centre: { x: centre0.x, y: centre0.y }, footprint: { w: size.x, d: size.y, h: size.z } })
       })
       let triangles = 0
       allMeshes.forEach((m) => {
@@ -381,6 +398,7 @@ export default function RotateMoveDialog({
   onClose,
   onPlace,
   onTransform,
+  plateObjects,
   onTransformObjects,
   onAutoOrient,
   onAutoArrange,
@@ -399,6 +417,9 @@ export default function RotateMoveDialog({
   // Where each object was when the window opened (shifted so the group is centred on the current
   // position), and where it is now.
   const [initial, setInitial] = useState<ObjectState[]>([])
+  // Each shown object's place in the file, and where it started in the file's own coordinates.
+  const [fileIndexes, setFileIndexes] = useState<number[]>([])
+  const [origins, setOrigins] = useState<Placement[]>([])
   const [objs, setObjs] = useState<ObjectState[]>([])
   const [footprints, setFootprints] = useState<Footprint[]>([])
   const [selected, setSelected] = useState(0)
@@ -408,6 +429,9 @@ export default function RotateMoveDialog({
 
   const count = objs.length
   const several = count > 1
+  // One object at a time through the file's own object placements; the slicer's rotate turns every
+  // object of every plate, so it is only used for a file with a single object.
+  const perObject = several || Boolean(plateObjects)
   const locked = working !== null || busyOp !== null
   const canRotate = loaded && !loadError
   const current: ObjectState = objs[selected] ?? { rot: ZERO, pos: startPosition }
@@ -426,6 +450,7 @@ export default function RotateMoveDialog({
       container,
       file,
       bed: bedSize,
+      only: plateObjects,
       onLoaded: (info) => {
         // Put the whole group's centre on the current position; each object keeps its place within it.
         const minX = Math.min(...info.map((o) => o.centre.x - o.footprint.w / 2))
@@ -437,6 +462,8 @@ export default function RotateMoveDialog({
         const start = info.map((o) => ({ rot: ZERO, pos: { x: o.centre.x + shiftX, y: o.centre.y + shiftY } }))
         setInitial(start)
         setObjs(start)
+        setFileIndexes(info.map((o) => o.fileIndex))
+        setOrigins(info.map((o) => o.centre))
         setFootprints(info.map((o) => o.footprint))
         setSelected(0)
         setLoaded(true)
@@ -449,6 +476,8 @@ export default function RotateMoveDialog({
       api.dispose()
       if (sceneRef.current === api) sceneRef.current = null
     }
+    // plateObjects only changes with the file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, bedSize])
 
   useEffect(() => {
@@ -527,9 +556,11 @@ export default function RotateMoveDialog({
   const tooTall = footprint.h > bedSize.height + 0.05
   // A file's objects often share one name (several copies of a part); number them so each is distinct.
   const nameOf = (i: number) => {
-    const name = objectNames[i]
-    const shared = !name || objectNames.filter((n) => n === name).length > 1
-    return shared ? `${name || 'Object'} ${i + 1}` : name
+    const fileIndex = fileIndexes[i] ?? i
+    const name = objectNames[fileIndex]
+    const shown = fileIndexes.map((f) => objectNames[f])
+    const shared = !name || shown.filter((n) => n === name).length > 1
+    return shared ? `${name || 'Object'} ${fileIndex + 1}` : name
   }
 
   const groupCentre = (): Placement => {
@@ -551,7 +582,7 @@ export default function RotateMoveDialog({
   }
 
   const apply = () => {
-    if (!several) {
+    if (!perObject) {
       const steps = rotationSteps(current.rot)
       if (steps.length === 0) {
         onPlace(shown)
@@ -565,19 +596,25 @@ export default function RotateMoveDialog({
       onClose()
       return
     }
-    const edits: ObjectEdit[] = objs.map((o, i) => ({
-      index: i,
-      x_deg: o.rot.x,
-      y_deg: o.rot.y,
-      z_deg: o.rot.z,
-      x: o.pos.x,
-      y: o.pos.y,
-    }))
+    // One plate of several: only what was changed is written, as a move from where the object was in
+    // the file, so its place on the plate and every other plate stay as they are. Otherwise every
+    // object is written at its place on the bed.
+    const edits: ObjectEdit[] = objs
+      .map((o, i) => ({ o, i }))
+      .filter(({ i }) => !plateObjects || changedFlags[i])
+      .map(({ o, i }) => ({
+        index: fileIndexes[i] ?? i,
+        x_deg: o.rot.x,
+        y_deg: o.rot.y,
+        z_deg: o.rot.z,
+        x: plateObjects ? (origins[i]?.x ?? 0) + (o.pos.x - initial[i].pos.x) : o.pos.x,
+        y: plateObjects ? (origins[i]?.y ?? 0) + (o.pos.y - initial[i].pos.y) : o.pos.y,
+      }))
     run('apply', onTransformObjects(edits, groupCentre()))
   }
 
   const layFlat = () => {
-    if (!several) {
+    if (!perObject) {
       run('lay_flat', onTransform([...rotationSteps(current.rot), { op: 'lay_flat' }], shown))
       return
     }
@@ -639,7 +676,7 @@ export default function RotateMoveDialog({
                     aria-pressed={i === selected}
                     onClick={() => setSelected(i)}
                   >
-                    {thumbnails[i] ? <img src={thumbnails[i]} alt="" /> : <span className="rm-chip-blank" aria-hidden="true" />}
+                    {thumbnails[fileIndexes[i] ?? i] ? <img src={thumbnails[fileIndexes[i] ?? i]} alt="" /> : <span className="rm-chip-blank" aria-hidden="true" />}
                     <span>
                       {nameOf(i)}
                       <small>{status}</small>
@@ -769,12 +806,16 @@ export default function RotateMoveDialog({
             {note ??
               (several
                 ? 'Turning, moving and the face tools act on the selected object.'
-                : 'Lay flat runs in the slicer and takes a second or two.')}
+                : plateObjects
+                  ? 'Only the objects on this plate are shown; the other plates stay as they are.'
+                  : 'Lay flat runs in the slicer and takes a second or two.')}
           </span>
         </div>
       </div>
       <div className="rm-footer">
         <span className="rm-footer-left">
+          {!plateObjects && (
+            <>
           <button
             type="button"
             className="preview-button"
@@ -791,6 +832,8 @@ export default function RotateMoveDialog({
           >
             {busyOp === 'arrange' ? 'Arranging…' : several ? 'Auto-arrange all' : 'Auto-arrange'}
           </button>
+            </>
+          )}
         </span>
         <span className="rm-footer-right">
           <button type="button" className="preview-button" onClick={onClose} disabled={working !== null}>
@@ -805,7 +848,7 @@ export default function RotateMoveDialog({
         <FacePickerDialog
           file={file}
           rotation={current.rot}
-          objectIndex={selected}
+          objectIndex={fileIndexes[selected] ?? selected}
           onCancel={() => setPickerOpen(false)}
           onChoose={(next) => {
             update((o) => ({ ...o, rot: next }))

@@ -36,7 +36,8 @@ machine that has no slicer installed.
 - **Rotate and move.** A preview of your plate with sliders to place the model and to turn it on each axis, plus
   "Lay flat" and "Pick a face" (choose the face that should sit on the plate in a window of its own, and the plate is
   see-through so you can pick the underside). Works for 3MF files too. For a file with several objects, pick one and
-  turn or move it while the others stay greyed out; Apply writes them all together, and overlaps are flagged.
+  turn or move it while the others stay greyed out; Apply writes them all together, and overlaps are flagged. With a
+  multi-plate file it works on the plate you have picked and leaves the other plates alone.
 - **Scale, auto-orient, auto-arrange and copies.** Scale the model, let the slicer orient or arrange it, and print
   several copies.
 - **Mesh check.** STL files are checked on upload for the defects the slicer repairs, and holes it cannot repair are

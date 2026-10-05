@@ -857,11 +857,15 @@ function MainApp({
         const res = await transformObjects(modelId, edits)
         const [downloaded, inspection] = await Promise.all([downloadModelFile(res.model_id), getModelPlates(res.model_id)])
         applyInspection(inspection)
+        // applyInspection goes back to the first plate; the user is still working on this one.
+        if (inspection.plates.length > 1 && inspection.plates.some((p) => p.index === plateIndex)) setPlateIndex(plateIndex)
         setFile(downloaded)
         setModelId(res.model_id)
         setViewMode('model')
         const listed = inspection.objects ?? []
-        if (listed.length > 0) {
+        if (inspection.plates.length > 1) {
+          // Plates keep the file's own coordinates; there is no group position to keep.
+        } else if (listed.length > 0) {
           // Measured the way the server measures it when it places the group, so the job moves nothing.
           const minX = Math.min(...listed.map((o) => o.center_x_mm - o.width_mm / 2))
           const maxX = Math.max(...listed.map((o) => o.center_x_mm + o.width_mm / 2))
@@ -877,7 +881,7 @@ function MainApp({
         return false
       }
     },
-    [modelId, applyInspection],
+    [modelId, applyInspection, plateIndex],
   )
 
   // Loads one of the built-in sample models (SettingsMenu's "Load a sample
@@ -932,8 +936,11 @@ function MainApp({
   const keptObjects = useMemo(() => objects.filter((o) => !excludedObjects.has(o.index)), [objects, excludedObjects])
   // Position sliders: a model on a chosen printer, on a single plate, and not
   // already laid out by the belt row.
-  const showPositionPanel =
-    Boolean(file && modelId && printerName && bedSize && dimensions) && !beltRowActive && copies === 1 && (plateInfo?.plates.length ?? 1) <= 1
+  const readyToPlace = Boolean(file && modelId && printerName && bedSize && dimensions) && !beltRowActive && copies === 1
+  const multiPlate = (plateInfo?.plates.length ?? 1) > 1
+  const showPositionPanel = readyToPlace && !multiPlate
+  // The Rotate and move window also works on one plate of a multi-plate file (once a plate is chosen).
+  const showRotateMove = readyToPlace && (!multiPlate || plateIndex !== null)
   const objectSelectionSignature = JSON.stringify({
     excluded: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : [],
     row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm } : null,
@@ -1917,9 +1924,14 @@ function MainApp({
                   />
                 </>
               )}
-              {showPositionPanel && bedSize && dimensions && (
+              {showRotateMove && bedSize && dimensions && (
                 <PositionPanel
                   bedSize={bedSize}
+                  plateSummary={
+                    multiPlate
+                      ? `Plate ${plateIndex}: ${objects.filter((o) => o.plate === plateIndex).length} object${objects.filter((o) => o.plate === plateIndex).length === 1 ? '' : 's'}`
+                      : undefined
+                  }
                   supportEnabled={quickSettings.enable_support === '1'}
                   placement={placement}
                   onPlacementChange={(p) => {
@@ -2273,14 +2285,15 @@ function MainApp({
         </div>
       )}
       {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
-      {rotateMoveOpen && file && bedSize && showPositionPanel && (
+      {rotateMoveOpen && file && bedSize && showRotateMove && (
         <RotateMoveDialog
           file={file}
           bedSize={bedSize}
           supportEnabled={quickSettings.enable_support === '1'}
-          placement={placement}
+          placement={multiPlate ? null : placement}
           objectNames={objects.map((o) => o.name)}
           thumbnails={objectThumbs}
+          plateObjects={multiPlate ? objects.filter((o) => o.plate === plateIndex).map((o) => o.index) : undefined}
           busyOp={positionBusy}
           onClose={() => setRotateMoveOpen(false)}
           onPlace={(p) => {
