@@ -115,6 +115,7 @@ def _prepare_model(
             excluded=excluded,
             order=layout.order if layout else [],
             gap_mm=layout.gap_mm if layout else 10.0,
+            by_plate=(layout.mode == "plates") if layout else True,
             center_x=center_x,
             copies=copies,
             bed_area=bed_area,
