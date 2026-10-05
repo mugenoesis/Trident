@@ -1522,3 +1522,30 @@
   margin-top: 0.4rem;
   font-size: 0.85rem;
 }
+
+.material-scope {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem 0.6rem;
+  margin: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.material-scope legend {
+  padding: 0 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.material-scope-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.material-scope-option input {
+  width: auto;
+  flex: none;
+}

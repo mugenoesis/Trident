@@ -77,6 +77,8 @@ class ProfileSummary(BaseModel):
     kind: str  # "machine" | "process" | "filament"
     name: str
     path: str
+    # Printers a user-made material is limited to (empty = every printer). Only filled for "My profiles".
+    compatible_printers: list[str] = Field(default_factory=list)
 
 
 class ProfileDetail(ProfileSummary):
@@ -110,6 +112,9 @@ class FilamentForm(BaseModel):
     filament_diameter: float
     fan_min_speed: float
     fan_max_speed: float
+    # Printers (machine profile names) the material is limited to; empty = every printer.
+    # None on an edit keeps what is stored.
+    printers: list[str] | None = None
 
 
 class ImportIssue(BaseModel):

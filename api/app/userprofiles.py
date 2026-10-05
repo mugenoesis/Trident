@@ -269,6 +269,14 @@ def build_material_overrides(base: dict, form: dict) -> dict:
     return out
 
 
+def compatible_printer_names(data: dict) -> list[str]:
+    """The printer names a preset is limited to (empty = every printer)."""
+    value = data.get("compatible_printers")
+    if isinstance(value, str):
+        value = [value]
+    return [str(v) for v in value or [] if str(v).strip()]
+
+
 def build_material_preset(name: str, inherits: str, base: dict, form: dict, existing: dict | None = None) -> ParsedPreset:
     """The preset to store: the form's overrides over `existing` (when editing,
     so other keys the preset already had are kept) pointing at `inherits`."""
@@ -276,6 +284,11 @@ def build_material_preset(name: str, inherits: str, base: dict, form: dict, exis
         raise MaterialError("The name is not valid: it must be plain text without slashes")
     data = dict(existing or {})
     data.update(build_material_overrides(base, form))
+    printers = form.get("printers")
+    if printers is None:
+        # Editing without a choice keeps what is stored; a new material is for every printer.
+        printers = compatible_printer_names(existing) if existing else []
+    printers = list(dict.fromkeys(str(x).strip() for x in printers if str(x).strip()))
     data.update(
         {
             "name": name,
@@ -284,8 +297,8 @@ def build_material_preset(name: str, inherits: str, base: dict, form: dict, exis
             "instantiation": "true",
             "inherits": inherits,
             "version": data.get("version") or "1.0.0.0",
-            # The base's printer whitelist would hide the material from other printers.
-            "compatible_printers": [],
+            # Set explicitly: the base's own printer whitelist must not leak into the copy.
+            "compatible_printers": printers,
             "compatible_printers_condition": "",
         }
     )

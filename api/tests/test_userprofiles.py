@@ -300,3 +300,20 @@ def test_filament_routes_create_edit_and_delete(client, material_catalog, monkey
 
     assert client.delete("/profiles/imported/filament/Teal PLA").status_code == 200
     assert "Teal PLA" not in {p["name"] for p in client.get("/profiles").json()}
+
+
+def test_material_printer_scope_is_stored_listed_and_kept_on_edit(material_catalog):
+    material_catalog.save_filament("u1", "U1 only", _form(printers=["Acme U1 (0.4)", " Acme U1 (0.4)", ""]), base_name="Acme PLA")
+    material_catalog.save_filament("u1", "Anywhere", _form(), base_name="Acme PLA")
+    listed = {p.name: p for p in material_catalog.list("u1") if p.vendor == userprofiles.IMPORTED_VENDOR}
+    assert listed["U1 only"].compatible_printers == ["Acme U1 (0.4)"]  # trimmed, de-duplicated
+    assert listed["Anywhere"].compatible_printers == []
+    # editing without a choice keeps the stored scope; an explicit choice changes it
+    material_catalog.save_filament("u1", "U1 only", _form(nozzle_temperature=210), edit=True)
+    assert material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data["compatible_printers"] == ["Acme U1 (0.4)"]
+    material_catalog.save_filament("u1", "U1 only", _form(printers=[]), edit=True)
+    assert material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data["compatible_printers"] == []
+
+
+def test_built_in_profiles_report_no_printer_scope(material_catalog):
+    assert all(p.compatible_printers == [] for p in material_catalog.list("u1") if p.vendor != userprofiles.IMPORTED_VENDOR)

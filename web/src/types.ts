@@ -6,6 +6,8 @@ export interface ProfileSummary {
   kind: 'machine' | 'process' | 'filament' | 'unknown'
   name: string
   path: string
+  // Printers a user-made material is limited to (empty or absent = every printer).
+  compatible_printers?: string[]
 }
 
 export interface ProfileDetail extends ProfileSummary {
@@ -324,6 +326,8 @@ export interface FilamentForm {
   filament_diameter: number
   fan_min_speed: number
   fan_max_speed: number
+  // Printers (machine profile names) the material is limited to; empty = every printer.
+  printers?: string[]
 }
 
 export interface ImportedProfile {

@@ -11,6 +11,8 @@ interface MaterialDialogProps {
   // create: a new material copied from `base`; edit: change the user's own material `base`.
   mode: 'create' | 'edit'
   base: { vendor: string; name: string }
+  // The selected printer's machine profile name: what "This printer" means.
+  printerName: string
   onClose: () => void
   onSaved: (name: string) => void
 }
@@ -48,13 +50,16 @@ function message(err: Error): string {
  * from the base, so the result behaves exactly like it. Saved under "My
  * profiles" and offered for every printer.
  */
-export default function MaterialDialog({ mode, base, onClose, onSaved }: MaterialDialogProps) {
+export default function MaterialDialog({ mode, base, printerName, onClose, onSaved }: MaterialDialogProps) {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plates, setPlates] = useState<{ key: string; label: string }[]>([])
   const [name, setName] = useState(mode === 'edit' ? base.name : `${base.name} (custom)`)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Which printers the material is for. Editing keeps the stored choice (any printers it names stay).
+  const [scope, setScope] = useState<'this' | 'all'>(mode === 'create' && printerName ? 'this' : 'all')
+  const [storedPrinters, setStoredPrinters] = useState<string[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +67,11 @@ export default function MaterialDialog({ mode, base, onClose, onSaved }: Materia
       .then((detail) => {
         if (cancelled) return
         const d = detail.data
+        if (mode === 'edit') {
+          const listed = Array.isArray(d.compatible_printers) ? d.compatible_printers.map(String).filter(Boolean) : []
+          setStoredPrinters(listed)
+          setScope(listed.length > 0 ? 'this' : 'all')
+        }
         const next: Draft = { filament_type: first(d, 'filament_type') || 'PLA', filament_vendor: first(d, 'filament_vendor') }
         for (const f of NUMBER_FIELDS) next[f.key] = first(d, f.key)
         const offered: { key: string; label: string }[] = []
@@ -80,7 +90,7 @@ export default function MaterialDialog({ mode, base, onClose, onSaved }: Materia
     return () => {
       cancelled = true
     }
-  }, [base.vendor, base.name])
+  }, [base.vendor, base.name, mode])
 
   const types = useMemo(() => {
     const current = draft?.filament_type
@@ -115,6 +125,7 @@ export default function MaterialDialog({ mode, base, onClose, onSaved }: Materia
         filament_diameter: num('filament_diameter', 'Diameter'),
         fan_min_speed: num('fan_min_speed', 'Fan min'),
         fan_max_speed: num('fan_max_speed', 'Fan max'),
+        printers: scope === 'all' ? [] : mode === 'edit' && storedPrinters.length > 0 ? storedPrinters : [printerName],
         plate_temps: Object.fromEntries(plates.map((p) => [p.key, num(p.key, `${p.label} bed temperature`)])),
       }
     } catch (err) {
@@ -148,7 +159,7 @@ export default function MaterialDialog({ mode, base, onClose, onSaved }: Materia
               {mode === 'create' ? (
                 <>
                   A copy of <strong>{base.name}</strong> with the settings below changed. Everything else is inherited from it.
-                  It is saved under <strong>My profiles</strong> and is available for every printer.
+                  It is saved under <strong>My profiles</strong>.
                 </>
               ) : (
                 <>
@@ -160,6 +171,25 @@ export default function MaterialDialog({ mode, base, onClose, onSaved }: Materia
               Name
               <input type="text" value={name} readOnly={mode === 'edit'} maxLength={120} onChange={(e) => setName(e.target.value)} />
             </label>
+            <fieldset className="material-scope">
+              <legend>Available for</legend>
+              <label className="material-scope-option">
+                <input type="radio" name="material-scope" checked={scope === 'this'} onChange={() => setScope('this')} />
+                <span>
+                  {mode === 'edit' && storedPrinters.length > 0
+                    ? storedPrinters.length === 1
+                      ? `Only ${storedPrinters[0]}`
+                      : `Only ${storedPrinters.length} printers: ${storedPrinters.join(', ')}`
+                    : printerName
+                      ? `Only this printer (${printerName})`
+                      : 'Only the selected printer'}
+                </span>
+              </label>
+              <label className="material-scope-option">
+                <input type="radio" name="material-scope" checked={scope === 'all'} onChange={() => setScope('all')} />
+                <span>Every printer</span>
+              </label>
+            </fieldset>
             <div className="material-grid">
               <label>
                 Type

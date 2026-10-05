@@ -205,7 +205,18 @@ class ProfileCatalog:
 
     def list(self, user_id: str | None = None) -> list[ProfileSummary]:
         details = [*self._by_key.values(), *self._user_details(user_id).values()]
-        return [ProfileSummary(vendor=d.vendor, kind=d.kind, name=d.name, path=d.path) for d in details]
+        return [
+            ProfileSummary(
+                vendor=d.vendor,
+                kind=d.kind,
+                name=d.name,
+                path=d.path,
+                compatible_printers=userprofiles.compatible_printer_names(d.data)
+                if d.vendor == userprofiles.IMPORTED_VENDOR
+                else [],
+            )
+            for d in details
+        ]
 
     def get(self, vendor: str, kind: str, name: str, user_id: str | None = None) -> ProfileDetail | None:
         if vendor == userprofiles.IMPORTED_VENDOR:

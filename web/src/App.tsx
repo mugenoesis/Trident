@@ -2023,6 +2023,7 @@ function MainApp({
                 <FilamentSelect
                   profiles={profiles}
                   vendor={vendor}
+                  printerName={printerName}
                   filamentName={slot.profile}
                   onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
                   onNewMaterial={(base) => setMaterialDialog({ mode: 'create', slot: i, base: { vendor: base.vendor, name: base.name } })}
@@ -2218,6 +2219,7 @@ function MainApp({
         <MaterialDialog
           mode={materialDialog.mode}
           base={materialDialog.base}
+          printerName={printerName}
           onClose={() => setMaterialDialog(null)}
           onSaved={(name) => handleMaterialSaved(materialDialog.slot, name)}
         />

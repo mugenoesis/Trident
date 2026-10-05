@@ -2,12 +2,15 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProfileSummary } from '../types'
 
-// Where the user's own (imported or created) profiles live; they are offered for every printer.
+// Where the user's own (imported or created) profiles live; they are offered for every printer unless
+// the material names the printers it is limited to (compatible_printers).
 const IMPORTED_VENDOR = 'My profiles'
 
 interface FilamentSelectProps {
   profiles: ProfileSummary[]
   vendor: string
+  // The selected printer's machine profile name (to apply a material's printer limit).
+  printerName?: string
   filamentName: string
   onFilamentChange: (name: string) => void
   // Overridable so App.tsx can label multiple instances "Slot 1 material",
@@ -43,6 +46,7 @@ interface FilamentSelectProps {
 export default function FilamentSelect({
   profiles,
   vendor,
+  printerName,
   filamentName,
   onFilamentChange,
   label = 'Material',
@@ -64,7 +68,13 @@ export default function FilamentSelect({
     // list permanently empty) is what keeps material selection -- and by
     // extension saving a printer or slicing at all -- possible for those.
     // The user's own materials are offered whichever printer is chosen.
-    const mine = profiles.filter((p) => p.vendor === IMPORTED_VENDOR && p.kind === 'filament')
+    const mine = profiles.filter(
+      (p) =>
+        p.vendor === IMPORTED_VENDOR &&
+        p.kind === 'filament' &&
+        // Limited to some printers: only offered when one of them is selected.
+        (!p.compatible_printers?.length || !printerName || p.compatible_printers.includes(printerName)),
+    )
     const pool =
       inVendor.length > 0
         ? [...inVendor, ...mine.filter((m) => !inVendor.some((p) => p.name === m.name))]
@@ -90,7 +100,7 @@ export default function FilamentSelect({
       if (current) sorted.unshift(current)
     }
     return sorted
-  }, [profiles, vendor, filamentQuery, filamentName])
+  }, [profiles, vendor, printerName, filamentQuery, filamentName])
 
   const selected = profiles.find((p) => p.kind === 'filament' && p.name === filamentName)
   const selectedIsMine = selected?.vendor === IMPORTED_VENDOR
