@@ -258,7 +258,11 @@ function buildScene(
       }
       const span = Math.max(size.x, size.y, size.z)
       const gridSize = Math.max(span * 2.4, 40)
-      const ground = new THREE.Mesh(new THREE.PlaneGeometry(gridSize, gridSize), new THREE.MeshBasicMaterial({ color: 0x1d2228, side: THREE.DoubleSide }))
+      // See-through, so the underside of the model can be seen and picked from below.
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(gridSize, gridSize),
+        new THREE.MeshBasicMaterial({ color: 0x8a95a5, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }),
+      )
       ground.position.z = -0.3
       const grid = new THREE.GridHelper(gridSize, Math.round(gridSize / 10), 0x3a414b, 0x2a3038)
       grid.rotation.x = Math.PI / 2
