@@ -95,8 +95,9 @@ services:
 
 ### Unraid
 
-Use the template in [`unraid/trident.xml`](unraid/trident.xml). It maps port 8000 and stores everything under
-`/mnt/user/appdata/trident/`. Once Trident is in Community Apps, search for "Trident" in the Apps tab.
+Open the **Apps** tab, search for "Trident" and click **Install**. The template maps port 8000 and stores everything
+under `/mnt/user/appdata/trident/`. The template lives in
+[mugenoesis/unraid-templates](https://github.com/mugenoesis/unraid-templates).
 
 ### Notes
 
