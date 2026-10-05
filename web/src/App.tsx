@@ -17,6 +17,7 @@ import {
   getJob,
   getModelPlates,
   orientModel,
+  transformModel,
   getProfileDetail,
   getSettingsSchema,
   listImportedProfiles,
@@ -46,6 +47,7 @@ import type { BeltTransform } from './beltTransform'
 import AdvancedSettings from './components/AdvancedSettings'
 import FilamentSelect from './components/FilamentSelect'
 import MaterialDialog from './components/MaterialDialog'
+import RotateMoveDialog from './components/RotateMoveDialog'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
@@ -84,6 +86,7 @@ import type {
   SettingDef,
   SettingsProfileRecord,
   ThreeMfInspection,
+  TransformStep,
 } from './types'
 import { pickBedType, supportedBedTypes } from './bedTypes'
 import { useAuth } from './useAuth'
@@ -352,6 +355,8 @@ function MainApp({
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [importOpen, setImportOpen] = useState(false)
+  // The "Rotate and move" window (RotateMoveDialog).
+  const [rotateMoveOpen, setRotateMoveOpen] = useState(false)
   // The "New material" / "Edit material" form, opened from a material slot.
   const [materialDialog, setMaterialDialog] = useState<{
     mode: 'create' | 'edit'
@@ -817,6 +822,28 @@ function MainApp({
         .finally(() => setPositionBusy(null))
     },
     [modelId, printerName, processName, applyInspection],
+  )
+
+  // Rotate / stand the model on a face with the slicer (RotateMoveDialog), swap the
+  // result in the way auto-orient does, and keep the position the user chose.
+  const handleTransformModel = useCallback(
+    async (steps: TransformStep[], position: Placement): Promise<boolean> => {
+      if (!modelId) return false
+      try {
+        const res = await transformModel(modelId, steps)
+        const [downloaded, inspection] = await Promise.all([downloadModelFile(res.model_id), getModelPlates(res.model_id)])
+        applyInspection(inspection)
+        setFile(downloaded)
+        setModelId(res.model_id)
+        setViewMode('model')
+        setPlacement(position)
+        return true
+      } catch (err) {
+        alert(`Could not turn the model: ${(err as Error).message}`)
+        return false
+      }
+    },
+    [modelId, applyInspection],
   )
 
   // Loads one of the built-in sample models (SettingsMenu's "Load a sample
@@ -1859,16 +1886,13 @@ function MainApp({
               {showPositionPanel && bedSize && dimensions && (
                 <PositionPanel
                   bedSize={bedSize}
-                  dimensions={dimensions}
                   supportEnabled={quickSettings.enable_support === '1'}
                   placement={placement}
                   onPlacementChange={(p) => {
                     setPlacement(p)
                     setViewMode('model')
                   }}
-                  onAutoOrient={() => runModelOp('orient')}
-                  onAutoArrange={() => runModelOp('arrange')}
-                  busy={positionBusy}
+                  onOpen={() => setRotateMoveOpen(true)}
                 />
               )}
               {hasObjectChoice && (
@@ -2215,6 +2239,28 @@ function MainApp({
         </div>
       )}
       {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
+      {rotateMoveOpen && file && bedSize && showPositionPanel && (
+        <RotateMoveDialog
+          file={file}
+          bedSize={bedSize}
+          supportEnabled={quickSettings.enable_support === '1'}
+          placement={placement}
+          rotateDisabledReason={
+            hasObjectChoice
+              ? `This file has ${objects.length} objects. The slicer turns all of them at once, so turning is off here; you can still move it.`
+              : undefined
+          }
+          busyOp={positionBusy}
+          onClose={() => setRotateMoveOpen(false)}
+          onPlace={(p) => {
+            setPlacement(p)
+            setViewMode('model')
+          }}
+          onTransform={handleTransformModel}
+          onAutoOrient={() => runModelOp('orient')}
+          onAutoArrange={() => runModelOp('arrange')}
+        />
+      )}
       {materialDialog && (
         <MaterialDialog
           mode={materialDialog.mode}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +14,16 @@ from starlette.concurrency import run_in_threadpool
 from .. import cli_runner, meshcheck, threemf
 from ..auth import require_user
 from ..config import settings
-from ..schemas import ColorNode, MeshReport, ModelOpRequest, ModelUploadResponse, ObjectInfo, PlateInfo, ThreeMfInspection
+from ..schemas import (
+    ColorNode,
+    MeshReport,
+    ModelOpRequest,
+    ModelUploadResponse,
+    ObjectInfo,
+    PlateInfo,
+    ThreeMfInspection,
+    TransformRequest,
+)
 from ..userstore import User
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -142,6 +153,34 @@ def _converted_copy(model_id: str, body: ModelOpRequest, current: User, *, orien
 @router.post("/{model_id}/orient", response_model=ModelUploadResponse)
 def orient_model(model_id: str, body: ModelOpRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
     return _converted_copy(model_id, body, current, orient=True, arrange=False)
+
+
+@router.post("/{model_id}/transform", response_model=ModelUploadResponse)
+def transform_model(model_id: str, body: TransformRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+    """Rotate the model or stand it on a face, using the slicer's own transforms, and
+    store the result as a new .3mf model (the original is left alone). The steps run
+    one after another, each on the result of the one before."""
+    path = resolve_model_path(model_id)
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    new_id = uuid.uuid4().hex
+    dest = settings.models_dir / f"{new_id}.3mf"
+    work = Path(tempfile.mkdtemp(prefix="trident-transform-"))
+    try:
+        source = path
+        for index, step in enumerate(body.steps):
+            result = work / f"step{index}.3mf"
+            cli_runner.convert_model(source, result, user_id=current.id, transforms=[step])
+            source = result
+        shutil.move(str(source), dest)
+    except (cli_runner.ConvertError, ValueError) as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    stem = Path(resolve_model_original_name(model_id) or path.name).stem
+    return finalize_new_model(new_id, ".3mf", dest, f"{stem}.3mf", current.id)
 
 
 @router.post("/{model_id}/arrange", response_model=ModelUploadResponse)
