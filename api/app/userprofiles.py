@@ -171,3 +171,130 @@ class UserProfileStore:
 
 
 store = UserProfileStore()
+
+
+# ---------------------------------------------------------------------------
+# Materials made in the app (the "New material" form): a copy of an existing
+# filament preset with the settings people actually change overridden. Stored
+# like an import (a preset with an `inherits` pointer), so everything else is
+# inherited from the base and the material behaves exactly like it.
+
+MATERIAL_TYPES = (
+    "PLA", "PLA-CF", "PETG", "PETG-CF", "ABS", "ASA", "PC", "PA", "PA-CF", "PET", "PET-CF",
+    "TPU", "PVA", "HIPS", "PP", "PPS", "PEEK", "Other",
+)
+
+# Bed temperature keys, one per build plate type (the first-layer twin is kept equal).
+PLATE_TEMP_KEYS = (
+    "cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp",
+    "textured_cool_plate_temp", "supertack_plate_temp",
+)
+
+# key -> (lowest, highest, whole number?). Every one is a per-extruder list in the preset.
+_MATERIAL_NUMBERS: dict[str, tuple[float, float, bool]] = {
+    "nozzle_temperature": (0, 500, True),
+    "nozzle_temperature_initial_layer": (0, 500, True),
+    "nozzle_temperature_range_low": (0, 500, True),
+    "nozzle_temperature_range_high": (0, 500, True),
+    "filament_flow_ratio": (0.5, 1.5, False),
+    "filament_max_volumetric_speed": (0.1, 100, False),
+    "filament_density": (0.1, 25, False),
+    "filament_diameter": (0.5, 5, False),
+    "fan_min_speed": (0, 100, True),
+    "fan_max_speed": (0, 100, True),
+    **{k: (0, 200, True) for k in PLATE_TEMP_KEYS},
+}
+
+
+class MaterialError(ValueError):
+    """A material form value that is not acceptable (the message is shown to the user)."""
+
+
+def _fmt(value: float, whole: bool) -> str:
+    return str(int(round(value))) if whole else format(value, "g")
+
+
+def _list_like(base: dict, key: str, text: str) -> list[str]:
+    """`text` repeated to the length of the base preset's list for `key` (one entry per extruder variant)."""
+    current = base.get(key)
+    count = len(current) if isinstance(current, list) and current else 1
+    return [text] * count
+
+
+def build_material_overrides(base: dict, form: dict) -> dict:
+    """The preset keys a material form sets, validated, in the list-of-strings
+    shape presets use. `base` is the resolved preset the material is based on
+    (only used for list lengths and which plate keys it has); `form` holds the
+    form's own values: name-independent settings only."""
+    out: dict = {}
+    ftype = str(form.get("filament_type", "")).strip()
+    if not ftype or len(ftype) > 20 or re.search(r"[\x00-\x1f\"\\]", ftype):
+        raise MaterialError("Choose a material type")
+    out["filament_type"] = _list_like(base, "filament_type", ftype)
+    vendor = str(form.get("filament_vendor", "") or "").strip()
+    if len(vendor) > 60 or re.search(r"[\x00-\x1f\"\\]", vendor):
+        raise MaterialError("The brand is not valid")
+    out["filament_vendor"] = _list_like(base, "filament_vendor", vendor or "Generic")
+
+    labels = {
+        "nozzle_temperature": "Nozzle temperature", "nozzle_temperature_initial_layer": "First layer temperature",
+        "nozzle_temperature_range_low": "Lowest nozzle temperature", "nozzle_temperature_range_high": "Highest nozzle temperature",
+        "filament_flow_ratio": "Flow ratio", "filament_max_volumetric_speed": "Max volumetric speed",
+        "filament_density": "Density", "filament_diameter": "Diameter", "fan_min_speed": "Minimum fan speed",
+        "fan_max_speed": "Maximum fan speed",
+    }
+    values: dict[str, float] = {}
+    for key, (lo, hi, whole) in _MATERIAL_NUMBERS.items():
+        if key not in form or form[key] is None:
+            if key in PLATE_TEMP_KEYS:
+                continue  # plate types the form did not offer keep the base value
+            raise MaterialError(f"{labels.get(key, key)} is missing")
+        try:
+            number = float(form[key])
+        except (TypeError, ValueError):
+            raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be a number") from None
+        if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
+            raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be between {lo:g} and {hi:g}")
+        values[key] = number
+    if values["nozzle_temperature_range_low"] > values["nozzle_temperature_range_high"]:
+        raise MaterialError("The lowest nozzle temperature is above the highest")
+    if values["fan_min_speed"] > values["fan_max_speed"]:
+        raise MaterialError("The minimum fan speed is above the maximum")
+    for key, number in values.items():
+        whole = _MATERIAL_NUMBERS[key][2]
+        text = _fmt(number, whole)
+        out[key] = _list_like(base, key, text)
+        if key in PLATE_TEMP_KEYS:
+            out[key + "_initial_layer"] = _list_like(base, key + "_initial_layer", text)
+    return out
+
+
+def build_material_preset(name: str, inherits: str, base: dict, form: dict, existing: dict | None = None) -> ParsedPreset:
+    """The preset to store: the form's overrides over `existing` (when editing,
+    so other keys the preset already had are kept) pointing at `inherits`."""
+    if not valid_name(name):
+        raise MaterialError("The name is not valid: it must be plain text without slashes")
+    data = dict(existing or {})
+    data.update(build_material_overrides(base, form))
+    data.update(
+        {
+            "name": name,
+            "type": "filament",
+            "from": "User",
+            "instantiation": "true",
+            "inherits": inherits,
+            "version": data.get("version") or "1.0.0.0",
+            # The base's printer whitelist would hide the material from other printers.
+            "compatible_printers": [],
+            "compatible_printers_condition": "",
+        }
+    )
+    return ParsedPreset("filament", name, data)
+
+
+class MaterialConflict(MaterialError):
+    """The name is already used (by a built-in material or one of the user's own)."""
+
+
+class MaterialNotFound(MaterialError):
+    """No such material (to edit, or to base a new one on)."""

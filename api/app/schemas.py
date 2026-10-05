@@ -90,6 +90,28 @@ class ImportedProfile(BaseModel):
     warning: str | None = None
 
 
+class FilamentForm(BaseModel):
+    """The "New material" quick form (see userprofiles.build_material_overrides)."""
+
+    name: str
+    # Only for a new material: the material it is a copy of.
+    base_name: str | None = None
+    filament_type: str
+    filament_vendor: str = ""
+    nozzle_temperature: float
+    nozzle_temperature_initial_layer: float
+    nozzle_temperature_range_low: float
+    nozzle_temperature_range_high: float
+    # Bed temperature per plate type, keyed by the preset key (hot_plate_temp, ...).
+    plate_temps: dict[str, float] = Field(default_factory=dict)
+    filament_flow_ratio: float
+    filament_max_volumetric_speed: float
+    filament_density: float
+    filament_diameter: float
+    fan_min_speed: float
+    fan_max_speed: float
+
+
 class ImportIssue(BaseModel):
     file: str
     name: str | None = None

@@ -139,3 +139,164 @@ def test_import_routes_end_to_end(client, monkeypatch, tmp_path):
     assert detail.status_code == 200
     assert client.delete("/profiles/imported/machine/Route Printer").status_code == 200
     assert client.delete("/profiles/imported/machine/Route Printer").status_code == 404
+
+
+# --- materials made with the "New material" form -------------------------------------------
+
+_BASE_FILAMENT = {
+    "instantiation": "true",
+    "filament_type": ["PLA"],
+    "filament_vendor": ["Acme"],
+    "nozzle_temperature": ["200", "200"],  # two extruder variants
+    "nozzle_temperature_initial_layer": ["205", "205"],
+    "nozzle_temperature_range_low": ["190", "190"],
+    "nozzle_temperature_range_high": ["230", "230"],
+    "hot_plate_temp": ["60"],
+    "hot_plate_temp_initial_layer": ["60"],
+    "cool_plate_temp": ["0"],
+    "filament_flow_ratio": ["0.98"],
+    "filament_max_volumetric_speed": ["12"],
+    "filament_density": ["1.24"],
+    "filament_diameter": ["1.75"],
+    "fan_min_speed": ["100"],
+    "fan_max_speed": ["100"],
+    "compatible_printers": ["Acme One 0.4"],
+    "compatible_printers_condition": "",
+}
+
+
+@pytest.fixture()
+def material_catalog(catalog, tmp_path):
+    _write(tmp_path / "profiles" / "Acme", "filament", "Acme PLA", "filament", _BASE_FILAMENT)
+    catalog.load()
+    return catalog
+
+
+def _form(**over):
+    form = {
+        "filament_type": "PLA", "filament_vendor": "Polymaker",
+        "nozzle_temperature": 215, "nozzle_temperature_initial_layer": 220,
+        "nozzle_temperature_range_low": 190, "nozzle_temperature_range_high": 240,
+        "hot_plate_temp": 65, "cool_plate_temp": 0,
+        "filament_flow_ratio": 0.97, "filament_max_volumetric_speed": 14, "filament_density": 1.24,
+        "filament_diameter": 1.75, "fan_min_speed": 80, "fan_max_speed": 100,
+    }
+    form.update(over)
+    return form
+
+
+def test_new_material_inherits_the_base_and_keeps_list_lengths(material_catalog):
+    ref = material_catalog.save_filament("u1", "Teal PLA", _form(), base_name="Acme PLA")
+    assert (ref.kind, ref.name, ref.inherits) == ("filament", "Teal PLA", "Acme PLA")
+    detail = material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "Teal PLA", "u1")
+    d = detail.data
+    assert d["nozzle_temperature"] == ["215", "215"]  # both extruder variants set
+    assert d["filament_flow_ratio"] == ["0.97"] and d["fan_min_speed"] == ["80"]
+    assert d["filament_vendor"] == ["Polymaker"]
+    # a bed temperature also sets the first-layer twin; one the form did not send keeps the base value
+    assert d["hot_plate_temp"] == ["65"] and d["hot_plate_temp_initial_layer"] == ["65"]
+    # the base's printer whitelist is cleared so the material shows for every printer
+    assert d["compatible_printers"] == [] and d["from"] == "User"
+    # a setting the form never touches comes from the base
+    assert d["compatible_printers_condition"] == ""
+
+
+def test_new_material_name_clashes_are_refused(material_catalog):
+    material_catalog.save_filament("u1", "Teal PLA", _form(), base_name="Acme PLA")
+    with pytest.raises(userprofiles.MaterialConflict):
+        material_catalog.save_filament("u1", "Teal PLA", _form(), base_name="Acme PLA")
+    with pytest.raises(userprofiles.MaterialConflict):
+        material_catalog.save_filament("u1", "Acme PLA", _form(), base_name="Acme PLA")  # a built-in name
+    # another user is unaffected by the first user's material
+    material_catalog.save_filament("u2", "Teal PLA", _form(), base_name="Acme PLA")
+
+
+def test_a_material_can_be_based_on_another_of_the_users_materials(material_catalog):
+    material_catalog.save_filament("u1", "Teal PLA", _form(nozzle_temperature=215), base_name="Acme PLA")
+    material_catalog.save_filament("u1", "Teal PLA fast", _form(filament_max_volumetric_speed=20), base_name="Teal PLA")
+    d = material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "Teal PLA fast", "u1").data
+    assert d["filament_max_volumetric_speed"] == ["20"] and d["nozzle_temperature"] == ["215", "215"]
+
+
+def test_editing_a_material_keeps_its_base_and_other_keys(material_catalog):
+    material_catalog.save_filament("u1", "Teal PLA", _form(), base_name="Acme PLA")
+    stored = userprofiles.store.load_all("u1")[("filament", "Teal PLA")]
+    stored["filament_notes"] = "kept"  # a key the form does not know about
+    userprofiles.store.save("u1", userprofiles.ParsedPreset("filament", "Teal PLA", stored))
+    material_catalog._user_cache.pop("u1", None)
+    ref = material_catalog.save_filament("u1", "Teal PLA", _form(nozzle_temperature=205), edit=True)
+    assert ref.inherits == "Acme PLA"
+    d = material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "Teal PLA", "u1").data
+    assert d["nozzle_temperature"] == ["205", "205"] and d["filament_notes"] == "kept"
+    with pytest.raises(userprofiles.MaterialNotFound):
+        material_catalog.save_filament("u1", "Nope", _form(), edit=True)
+
+
+@pytest.mark.parametrize(
+    "bad, message",
+    [
+        ({"nozzle_temperature": "hot"}, "must be a number"),
+        ({"nozzle_temperature": 900}, "between"),
+        ({"filament_flow_ratio": 0}, "between"),
+        ({"nozzle_temperature_range_low": 250}, "lowest nozzle temperature is above"),
+        ({"fan_min_speed": 90, "fan_max_speed": 50}, "minimum fan speed is above"),
+        ({"filament_type": ""}, "material type"),
+        ({"nozzle_temperature": float("nan")}, "between"),
+    ],
+)
+def test_material_form_values_are_validated(material_catalog, bad, message):
+    with pytest.raises(userprofiles.MaterialError, match=message):
+        material_catalog.save_filament("u1", "Teal PLA", _form(**bad), base_name="Acme PLA")
+    assert ("filament", "Teal PLA") not in userprofiles.store.load_all("u1")  # nothing half-saved
+
+
+def test_material_names_must_be_plain_text(material_catalog):
+    for name in ("../evil", "a/b", " padded ", ""):
+        with pytest.raises(userprofiles.MaterialError):
+            material_catalog.save_filament("u1", name, _form(), base_name="Acme PLA")
+
+
+def test_material_with_an_unknown_base_is_refused(material_catalog):
+    with pytest.raises(userprofiles.MaterialNotFound):
+        material_catalog.save_filament("u1", "Teal PLA", _form(), base_name="Does not exist")
+    with pytest.raises(userprofiles.MaterialNotFound):
+        material_catalog.save_filament("u1", "Teal PLA", _form())
+
+
+def _api_form(**over):
+    form = {
+        "name": "Teal PLA", "base_name": "Acme PLA", "filament_type": "PLA", "filament_vendor": "Polymaker",
+        "nozzle_temperature": 215, "nozzle_temperature_initial_layer": 220,
+        "nozzle_temperature_range_low": 190, "nozzle_temperature_range_high": 240,
+        "plate_temps": {"hot_plate_temp": 65, "cool_plate_temp": 0},
+        "filament_flow_ratio": 0.97, "filament_max_volumetric_speed": 14, "filament_density": 1.24,
+        "filament_diameter": 1.75, "fan_min_speed": 80, "fan_max_speed": 100,
+    }
+    form.update(over)
+    return form
+
+
+def test_filament_routes_create_edit_and_delete(client, material_catalog, monkeypatch):
+    monkeypatch.setattr(profiles_module, "catalog", material_catalog)
+    created = client.post("/profiles/filaments", json=_api_form())
+    assert created.status_code == 200 and created.json()["inherits"] == "Acme PLA"
+    assert "Teal PLA" in {p["name"] for p in client.get("/profiles").json()}
+    detail = client.get(f"/profiles/{userprofiles.IMPORTED_VENDOR}/filament/Teal PLA").json()["data"]
+    assert detail["nozzle_temperature"] == ["215", "215"] and detail["hot_plate_temp"] == ["65"]
+
+    assert client.post("/profiles/filaments", json=_api_form()).status_code == 409  # same name again
+    assert client.post("/profiles/filaments", json=_api_form(name="Other", base_name="Nope")).status_code == 404
+    bad = client.post("/profiles/filaments", json=_api_form(name="Hot", nozzle_temperature=900))
+    assert bad.status_code == 422 and "between" in bad.json()["detail"]
+    bad_plate = client.post("/profiles/filaments", json=_api_form(name="Plate", plate_temps={"bogus_temp": 5}))
+    assert bad_plate.status_code == 422
+
+    edited = client.put("/profiles/filaments/Teal PLA", json=_api_form(nozzle_temperature=205))
+    assert edited.status_code == 200 and edited.json()["inherits"] == "Acme PLA"
+    detail = client.get(f"/profiles/{userprofiles.IMPORTED_VENDOR}/filament/Teal PLA").json()["data"]
+    assert detail["nozzle_temperature"] == ["205", "205"]
+    assert client.put("/profiles/filaments/Teal PLA", json=_api_form(name="Renamed")).status_code == 422  # no rename
+    assert client.put("/profiles/filaments/Missing", json=_api_form(name="Missing")).status_code == 404
+
+    assert client.delete("/profiles/imported/filament/Teal PLA").status_code == 200
+    assert "Teal PLA" not in {p["name"] for p in client.get("/profiles").json()}

@@ -249,6 +249,36 @@ class ProfileCatalog:
         self._user_cache.pop(user_id, None)
         return result
 
+    def save_filament(
+        self, user_id: str, name: str, form: dict, *, base_name: str | None = None, edit: bool = False
+    ) -> ImportedProfile:
+        """Create (or, with edit, change) one of the user's own materials from the
+        quick form. A new material copies `base_name` (a built-in material or one of
+        the user's own); an edited one keeps the base it already has."""
+        existing_raw = userprofiles.store.load_all(user_id)
+        if edit:
+            current = existing_raw.get(("filament", name))
+            if current is None:
+                raise userprofiles.MaterialNotFound("That material no longer exists")
+            inherits = current.get("inherits") or None
+            resolved = self.get(userprofiles.IMPORTED_VENDOR, "filament", name, user_id)
+            base_data = resolved.data if resolved else {}
+            preset = userprofiles.build_material_preset(name, inherits or "", base_data, form, current)
+            if not inherits:
+                preset.data.pop("inherits", None)
+        else:
+            if not base_name:
+                raise userprofiles.MaterialNotFound("Choose a material to base the new one on")
+            base = self.get_by_name("filament", base_name, user_id)
+            if base is None:
+                raise userprofiles.MaterialNotFound(f"The material '{base_name}' was not found")
+            if ("filament", name) in existing_raw or any(k == "filament" and n == name for (_, k, n) in self._by_key):
+                raise userprofiles.MaterialConflict(f"A material called '{name}' already exists; pick another name")
+            preset = userprofiles.build_material_preset(name, base_name, base.data, form)
+        userprofiles.store.save(user_id, preset)
+        self._user_cache.pop(user_id, None)
+        return ImportedProfile(kind="filament", name=name, inherits=preset.data.get("inherits") or None)
+
     def delete_imported(self, user_id: str, kind: str, name: str) -> bool:
         removed = userprofiles.store.delete(user_id, kind, name)
         self._user_cache.pop(user_id, None)

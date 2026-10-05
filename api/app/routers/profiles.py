@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from .. import profiles as profiles_module
 from .. import userprofiles
 from ..auth import require_user
-from ..schemas import ImportedProfile, ImportResult, ProfileDetail, ProfileSummary, SettingsSchema
+from ..schemas import FilamentForm, ImportedProfile, ImportResult, ProfileDetail, ProfileSummary, SettingsSchema
 from ..settings_schema import build_settings_schema
 from ..userstore import User
 
@@ -43,6 +43,41 @@ async def import_profiles(
         presets += found
         issues += problems
     return profiles_module.catalog.import_for_user(current.id, presets, issues, overwrite)
+
+
+def _filament_values(body: FilamentForm) -> dict:
+    values = body.model_dump(exclude={"name", "base_name", "plate_temps"})
+    for key, number in body.plate_temps.items():
+        if key not in userprofiles.PLATE_TEMP_KEYS:
+            raise HTTPException(status_code=422, detail=f"'{key}' is not a bed temperature setting")
+        values[key] = number
+    return values
+
+
+def _save_filament(user_id: str, body: FilamentForm, edit: bool) -> ImportedProfile:
+    try:
+        return profiles_module.catalog.save_filament(
+            user_id, body.name.strip(), _filament_values(body), base_name=body.base_name, edit=edit
+        )
+    except userprofiles.MaterialConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except userprofiles.MaterialNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except userprofiles.MaterialError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@router.post("/profiles/filaments", response_model=ImportedProfile)
+def create_filament(body: FilamentForm, current: User = Depends(require_user)) -> ImportedProfile:
+    """A new material of the user's own: a copy of `base_name` with the form's settings."""
+    return _save_filament(current.id, body, edit=False)
+
+
+@router.put("/profiles/filaments/{name}", response_model=ImportedProfile)
+def update_filament(name: str, body: FilamentForm, current: User = Depends(require_user)) -> ImportedProfile:
+    if body.name.strip() != name:
+        raise HTTPException(status_code=422, detail="A material cannot be renamed; save it under a new name instead")
+    return _save_filament(current.id, body, edit=True)
 
 
 @router.delete("/profiles/imported/{kind}/{name}")
