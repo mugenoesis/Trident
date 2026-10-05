@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { BELT_TRAVEL_MM, defaultPlacement, slideRange, type BedSize } from '../dimensions'
-import { FaceIndex } from '../modelFaces'
+import { loadObject, rotationQuaternion, type Rotation } from '../modelLoading'
 import type { Placement, TransformStep } from '../types'
 import AxisSlider from './AxisSlider'
+import FacePickerDialog from './FacePickerDialog'
 
 interface RotateMoveDialogProps {
   file: File
@@ -28,7 +26,6 @@ interface RotateMoveDialogProps {
 }
 
 type Axis = 'x' | 'y' | 'z'
-type Rotation = Record<Axis, number>
 type View = '3d' | 'top'
 interface Footprint {
   w: number
@@ -42,8 +39,6 @@ const AXES: { axis: Axis; label: string; hint: string }[] = [
   { axis: 'y', label: 'Tip left / right', hint: 'Y' },
   { axis: 'z', label: 'Spin on the plate', hint: 'Z' },
 ]
-const MODEL_COLOUR = 0xff6f2c
-const HIGHLIGHT_COLOUR = 0xffd24a
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
 // An angle brought into (-180, 180].
@@ -68,7 +63,6 @@ interface SceneApi {
   setRotation: (rotation: Rotation) => Footprint
   setPosition: (x: number, y: number) => void
   setView: (view: View) => void
-  setPicking: (on: boolean) => void
   dispose: () => void
 }
 
@@ -78,48 +72,6 @@ interface SceneOptions {
   bed: BedSize
   onLoaded: () => void
   onError: (message: string) => void
-  onHoverFace: (info: { area: number } | null) => void
-  onPickFace: (normal: [number, number, number]) => void
-}
-
-function loadObject(file: File): Promise<THREE.Object3D> {
-  const lower = file.name.toLowerCase()
-  return file.arrayBuffer().then(
-    (buffer) =>
-      new Promise<THREE.Object3D>((resolve, reject) => {
-        const material = new THREE.MeshStandardMaterial({ color: MODEL_COLOUR, metalness: 0.05, roughness: 0.55 })
-        const fromGeometry = (geometry: THREE.BufferGeometry) => {
-          geometry.computeVertexNormals()
-          resolve(new THREE.Mesh(geometry, material))
-        }
-        try {
-          if (lower.endsWith('.3mf')) {
-            const group = new ThreeMFLoader().parse(buffer)
-            group.traverse((child) => {
-              if (child instanceof THREE.Mesh) child.material = material
-            })
-            resolve(group)
-          } else if (lower.endsWith('.drc')) {
-            const loader = new DRACOLoader()
-            loader.parse(
-              buffer,
-              (geometry) => {
-                loader.dispose()
-                fromGeometry(geometry)
-              },
-              (err) => {
-                loader.dispose()
-                reject(err)
-              },
-            )
-          } else {
-            fromGeometry(new STLLoader().parse(buffer))
-          }
-        } catch (err) {
-          reject(err)
-        }
-      }),
-  )
 }
 
 function buildScene(options: SceneOptions): SceneApi {
@@ -170,7 +122,6 @@ function buildScene(options: SceneOptions): SceneApi {
   scene.add(rotator)
   let model: THREE.Object3D | null = null
   const meshes: THREE.Mesh[] = []
-  const faceIndexes = new Map<THREE.Mesh, FaceIndex>()
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = false
@@ -201,99 +152,6 @@ function buildScene(options: SceneOptions): SceneApi {
     requestRender()
   }
   frame('3d')
-
-  // Face picking.
-  let picking = false
-  let hover: THREE.Mesh | null = null
-  const highlight = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshBasicMaterial({
-      color: HIGHLIGHT_COLOUR,
-      transparent: true,
-      opacity: 0.75,
-      side: THREE.DoubleSide,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    }),
-  )
-  highlight.visible = false
-  const raycaster = new THREE.Raycaster()
-  const pointer = new THREE.Vector2()
-  let lastTriangle = -1
-  let lastMesh: THREE.Mesh | null = null
-  let down: { x: number; y: number } | null = null
-
-  const faceIndexFor = (mesh: THREE.Mesh) => {
-    let found = faceIndexes.get(mesh)
-    if (!found) {
-      found = new FaceIndex(mesh.geometry)
-      faceIndexes.set(mesh, found)
-    }
-    return found
-  }
-  const hit = (event: PointerEvent) => {
-    const rect = renderer.domElement.getBoundingClientRect()
-    pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
-    raycaster.setFromCamera(pointer, camera)
-    const first = raycaster.intersectObjects(meshes, false)[0]
-    return first && first.faceIndex !== undefined && first.faceIndex !== null ? first : null
-  }
-  const clearHighlight = () => {
-    highlight.visible = false
-    hover = null
-    lastTriangle = -1
-    lastMesh = null
-    options.onHoverFace(null)
-    requestRender()
-  }
-  const handleMove = (event: PointerEvent) => {
-    if (!picking || down) return
-    const first = hit(event)
-    if (!first) {
-      if (highlight.visible) clearHighlight()
-      return
-    }
-    const mesh = first.object as THREE.Mesh
-    const triangle = first.faceIndex as number
-    if (mesh === lastMesh && triangle === lastTriangle) return
-    const index = faceIndexFor(mesh)
-    const region = index.regionAt(triangle)
-    // Triangles of one flat face already lit need no rebuild.
-    highlight.geometry.dispose()
-    highlight.geometry = index.highlightGeometry(region.triangles)
-    mesh.add(highlight)
-    highlight.visible = true
-    hover = mesh
-    lastMesh = mesh
-    lastTriangle = triangle
-    options.onHoverFace({ area: region.area })
-    requestRender()
-  }
-  const handleDown = (event: PointerEvent) => {
-    down = { x: event.clientX, y: event.clientY }
-  }
-  const handleUp = (event: PointerEvent) => {
-    const start = down
-    down = null
-    if (!picking || !start) return
-    // A drag is orbiting, not a pick.
-    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5) return
-    const first = hit(event)
-    if (!first) return
-    const mesh = first.object as THREE.Mesh
-    const region = faceIndexFor(mesh).regionAt(first.faceIndex as number)
-    const normal = region.normal.clone().transformDirection(mesh.matrixWorld)
-    options.onPickFace([normal.x, normal.y, normal.z])
-  }
-  const handleLeave = () => {
-    if (picking && highlight.visible) clearHighlight()
-  }
-  const canvas = renderer.domElement
-  canvas.addEventListener('pointermove', handleMove)
-  canvas.addEventListener('pointerdown', handleDown)
-  canvas.addEventListener('pointerup', handleUp)
-  canvas.addEventListener('pointerleave', handleLeave)
 
   let disposed = false
   let animation = 0
@@ -368,12 +226,7 @@ function buildScene(options: SceneOptions): SceneApi {
   return {
     setRotation(rotation) {
       // Extrinsic X, then Y, then Z about the plate axes: Euler order 'ZYX' in three.js.
-      rotator.rotation.set(
-        THREE.MathUtils.degToRad(rotation.x),
-        THREE.MathUtils.degToRad(rotation.y),
-        THREE.MathUtils.degToRad(rotation.z),
-        'ZYX',
-      )
+      rotator.quaternion.copy(rotationQuaternion(rotation))
       const footprint = settle()
       requestRender()
       return footprint
@@ -385,26 +238,11 @@ function buildScene(options: SceneOptions): SceneApi {
       requestRender()
     },
     setView: frame,
-    setPicking(on) {
-      picking = on
-      renderer.domElement.style.cursor = on ? 'crosshair' : ''
-      if (!on) clearHighlight()
-      else
-        // Building the neighbour tables takes a moment on a big mesh; do it before the first hover.
-        meshes.forEach((m) => faceIndexFor(m))
-    },
     dispose() {
       disposed = true
       cancelAnimationFrame(animation)
       observer.disconnect()
-      canvas.removeEventListener('pointermove', handleMove)
-      canvas.removeEventListener('pointerdown', handleDown)
-      canvas.removeEventListener('pointerup', handleUp)
-      canvas.removeEventListener('pointerleave', handleLeave)
       controls.dispose()
-      if (hover) hover.remove(highlight)
-      highlight.geometry.dispose()
-      ;(highlight.material as THREE.Material).dispose()
       scene.traverse((child) => {
         if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.LineLoop) {
           child.geometry.dispose()
@@ -470,7 +308,6 @@ export default function RotateMoveDialog({
 }: RotateMoveDialogProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<SceneApi | null>(null)
-  const pickHandlerRef = useRef<(normal: [number, number, number]) => void>(() => undefined)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [view, setView] = useState<View>('3d')
@@ -478,9 +315,9 @@ export default function RotateMoveDialog({
   const startPosition = useMemo(() => placement ?? defaultPlacement(bedSize, supportEnabled), [placement, bedSize, supportEnabled])
   const [position, setPosition] = useState<Placement>(startPosition)
   const [footprint, setFootprint] = useState<Footprint>({ w: 0, d: 0, h: 0 })
-  const [picking, setPicking] = useState(false)
-  const [hoverArea, setHoverArea] = useState<number | null>(null)
-  const [working, setWorking] = useState<'apply' | 'lay_flat' | 'face' | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickedNote, setPickedNote] = useState(false)
+  const [working, setWorking] = useState<'apply' | 'lay_flat' | null>(null)
 
   const canRotate = !rotateDisabledReason && loaded
   const locked = working !== null || busyOp !== null
@@ -489,7 +326,8 @@ export default function RotateMoveDialog({
   useEffect(() => {
     setRotation(ZERO)
     setPosition(startPosition)
-    setPicking(false)
+    setPickerOpen(false)
+    setPickedNote(false)
   }, [file, startPosition])
 
   useEffect(() => {
@@ -503,8 +341,6 @@ export default function RotateMoveDialog({
       bed: bedSize,
       onLoaded: () => setLoaded(true),
       onError: setLoadError,
-      onHoverFace: (info) => setHoverArea(info ? info.area : null),
-      onPickFace: (normal) => pickHandlerRef.current(normal),
     })
     sceneRef.current = api
     return () => {
@@ -521,11 +357,6 @@ export default function RotateMoveDialog({
     if (loaded) setFootprint(sceneRef.current?.setRotation(rotation) ?? footprint)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rotation, loaded])
-
-  useEffect(() => {
-    sceneRef.current?.setPicking(picking && loaded)
-    if (!picking) setHoverArea(null)
-  }, [picking, loaded])
 
   // The centre can go anywhere the turned model still fits on the plate.
   const yTop = bedSize.beltPrinterInfiniteY ? bedSize.minY + BELT_TRAVEL_MM + footprint.d : bedSize.minY + bedSize.depth
@@ -545,9 +376,9 @@ export default function RotateMoveDialog({
     setRotation((prev) => ({ ...prev, [axis]: wrapAngle(Math.round(degrees * 10) / 10) }))
   }, [])
 
-  const run = (kind: 'apply' | 'lay_flat' | 'face', steps: TransformStep[]) => {
+  const run = (kind: 'apply' | 'lay_flat', steps: TransformStep[]) => {
     setWorking(kind)
-    setPicking(false)
+    setPickedNote(false)
     onTransform(steps, shown)
       .then((ok) => {
         if (ok && kind === 'apply') onClose()
@@ -564,12 +395,10 @@ export default function RotateMoveDialog({
     run('apply', pending)
   }
 
-  pickHandlerRef.current = (normal) => run('face', [...pending, { op: 'face_normal', normal }])
-
   const reset = () => {
     setRotation(ZERO)
     setPosition(startPosition)
-    setPicking(false)
+    setPickedNote(false)
   }
 
   return (
@@ -606,15 +435,6 @@ export default function RotateMoveDialog({
                 </button>
               ))}
             </div>
-            {picking && (
-              <div className="rm-banner">
-                Click the face that should sit on the plate
-                {hoverArea !== null && <strong> · {hoverArea.toFixed(0)} mm²</strong>}
-                <button type="button" className="link-button" onClick={() => setPicking(false)}>
-                  Cancel
-                </button>
-              </div>
-            )}
             {!loaded && !loadError && <div className="rm-overlay">Loading the model…</div>}
             {loadError && <div className="rm-overlay rm-error">This file can&rsquo;t be shown here ({loadError}).</div>}
             {working && <div className="rm-overlay">{working === 'apply' ? 'Rotating…' : 'Laying it flat…'}</div>}
@@ -647,7 +467,7 @@ export default function RotateMoveDialog({
           )}
         </div>
 
-        <div className={`rm-rotate${picking ? ' rm-dim' : ''}`}>
+        <div className="rm-rotate">
           {AXES.map(({ axis, label, hint }) => (
             <div className="rm-row" key={axis}>
               <span className="rm-row-name">
@@ -662,15 +482,15 @@ export default function RotateMoveDialog({
                 max={180}
                 step={1}
                 tick={0}
-                disabled={locked || !canRotate || picking}
+                disabled={locked || !canRotate}
                 onChange={(v) => setAxis(axis, v)}
               />
-              <AngleField label={`${label}, angle`} value={rotation[axis]} disabled={locked || !canRotate || picking} onChange={(v) => setAxis(axis, v)} />
+              <AngleField label={`${label}, angle`} value={rotation[axis]} disabled={locked || !canRotate} onChange={(v) => setAxis(axis, v)} />
               <span className="rm-quarter">
-                <button type="button" className="preview-button" disabled={locked || !canRotate || picking} onClick={() => setAxis(axis, rotation[axis] - 90)}>
+                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, rotation[axis] - 90)}>
                   −90
                 </button>
-                <button type="button" className="preview-button" disabled={locked || !canRotate || picking} onClick={() => setAxis(axis, rotation[axis] + 90)}>
+                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, rotation[axis] + 90)}>
                   +90
                 </button>
               </span>
@@ -690,17 +510,18 @@ export default function RotateMoveDialog({
           </button>
           <button
             type="button"
-            className={`preview-button${picking ? ' active' : ''}`}
+            className="preview-button"
             disabled={locked || !canRotate}
-            aria-pressed={picking}
-            onClick={() => setPicking((p) => !p)}
+            onClick={() => setPickerOpen(true)}
           >
             Pick a face…
           </button>
           <button type="button" className="preview-button" disabled={locked || !changed} onClick={reset}>
             Reset
           </button>
-          <span className="auth-hint rm-tools-note">Lay flat and Pick a face run in the slicer and take a second or two.</span>
+          <span className="auth-hint rm-tools-note">
+            {pickedNote ? 'Turned to put the chosen face down. Press Apply to keep it.' : 'Lay flat runs in the slicer and takes a second or two.'}
+          </span>
         </div>
       </div>
       <div className="rm-footer">
@@ -721,6 +542,18 @@ export default function RotateMoveDialog({
           </button>
         </span>
       </div>
+      {pickerOpen && (
+        <FacePickerDialog
+          file={file}
+          rotation={rotation}
+          onCancel={() => setPickerOpen(false)}
+          onChoose={(next) => {
+            setRotation(next)
+            setPickedNote(true)
+            setPickerOpen(false)
+          }}
+        />
+      )}
     </div>
   )
 }

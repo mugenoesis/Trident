@@ -1705,21 +1705,6 @@
   border-color: var(--accent);
   color: var(--on-accent);
 }
-.rm-banner {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  right: 120px;
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 0.3rem 0.6rem;
-  border-radius: 7px;
-  border: 1px solid var(--accent);
-  background: rgba(42, 47, 55, 0.92);
-  font-size: 0.82rem;
-}
 .rm-overlay {
   position: absolute;
   inset: 0;
@@ -1745,9 +1730,6 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-}
-.rm-dim {
-  opacity: 0.45;
 }
 .rm-row {
   display: grid;
@@ -1836,4 +1818,43 @@
     bottom: 0;
     background: var(--bg);
   }
+}
+
+/* Pick a face window: just the model, filling the screen */
+.face-picker {
+  z-index: 260;
+}
+.fp-scene {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 240px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #14171b;
+}
+.fp-canvas {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+.fp-canvas canvas {
+  display: block;
+  cursor: crosshair;
+}
+.fp-status {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  min-height: 2.4em;
+}
+.fp-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.fp-footer-right {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
