@@ -54,6 +54,7 @@ import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
 import CopiesControl from './components/CopiesControl'
 import ObjectPicker from './components/ObjectPicker'
+import { beltRowShifts } from './beltLayout'
 import PlatePicker from './components/PlatePicker'
 import PositionPanel from './components/PositionPanel'
 import ProfileImportDialog from './components/ProfileImportDialog'
@@ -423,7 +424,8 @@ function MainApp({
   // A newly loaded file starts with everything selected, in file order.
   useEffect(() => {
     setExcludedObjects(new Set())
-    setBeltOrder((plateInfo?.objects ?? []).map((o) => o.index))
+    // Plate by plate (then file order within a plate), so a multi-plate file goes along the belt plate 1, 2, 3.
+    setBeltOrder([...(plateInfo?.objects ?? [])].sort((a, b) => a.plate - b.plate || a.index - b.index).map((o) => o.index))
   }, [plateInfo])
   // Which of the printer's configured filamentSlots (by index) supplies
   // each "role" (color/material) the uploaded file itself needs -- see
@@ -947,19 +949,39 @@ function MainApp({
     placement: showPositionPanel ? placement : null,
     copies,
   })
-  // What will actually print. A belt row is the kept objects end to end; for
-  // any other multi-plate file the viewer's combined extent across plates
-  // means nothing, so no fit suggestion is made at all.
+  // A belt printer that lines a file's objects up: where each kept object goes (one after another, or
+  // plate by plate for a multi-plate file), shown in the preview and used to size what will print.
+  const rowLayout = useMemo(() => {
+    if (!isBeltPrinter || !hasObjectChoice || !beltLineUp || keptObjects.length === 0) return null
+    const shifts = beltRowShifts(objects, beltOrder, excludedObjects, beltGapMm)
+    const spans = keptObjects.map((o) => ({
+      x0: o.center_x_mm - o.width_mm / 2 + shifts[o.index].dx,
+      x1: o.center_x_mm + o.width_mm / 2 + shifts[o.index].dx,
+      y0: o.center_y_mm - o.depth_mm / 2 + shifts[o.index].dy,
+      y1: o.center_y_mm + o.depth_mm / 2 + shifts[o.index].dy,
+    }))
+    const extent: Dimensions = {
+      x: Math.max(...spans.map((s) => s.x1)) - Math.min(...spans.map((s) => s.x0)),
+      y: Math.max(...spans.map((s) => s.y1)) - Math.min(...spans.map((s) => s.y0)),
+      z: Math.max(...keptObjects.map((o) => o.height_mm)),
+    }
+    return { shifts, extent }
+  }, [isBeltPrinter, hasObjectChoice, beltLineUp, keptObjects, objects, beltOrder, excludedObjects, beltGapMm])
+  // What will actually print. A belt row is the lined-up layout, repeated per copy; for any other
+  // multi-plate file the viewer's combined extent across plates means nothing, so no fit
+  // suggestion is made at all.
   const fitDimensions: Dimensions | null =
-    beltRowActive && keptObjects.length > 0
-      ? {
-          x: Math.max(...keptObjects.map((o) => o.width_mm)),
-          y:
-            keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) * copies +
-            beltGapMm * (keptObjects.length * copies - 1),
-          z: Math.max(...keptObjects.map((o) => o.height_mm)),
-        }
-      : beltRowActive && dimensions
+    beltRowActive && rowLayout
+      ? { x: rowLayout.extent.x, y: rowLayout.extent.y * copies + beltGapMm * (copies - 1), z: rowLayout.extent.z }
+      : beltRowActive && keptObjects.length > 0
+        ? {
+            x: Math.max(...keptObjects.map((o) => o.width_mm)),
+            y:
+              keptObjects.reduce((sum, o) => sum + o.depth_mm, 0) * copies +
+              beltGapMm * (keptObjects.length * copies - 1),
+            z: Math.max(...keptObjects.map((o) => o.height_mm)),
+          }
+        : beltRowActive && dimensions
         ? { x: dimensions.x, y: dimensions.y * copies + beltGapMm * (copies - 1), z: dimensions.z }
         : dimensions
   const fitScale =
@@ -1909,6 +1931,7 @@ function MainApp({
                 excludedObjects={hasObjectChoice ? [...excludedObjects] : undefined}
                 placement={showPositionPanel ? placement : null}
                 shownObjects={shownObjects}
+                rowShifts={copies === 1 ? (rowLayout?.shifts ?? null) : null}
                 onObjectThumbnails={setObjectThumbs}
               />
               {dimensions && (
@@ -1963,6 +1986,7 @@ function MainApp({
                   onLineUpChange={setBeltLineUp}
                   order={beltOrder}
                   onOrderChange={setBeltOrder}
+                  plateNames={Object.fromEntries((plateInfo?.plates ?? []).map((p) => [p.index, p.name ?? `Plate ${p.index}`]))}
                   gapMm={beltGapMm}
                   onGapChange={setBeltGapMm}
                   onClose={() => setObjectPickerOpen(false)}
