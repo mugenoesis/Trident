@@ -54,7 +54,7 @@ import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
 import CopiesControl from './components/CopiesControl'
 import ObjectPicker from './components/ObjectPicker'
-import { beltRowShifts } from './beltLayout'
+import { beltRowShifts, type RowMode } from './beltLayout'
 import PlatePicker from './components/PlatePicker'
 import PositionPanel from './components/PositionPanel'
 import ProfileImportDialog from './components/ProfileImportDialog'
@@ -416,6 +416,8 @@ function MainApp({
   const [beltLineUp, setBeltLineUp] = useState(true)
   const [beltOrder, setBeltOrder] = useState<number[]>([])
   const [beltGapMm, setBeltGapMm] = useState(10)
+  // A multi-plate file on a belt printer: each plate as a block one after another (the default), or every object in one row.
+  const [beltRowMode, setBeltRowMode] = useState<RowMode>('plates')
   const [objectThumbs, setObjectThumbs] = useState<Record<number, string>>({})
   const [objectPickerOpen, setObjectPickerOpen] = useState(false)
   // Result of the upload-time STL check, and whether its notice was dismissed.
@@ -424,6 +426,7 @@ function MainApp({
   // A newly loaded file starts with everything selected, in file order.
   useEffect(() => {
     setExcludedObjects(new Set())
+    setBeltRowMode('plates')
     // Plate by plate (then file order within a plate), so a multi-plate file goes along the belt plate 1, 2, 3.
     setBeltOrder([...(plateInfo?.objects ?? [])].sort((a, b) => a.plate - b.plate || a.index - b.index).map((o) => o.index))
   }, [plateInfo])
@@ -945,7 +948,7 @@ function MainApp({
   const showRotateMove = readyToPlace && (!multiPlate || plateIndex !== null)
   const objectSelectionSignature = JSON.stringify({
     excluded: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : [],
-    row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm } : null,
+    row: beltRowActive ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap: beltGapMm, mode: beltRowMode } : null,
     placement: showPositionPanel ? placement : null,
     copies,
   })
@@ -953,7 +956,7 @@ function MainApp({
   // plate by plate for a multi-plate file), shown in the preview and used to size what will print.
   const rowLayout = useMemo(() => {
     if (!isBeltPrinter || !hasObjectChoice || !beltLineUp || keptObjects.length === 0) return null
-    const shifts = beltRowShifts(objects, beltOrder, excludedObjects, beltGapMm)
+    const shifts = beltRowShifts(objects, beltOrder, excludedObjects, beltGapMm, beltRowMode)
     const spans = keptObjects.map((o) => ({
       x0: o.center_x_mm - o.width_mm / 2 + shifts[o.index].dx,
       x1: o.center_x_mm + o.width_mm / 2 + shifts[o.index].dx,
@@ -966,7 +969,7 @@ function MainApp({
       z: Math.max(...keptObjects.map((o) => o.height_mm)),
     }
     return { shifts, extent }
-  }, [isBeltPrinter, hasObjectChoice, beltLineUp, keptObjects, objects, beltOrder, excludedObjects, beltGapMm])
+  }, [isBeltPrinter, hasObjectChoice, beltLineUp, keptObjects, objects, beltOrder, excludedObjects, beltGapMm, beltRowMode])
   // What will actually print. A belt row is the lined-up layout, repeated per copy; for any other
   // multi-plate file the viewer's combined extent across plates means nothing, so no fit
   // suggestion is made at all.
@@ -1817,7 +1820,7 @@ function MainApp({
       copies: copies > 1 ? copies : undefined,
       excluded_objects: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : undefined,
       belt_layout: beltRowActive
-        ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap_mm: beltGapMm }
+        ? { order: beltOrder.filter((i) => !excludedObjects.has(i)), gap_mm: beltGapMm, mode: beltRowMode }
         : undefined,
     })
       .then(setCurrentJob)
@@ -1840,6 +1843,7 @@ function MainApp({
     beltRowActive,
     beltOrder,
     beltGapMm,
+    beltRowMode,
     effectiveFilamentProfiles,
     plateIndex,
     quickSettings,
@@ -1986,6 +1990,8 @@ function MainApp({
                   onLineUpChange={setBeltLineUp}
                   order={beltOrder}
                   onOrderChange={setBeltOrder}
+                  rowMode={beltRowMode}
+                  onRowModeChange={setBeltRowMode}
                   plateNames={Object.fromEntries((plateInfo?.plates ?? []).map((p) => [p.index, p.name ?? `Plate ${p.index}`]))}
                   gapMm={beltGapMm}
                   onGapChange={setBeltGapMm}

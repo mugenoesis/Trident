@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { keptInOrder, plateSequence } from '../beltLayout'
+import { keptInOrder, plateSequence, type RowMode } from '../beltLayout'
 import type { ObjectInfo } from '../types'
 
 interface ObjectPickerProps {
@@ -21,6 +21,9 @@ interface ObjectPickerProps {
   onGapChange: (gapMm: number) => void
   // Plate names by plate number, for the plate order of a multi-plate file on a belt printer.
   plateNames?: Record<number, string>
+  // A multi-plate file: lay out plate by plate, or every object in one row.
+  rowMode: RowMode
+  onRowModeChange: (mode: RowMode) => void
   onClose: () => void
 }
 
@@ -41,6 +44,8 @@ export default function ObjectPicker({
   gapMm,
   onGapChange,
   plateNames,
+  rowMode,
+  onRowModeChange,
   onClose,
 }: ObjectPickerProps) {
   const plates = useMemo(() => [...new Set(objects.map((o) => o.plate))].sort((a, b) => a - b), [objects])
@@ -51,7 +56,9 @@ export default function ObjectPicker({
   // A multi-plate file on a belt printer goes along the belt plate by plate: the order is the plates', not the objects'.
   const finalOrder = useMemo(() => keptInOrder(objects, order, excluded), [objects, order, excluded])
   const rowPlates = useMemo(() => plateSequence(objects, finalOrder), [objects, finalOrder])
-  const onePerPlate = rowPlates.length > 1
+  // Several plates in the row: the choice between plates as blocks and every object in one row.
+  const severalPlates = rowPlates.length > 1
+  const onePerPlate = severalPlates && rowMode === 'plates'
   const movePlate = (plate: number, by: -1 | 1) => {
     const at = rowPlates.indexOf(plate)
     const to = at + by
@@ -155,8 +162,27 @@ export default function ObjectPicker({
             </label>
             {lineUp && (
               <>
+                {severalPlates && (
+                  <fieldset className="object-picker-modes">
+                    <legend>This file has several plates</legend>
+                    <label className="object-picker-mode">
+                      <input type="radio" name="row-mode" checked={rowMode === 'plates'} onChange={() => onRowModeChange('plates')} />
+                      <span>
+                        Line up plates
+                        <small>Each plate is one block, keeping its objects' arrangement; the plates follow one another.</small>
+                      </span>
+                    </label>
+                    <label className="object-picker-mode">
+                      <input type="radio" name="row-mode" checked={rowMode === 'objects'} onChange={() => onRowModeChange('objects')} />
+                      <span>
+                        Line up all objects
+                        <small>Every object goes in one single row, one after another.</small>
+                      </span>
+                    </label>
+                  </fieldset>
+                )}
                 <label className="object-picker-row">
-                  <span>Gap between objects</span>
+                  <span>Gap between {onePerPlate ? 'plates' : 'objects'}</span>
                   <select value={gapMm} onChange={(e) => onGapChange(Number(e.target.value))}>
                     {GAP_CHOICES.map((g) => (
                       <option key={g} value={g}>

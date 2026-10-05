@@ -153,6 +153,10 @@ class BeltLayout(BaseModel):
 
     order: list[int]
     gap_mm: float = Field(default=10.0, ge=0, le=500)
+    # For a file whose kept objects sit on several plates: "plates" lays each plate out as one block, the
+    # blocks one after another (in the order their first object appears in `order`); "objects" puts every
+    # object in a single row. A file on one plate always lines its objects up one by one.
+    mode: Literal["plates", "objects"] = "plates"
 
 
 class Placement(BaseModel):

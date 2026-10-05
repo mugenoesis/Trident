@@ -1,5 +1,8 @@
 import type { ObjectInfo } from './types'
 
+/** How a file on several plates is lined up: plate by plate, or every object in one row. */
+export type RowMode = 'plates' | 'objects'
+
 export interface RowShift {
   dx: number
   dy: number
@@ -38,6 +41,7 @@ export function beltRowShifts(
   order: number[],
   excluded: Set<number>,
   gapMm: number,
+  mode: RowMode = 'plates',
 ): Record<number, RowShift> {
   const byIndex = new Map(objects.map((o) => [o.index, o]))
   const final = keptInOrder(objects, order, excluded)
@@ -49,7 +53,7 @@ export function beltRowShifts(
   const plates = plateSequence(objects, final)
   // One block per plate, or one block per object when everything is on a single plate.
   const blocks: number[][] =
-    plates.length > 1 ? plates.map((p) => final.filter((i) => (byIndex.get(i)?.plate ?? 1) === p)) : final.map((i) => [i])
+    mode === 'plates' && plates.length > 1 ? plates.map((p) => final.filter((i) => (byIndex.get(i)?.plate ?? 1) === p)) : final.map((i) => [i])
   let cursor = 0
   for (const members of blocks) {
     const boxes = members.map(box)

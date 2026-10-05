@@ -389,6 +389,7 @@ def write_derived_3mf(
     bed_area: list[str] | None = None,
     bed_height: float | None = None,
     drop_project_keys: set[str] | None = None,
+    by_plate: bool = True,
 ) -> list[int]:
     """Copy src to dst without the excluded objects.
 
@@ -399,6 +400,8 @@ def write_derived_3mf(
     `copies` repeats the whole kept selection that many times: in a row when
     `order` is given, otherwise stacked where they are (the caller lets the
     slicer arrange them).
+    With `order`, kept objects on several plates go along the belt plate by plate (each plate a block that
+    keeps its arrangement) unless `by_plate` is false, which puts every object in one row instead.
     `placement` moves the kept objects as a group so the centre of their
     footprint lands on (x, y); it is ignored when `order` is given.
     `bed_area` / `bed_height` (the printer's printable_area strings and
@@ -428,7 +431,7 @@ def write_derived_3mf(
         if order is not None:
             _, plates_by_object = _read_settings(zf)
             plate_of = {it.index: plates_by_object.get((it.object_id, it.instance), 1) for it in items}
-        if order is not None and len({plate_of[i] for i in final}) > 1:
+        if order is not None and by_plate and len({plate_of[i] for i in final}) > 1:
             # Several plates: each one goes along the belt as a block, one after the other.
             sequence, shifts = _plate_row(items, final, plate_of, copies, gap_mm, center_x)
         elif order is not None:

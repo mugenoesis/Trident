@@ -378,3 +378,13 @@ def test_copies_of_several_plates_repeat_the_whole_row(tmp_path):
     assert names == ["Block A", "Wide C", "Block A", "Wide C"]
     ys = [o.center_y_mm - o.depth_mm / 2 for o in list_objects(dst)]
     assert ys == sorted(ys)  # one row, front to back
+
+
+def test_every_object_in_one_row_when_not_laid_out_by_plate(tmp_path):
+    src = _write_project(tmp_path)  # plates: 1 = Block A + Tall B, 2 = Wide C, 3 = Cube D
+    dst = tmp_path / "belt5.3mf"
+    write_derived_3mf(src, dst, excluded=set(), order=[0, 1, 2, 3], gap_mm=10.0, center_x=125.0, by_plate=False)
+    objs = {o.name: o for o in list_objects(dst)}
+    ys = [objs[n].center_y_mm - objs[n].depth_mm / 2 for n in ("Block A", "Tall B", "Wide C", "Cube D")]
+    assert ys == [0.0, 30.0, 55.0, 90.0]  # one after another: 20 + 10, 15 + 10, 25 + 10
+    assert all(round(objs[n].center_x_mm, 3) == 125.0 for n in objs)  # every one centred on the belt
