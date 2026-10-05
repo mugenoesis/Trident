@@ -128,6 +128,9 @@ export interface Placement {
 export interface BeltLayout {
   order: number[]
   gap_mm: number
+  // A file on several plates: lay each plate out as one block, one after another ('plates'), or put
+  // every object in a single row ('objects').
+  mode?: 'plates' | 'objects'
 }
 
 export interface ThreeMfInspection {

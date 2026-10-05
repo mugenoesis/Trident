@@ -323,3 +323,68 @@ def test_edit_works_on_components_in_an_external_model_file(tmp_path):
     obj = list_objects(dst)[0]
     assert (obj.width_mm, obj.depth_mm, obj.height_mm) == (30, 20, 10)
     assert (obj.center_x_mm, obj.center_y_mm) == (70.0, 80.0)
+
+
+def _origin(path, name):
+    objs = {o.name: o for o in list_objects(path)}
+    o = objs[name]
+    return (o.center_x_mm - o.width_mm / 2, o.center_y_mm - o.depth_mm / 2)
+
+
+def test_plates_become_blocks_one_after_the_other_along_the_belt(tmp_path):
+    src = _write_project(tmp_path)  # plates: 1 = Block A + Tall B, 2 = Wide C, 3 = Cube D
+    dst = tmp_path / "belt.3mf"
+    write_derived_3mf(src, dst, excluded=set(), order=[0, 1, 2, 3], gap_mm=10.0, center_x=125.0)
+    objs = {o.name: o for o in list_objects(dst)}
+    a, b, c, d = objs["Block A"], objs["Tall B"], objs["Wide C"], objs["Cube D"]
+    # plate 1 is one block: A and B keep their spacing from the file (centres 72.5 apart in X, 17.5 in Y), centred on the belt
+    assert round(b.center_x_mm - a.center_x_mm, 3) == 72.5 and round(b.center_y_mm - a.center_y_mm, 3) == 17.5
+    block1_x = (min(a.center_x_mm - a.width_mm / 2, b.center_x_mm - b.width_mm / 2) + max(a.center_x_mm + a.width_mm / 2, b.center_x_mm + b.width_mm / 2)) / 2
+    assert round(block1_x, 3) == 125.0
+    block1_y0 = min(a.center_y_mm - a.depth_mm / 2, b.center_y_mm - b.depth_mm / 2)
+    block1_y1 = max(a.center_y_mm + a.depth_mm / 2, b.center_y_mm + b.depth_mm / 2)
+    assert round(block1_y0, 3) == 0.0
+    # then plate 2, then plate 3, each starting one gap after the one before and centred on the belt
+    assert round(c.center_y_mm - c.depth_mm / 2, 3) == round(block1_y1 + 10.0, 3) and round(c.center_x_mm, 3) == 125.0
+    assert round(d.center_y_mm - d.depth_mm / 2, 3) == round(c.center_y_mm + c.depth_mm / 2 + 10.0, 3)
+    # everything is on one plate now
+    assert {o.plate for o in list_objects(dst)} == {1}
+
+
+def test_plate_blocks_follow_the_order_given_and_skip_excluded_objects(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "belt2.3mf"
+    # plate 3 first, then plate 1 (without Tall B), plate 2 last
+    write_derived_3mf(src, dst, excluded={1}, order=[3, 0, 2], gap_mm=5.0, center_x=100.0)
+    assert _origin(dst, "Cube D")[1] == 0.0
+    assert _origin(dst, "Block A")[1] == 25.0 + 5.0  # after Cube D (25 deep) and the gap
+    assert _origin(dst, "Wide C")[1] == 25.0 + 5.0 + 20.0 + 5.0  # after Block A (20 deep)
+    assert "Tall B" not in {o.name for o in list_objects(dst)}
+
+
+def test_one_plate_still_lines_objects_up_one_by_one(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "belt3.3mf"
+    write_derived_3mf(src, dst, excluded={2, 3}, order=[0, 1], gap_mm=10.0, center_x=125.0)  # both on plate 1
+    a, b = (_origin(dst, "Block A"), _origin(dst, "Tall B"))
+    assert a[1] == 0.0 and b[1] == 30.0  # stacked, not side by side (A is 20 deep + 10 gap)
+
+
+def test_copies_of_several_plates_repeat_the_whole_row(tmp_path):
+    src = _write_project(tmp_path)
+    dst = tmp_path / "belt4.3mf"
+    write_derived_3mf(src, dst, excluded={1, 3}, order=[0, 2], gap_mm=10.0, center_x=0.0, copies=2)
+    names = [o.name for o in list_objects(dst)]
+    assert names == ["Block A", "Wide C", "Block A", "Wide C"]
+    ys = [o.center_y_mm - o.depth_mm / 2 for o in list_objects(dst)]
+    assert ys == sorted(ys)  # one row, front to back
+
+
+def test_every_object_in_one_row_when_not_laid_out_by_plate(tmp_path):
+    src = _write_project(tmp_path)  # plates: 1 = Block A + Tall B, 2 = Wide C, 3 = Cube D
+    dst = tmp_path / "belt5.3mf"
+    write_derived_3mf(src, dst, excluded=set(), order=[0, 1, 2, 3], gap_mm=10.0, center_x=125.0, by_plate=False)
+    objs = {o.name: o for o in list_objects(dst)}
+    ys = [objs[n].center_y_mm - objs[n].depth_mm / 2 for n in ("Block A", "Tall B", "Wide C", "Cube D")]
+    assert ys == [0.0, 30.0, 55.0, 90.0]  # one after another: 20 + 10, 15 + 10, 25 + 10
+    assert all(round(objs[n].center_x_mm, 3) == 125.0 for n in objs)  # every one centred on the belt

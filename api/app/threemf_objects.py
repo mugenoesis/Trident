@@ -305,6 +305,39 @@ def _row_layout(
     return shifts
 
 
+def _plate_row(
+    items: list[_Item], final: list[int], plate_of: dict[int, int], copies: int, gap_mm: float, center_x: float
+) -> tuple[list[int], list[tuple[float, float]]]:
+    """The row for a file whose kept objects sit on several plates: each plate is one block that keeps
+    the objects' arrangement within it, and the blocks follow one another along Y (plates in the order
+    their first object appears in `final`), centred on center_x, with gap_mm between them. Returns the
+    object indices in printed order (the whole row repeated per copy) and one (dx, dy) shift for each."""
+    by_index = {it.index: it for it in items}
+    plate_order: list[int] = []
+    for idx in final:
+        if plate_of[idx] not in plate_order:
+            plate_order.append(plate_of[idx])
+    sequence: list[int] = []
+    shifts: list[tuple[float, float]] = []
+    cursor = 0.0
+    for _ in range(copies):
+        for plate in plate_order:
+            members = [idx for idx in final if plate_of[idx] == plate]
+            block: Box | None = None
+            for idx in members:
+                block = _merge(block, by_index[idx].box)
+            if block is None:
+                dx, dy, depth = 0.0, 0.0, 0.0
+            else:
+                (x0, y0, _), (x1, y1, _) = block
+                dx, dy, depth = center_x - (x0 + x1) / 2, cursor - y0, y1 - y0
+            for idx in members:
+                sequence.append(idx)
+                shifts.append((dx, dy))
+            cursor += depth + gap_mm
+    return sequence, shifts
+
+
 _UUID_ATTR = re.compile(r'(p:UUID=")[^"]*(")')
 
 
@@ -356,6 +389,7 @@ def write_derived_3mf(
     bed_area: list[str] | None = None,
     bed_height: float | None = None,
     drop_project_keys: set[str] | None = None,
+    by_plate: bool = True,
 ) -> list[int]:
     """Copy src to dst without the excluded objects.
 
@@ -366,6 +400,8 @@ def write_derived_3mf(
     `copies` repeats the whole kept selection that many times: in a row when
     `order` is given, otherwise stacked where they are (the caller lets the
     slicer arrange them).
+    With `order`, kept objects on several plates go along the belt plate by plate (each plate a block that
+    keeps its arrangement) unless `by_plate` is false, which puts every object in one row instead.
     `placement` moves the kept objects as a group so the centre of their
     footprint lands on (x, y); it is ignored when `order` is given.
     `bed_area` / `bed_height` (the printer's printable_area strings and
@@ -391,7 +427,14 @@ def write_derived_3mf(
             final = wanted + [i for i in kept if i not in set(wanted)]
         # One slot per printed object: the whole selection, repeated.
         sequence = [idx for _ in range(copies) for idx in final]
+        plate_of: dict[int, int] = {}
         if order is not None:
+            _, plates_by_object = _read_settings(zf)
+            plate_of = {it.index: plates_by_object.get((it.object_id, it.instance), 1) for it in items}
+        if order is not None and by_plate and len({plate_of[i] for i in final}) > 1:
+            # Several plates: each one goes along the belt as a block, one after the other.
+            sequence, shifts = _plate_row(items, final, plate_of, copies, gap_mm, center_x)
+        elif order is not None:
             shifts = _row_layout(items, sequence, gap_mm, center_x)
         elif placement is not None:
             group: Box | None = None

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { keptInOrder, plateSequence, type RowMode } from '../beltLayout'
 import type { ObjectInfo } from '../types'
 
 interface ObjectPickerProps {
@@ -18,6 +19,11 @@ interface ObjectPickerProps {
   onOrderChange: (order: number[]) => void
   gapMm: number
   onGapChange: (gapMm: number) => void
+  // Plate names by plate number, for the plate order of a multi-plate file on a belt printer.
+  plateNames?: Record<number, string>
+  // A multi-plate file: lay out plate by plate, or every object in one row.
+  rowMode: RowMode
+  onRowModeChange: (mode: RowMode) => void
   onClose: () => void
 }
 
@@ -37,6 +43,9 @@ export default function ObjectPicker({
   onOrderChange,
   gapMm,
   onGapChange,
+  plateNames,
+  rowMode,
+  onRowModeChange,
   onClose,
 }: ObjectPickerProps) {
   const plates = useMemo(() => [...new Set(objects.map((o) => o.plate))].sort((a, b) => a - b), [objects])
@@ -44,6 +53,23 @@ export default function ObjectPicker({
   const byIndex = useMemo(() => new Map(objects.map((o) => [o.index, o])), [objects])
   const shown = plateFilter === null ? objects : objects.filter((o) => o.plate === plateFilter)
   const selectedCount = objects.length - excluded.size
+  // A multi-plate file on a belt printer goes along the belt plate by plate: the order is the plates', not the objects'.
+  const finalOrder = useMemo(() => keptInOrder(objects, order, excluded), [objects, order, excluded])
+  const rowPlates = useMemo(() => plateSequence(objects, finalOrder), [objects, finalOrder])
+  // Several plates in the row: the choice between plates as blocks and every object in one row.
+  const severalPlates = rowPlates.length > 1
+  const onePerPlate = severalPlates && rowMode === 'plates'
+  const movePlate = (plate: number, by: -1 | 1) => {
+    const at = rowPlates.indexOf(plate)
+    const to = at + by
+    if (at < 0 || to < 0 || to >= rowPlates.length) return
+    const next = [...rowPlates]
+    next.splice(at, 1)
+    next.splice(to, 0, plate)
+    const plateOf = (i: number) => byIndex.get(i)?.plate ?? 1
+    const lined = next.flatMap((p) => finalOrder.filter((i) => plateOf(i) === p))
+    onOrderChange([...lined, ...order.filter((i) => !lined.includes(i))])
+  }
 
   const toggle = (index: number) => {
     const next = new Set(excluded)
@@ -136,8 +162,27 @@ export default function ObjectPicker({
             </label>
             {lineUp && (
               <>
+                {severalPlates && (
+                  <fieldset className="object-picker-modes">
+                    <legend>This file has several plates</legend>
+                    <label className="object-picker-mode">
+                      <input type="radio" name="row-mode" checked={rowMode === 'plates'} onChange={() => onRowModeChange('plates')} />
+                      <span>
+                        Line up plates
+                        <small>Each plate is one block, keeping its objects' arrangement; the plates follow one another.</small>
+                      </span>
+                    </label>
+                    <label className="object-picker-mode">
+                      <input type="radio" name="row-mode" checked={rowMode === 'objects'} onChange={() => onRowModeChange('objects')} />
+                      <span>
+                        Line up all objects
+                        <small>Every object goes in one single row, one after another.</small>
+                      </span>
+                    </label>
+                  </fieldset>
+                )}
                 <label className="object-picker-row">
-                  <span>Gap between objects</span>
+                  <span>Gap between {onePerPlate ? 'plates' : 'objects'}</span>
                   <select value={gapMm} onChange={(e) => onGapChange(Number(e.target.value))}>
                     {GAP_CHOICES.map((g) => (
                       <option key={g} value={g}>
@@ -146,6 +191,16 @@ export default function ObjectPicker({
                     ))}
                   </select>
                 </label>
+                {onePerPlate ? (
+                  <PlateOrder
+                    plates={rowPlates}
+                    objects={objects}
+                    excluded={excluded}
+                    names={plateNames ?? {}}
+                    gapMm={gapMm}
+                    onMove={movePlate}
+                  />
+                ) : (
                 <BeltStrip
                   order={order.filter((i) => !excluded.has(i) && byIndex.has(i))}
                   byIndex={byIndex}
@@ -155,6 +210,7 @@ export default function ObjectPicker({
                     onOrderChange([...visible, ...order.filter((i) => excluded.has(i) || !byIndex.has(i))])
                   }
                 />
+                )}
               </>
             )}
           </div>
@@ -297,6 +353,58 @@ function BeltStrip({ order, byIndex, thumbnails, gapMm, onReorder }: BeltStripPr
           )
         })}
       </div>
+    </div>
+  )
+}
+
+interface PlateOrderProps {
+  plates: number[]
+  objects: ObjectInfo[]
+  excluded: Set<number>
+  names: Record<number, string>
+  gapMm: number
+  onMove: (plate: number, by: -1 | 1) => void
+}
+
+// The plates in the order they come along the belt (the first prints first), each as one block that keeps
+// its objects' arrangement. Move one earlier or later with its arrows.
+function PlateOrder({ plates, objects, excluded, names, gapMm, onMove }: PlateOrderProps) {
+  return (
+    <div className="plate-order">
+      <p className="auth-hint">
+        Each plate goes along the belt as one block, one after the other, {gapMm} mm apart. The first one prints first.
+      </p>
+      <ol>
+        {plates.map((plate, at) => {
+          const members = objects.filter((o) => o.plate === plate && !excluded.has(o.index))
+          const depth =
+            Math.max(...members.map((o) => o.center_y_mm + o.depth_mm / 2)) - Math.min(...members.map((o) => o.center_y_mm - o.depth_mm / 2))
+          return (
+            <li key={plate}>
+              <span className="plate-order-name">
+                {names[plate] ?? `Plate ${plate}`}
+                <small>
+                  {members.length} object{members.length === 1 ? '' : 's'} · {Math.round(depth)} mm along the belt
+                </small>
+              </span>
+              <span className="plate-order-buttons">
+                <button type="button" className="preview-button" aria-label="Print earlier" disabled={at === 0} onClick={() => onMove(plate, -1)}>
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  className="preview-button"
+                  aria-label="Print later"
+                  disabled={at === plates.length - 1}
+                  onClick={() => onMove(plate, 1)}
+                >
+                  ▼
+                </button>
+              </span>
+            </li>
+          )
+        })}
+      </ol>
     </div>
   )
 }

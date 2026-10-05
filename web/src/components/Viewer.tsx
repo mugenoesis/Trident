@@ -44,6 +44,9 @@ interface ViewerProps {
   // on the bed, and report their size -- used to preview one plate of a
   // multi-plate file. null/undefined shows everything.
   shownObjects?: number[] | null
+  // .3mf on a belt printer that lines objects up: where each kept object goes (a move from its place in
+  // the file, by object index; see beltLayout.ts). Objects without an entry are not printed and are hidden.
+  rowShifts?: Record<number, { dx: number; dy: number }> | null
   // .3mf with more than one object: called after each load with one small
   // rendered picture (a data: URL) per build item, keyed by index, for the
   // object picker. Must be a stable reference (it is an effect dependency).
@@ -66,7 +69,7 @@ export interface ViewerHandle {
 // comes along for free with three.js and costs nothing extra, but nothing
 // here depends on interaction actually happening.
 const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
-  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails, placement, shownObjects },
+  { file, onDimensions, bedSize, colorTree, filamentUsedGrams, supportEnabled, excludedObjects, onObjectThumbnails, placement, shownObjects, rowShifts },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -215,6 +218,9 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   // Where the loaded model sits (before the placement offset) when centred on
   // the origin -- the whole scene, or just the shown objects of a plate.
   const centeredRef = useRef<THREE.Vector3 | null>(null)
+  // Each object's own place in the file (before any row shift), and how deep the lined-up row is.
+  const baseChildPos = useRef<THREE.Vector3[]>([])
+  const rowDepthRef = useRef<number | null>(null)
   const onDimensionsRef = useRef(onDimensions)
   useEffect(() => {
     onDimensionsRef.current = onDimensions
@@ -345,7 +351,8 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
           const margin = supportEnabled
             ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT
             : BELT_PRINTER_PREVIEW_MARGIN_MM
-          offsetY = -plateDepth / 2 + margin
+          // A lined-up row starts at the belt's start; a lone object is centred near it.
+          offsetY = -plateDepth / 2 + margin + (rowDepthRef.current !== null ? rowDepthRef.current / 2 : 0)
         }
         const centered = centeredRef.current ?? object.position
         object.position.set(centered.x + offsetX, centered.y + offsetY, centered.z)
@@ -609,6 +616,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             scene.add(group)
             loadedObject = group
             loadedGroupRef.current = group
+            baseChildPos.current = group.children.map((c) => c.position.clone())
             finishLoad(group, new THREE.Box3().setFromObject(group))
             renderObjectThumbnails(group)
             setLoadVersion((n) => n + 1)
@@ -727,13 +735,24 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   // centre what is left on the bed (x/y only, so everything keeps sitting on
   // the plate), and report its size.
   const shownKey = shownObjects ? shownObjects.join(',') : ''
+  const rowKey = rowShifts ? JSON.stringify(rowShifts) : ''
   useEffect(() => {
     const group = loadedGroupRef.current
     const base = centeredRef.current
     if (!group || !base) return
     const shown = shownObjects ? new Set(shownObjects) : null
     group.children.forEach((item, i) => {
-      item.visible = shown === null || shown.has(i)
+      // A lined-up row moves each kept object; the others are not printed, so they are not shown.
+      const start = baseChildPos.current[i]
+      if (start) {
+        item.position.copy(start)
+        const shift = rowShifts?.[i]
+        if (shift) {
+          item.position.x += shift.dx
+          item.position.y += shift.dy
+        }
+      }
+      item.visible = (shown === null || shown.has(i)) && (!rowShifts || rowShifts[i] !== undefined)
     })
     const saved = group.position.clone()
     group.position.set(0, 0, 0)
@@ -750,10 +769,11 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     // finishLoad centred the full scene as position = -centre; the same here
     // for x/y, with z left alone.
     centeredRef.current = new THREE.Vector3(-centre.x, -centre.y, base.z)
+    rowDepthRef.current = rowShifts ? size.y : null
     placeRef.current?.()
     onDimensionsRef.current?.({ x: size.x, y: size.y, z: size.z })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownKey, loadVersion])
+  }, [shownKey, rowKey, loadVersion])
 
   // Dim the objects the user excluded. Swapping materials (rather than
   // editing the shared ones) keeps every other object's color untouched, and
