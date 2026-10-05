@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { FaceIndex } from '../modelFaces'
-import { loadObject, rotationQuaternion, rotationToLayOnFace, type Rotation } from '../modelLoading'
+import { canRestOn, FaceIndex } from '../modelFaces'
+import { loadObject, rotationQuaternion, rotationToLayOnFace, splitObjects, type Rotation } from '../modelLoading'
 
 interface FacePickerDialogProps {
   file: File
   // The turn already set in the Rotate and move window; the model is shown with it applied.
   rotation: Rotation
+  // Which object of a multi-object file to pick on (the others are not shown).
+  objectIndex?: number
   onCancel: () => void
   onChoose: (rotation: Rotation) => void
 }
@@ -27,13 +29,12 @@ interface PickerScene {
 const HOVER_COLOUR = 0xffd24a
 const SELECT_COLOUR = 0xffb020
 const BAD_COLOUR = 0xff5c5c
-// How far past a face's plane the rest of the model may reach and still count as resting on it.
-const REST_TOLERANCE_MM = 0.05
 
 function buildScene(
   container: HTMLDivElement,
   file: File,
   rotation: Rotation,
+  objectIndex: number,
   callbacks: {
     onReady: () => void
     onError: (message: string) => void
@@ -118,33 +119,6 @@ function buildScene(
     dirty = true
   }
 
-  // True when no vertex of the model reaches out past the plane of the face: the face is part of the
-  // model's outer hull, so the model can stand on it.
-  const canRestOn = (normal: THREE.Vector3, pointOnFace: THREE.Vector3): boolean => {
-    const offset = normal.dot(pointOnFace)
-    const m = new THREE.Matrix4()
-    const local = new THREE.Vector3()
-    for (const mesh of meshes) {
-      mesh.updateWorldMatrix(true, false)
-      m.copy(mesh.matrixWorld)
-      // n . (M v + t) = (M^T n) . v + n . t, so each vertex costs one dot product.
-      const e = m.elements
-      local.set(
-        e[0] * normal.x + e[1] * normal.y + e[2] * normal.z,
-        e[4] * normal.x + e[5] * normal.y + e[6] * normal.z,
-        e[8] * normal.x + e[9] * normal.y + e[10] * normal.z,
-      )
-      const shift = e[12] * normal.x + e[13] * normal.y + e[14] * normal.z
-      const position = mesh.geometry.getAttribute('position')
-      for (let i = 0; i < position.count; i++) {
-        if (local.x * position.getX(i) + local.y * position.getY(i) + local.z * position.getZ(i) + shift > offset + REST_TOLERANCE_MM) {
-          return false
-        }
-      }
-    }
-    return true
-  }
-
   const handleMove = (event: PointerEvent) => {
     if (down) return
     const first = hit(event)
@@ -187,7 +161,7 @@ function buildScene(
     const pointOnFace = new THREE.Vector3(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex)).applyMatrix4(
       mesh.matrixWorld,
     )
-    const restable = canRestOn(normal, pointOnFace)
+    const restable = canRestOn(meshes, normal, pointOnFace)
     ;(selectMark.material as THREE.MeshBasicMaterial).color.setHex(restable ? SELECT_COLOUR : BAD_COLOUR)
     show(selectMark, mesh, index, region.triangles)
     hoverMark.visible = false
@@ -230,7 +204,9 @@ function buildScene(
   loadObject(file)
     .then((object) => {
       if (disposed) return
-      rotator.add(object)
+      const parts = splitObjects(object)
+      const part = parts[Math.min(Math.max(objectIndex, 0), parts.length - 1)]
+      rotator.add(part)
       scene.updateMatrixWorld(true)
       // Centre the turned model on the origin and rest it on a ground grid, so "down" is obvious.
       const box = new THREE.Box3().setFromObject(rotator, true)
@@ -238,7 +214,7 @@ function buildScene(
       rotator.position.set(-centre.x, -centre.y, -box.min.z)
       scene.updateMatrixWorld(true)
       const size = box.getSize(new THREE.Vector3())
-      object.traverse((child) => {
+      part.traverse((child) => {
         if (child instanceof THREE.Mesh) meshes.push(child)
       })
       let triangles = 0
@@ -330,7 +306,7 @@ function buildScene(
  * then confirm. The turn that puts that face down is worked out here, so the slicer cannot end up
  * resting the model on a different face.
  */
-export default function FacePickerDialog({ file, rotation, onCancel, onChoose }: FacePickerDialogProps) {
+export default function FacePickerDialog({ file, rotation, objectIndex = 0, onCancel, onChoose }: FacePickerDialogProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<PickerScene | null>(null)
   const [ready, setReady] = useState(false)
@@ -341,7 +317,7 @@ export default function FacePickerDialog({ file, rotation, onCancel, onChoose }:
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const api = buildScene(container, file, rotation, {
+    const api = buildScene(container, file, rotation, objectIndex, {
       onReady: () => setReady(true),
       onError: setError,
       onHover: setHoverArea,
@@ -354,7 +330,7 @@ export default function FacePickerDialog({ file, rotation, onCancel, onChoose }:
     }
     // The picker opens on one fixed state of the model; it is remounted for another.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file])
+  }, [file, objectIndex])
 
   const confirm = () => {
     if (picked?.restable) onChoose(rotationToLayOnFace(rotation, picked.normal))

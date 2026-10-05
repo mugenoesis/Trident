@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { BELT_TRAVEL_MM, defaultPlacement, slideRange, type BedSize } from '../dimensions'
-import { loadObject, rotationQuaternion, type Rotation } from '../modelLoading'
-import type { Placement, TransformStep } from '../types'
+import { largestRestableFace } from '../modelFaces'
+import { loadObject, rotationQuaternion, rotationToLayOnFace, splitObjects, type Rotation } from '../modelLoading'
+import type { ObjectEdit, Placement, TransformStep } from '../types'
 import AxisSlider from './AxisSlider'
 import FacePickerDialog from './FacePickerDialog'
 
@@ -13,14 +14,20 @@ interface RotateMoveDialogProps {
   supportEnabled: boolean
   // Where the model sits now; null = the slicer's default spot.
   placement: Placement | null
-  // Set when rotating is not available (a file with several objects): the rotate controls are disabled.
-  rotateDisabledReason?: string
+  // Names and little pictures of the file's objects (by file index), when there are several.
+  objectNames: string[]
+  thumbnails: Record<number, string>
+  // A file with several plates: the file indices of the objects on the chosen plate. Only those are
+  // shown and changed; objects on other plates are left exactly as they are.
+  plateObjects?: number[]
   busyOp: 'orient' | 'arrange' | null
   onClose: () => void
-  // Keep a new position without turning the model.
+  // Keep a new position without turning anything.
   onPlace: (placement: Placement) => void
-  // Run the steps in the slicer, then keep the position. Resolves true when it worked.
+  // One object: run the steps in the slicer, then keep the position. Resolves true when it worked.
   onTransform: (steps: TransformStep[], placement: Placement) => Promise<boolean>
+  // Several objects: write each object's turn and position into the model, then keep the group's centre.
+  onTransformObjects: (edits: ObjectEdit[], groupCentre: Placement) => Promise<boolean>
   onAutoOrient: () => void
   onAutoArrange: () => void
 }
@@ -32,6 +39,11 @@ interface Footprint {
   d: number
   h: number
 }
+// What the window holds for one object: how far it is turned and where its footprint centre is.
+interface ObjectState {
+  rot: Rotation
+  pos: Placement
+}
 
 const ZERO: Rotation = { x: 0, y: 0, z: 0 }
 const AXES: { axis: Axis; label: string; hint: string }[] = [
@@ -39,6 +51,9 @@ const AXES: { axis: Axis; label: string; hint: string }[] = [
   { axis: 'y', label: 'Tip left / right', hint: 'Y' },
   { axis: 'z', label: 'Spin on the plate', hint: 'Z' },
 ]
+// More objects than this are picked from a list instead of a row of pictures.
+const MAX_CHIPS = 8
+const OVERLAP_MARGIN_MM = 0.5
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
 // An angle brought into (-180, 180].
@@ -47,11 +62,13 @@ const wrapAngle = (deg: number) => {
   return wrapped === -180 ? 180 : wrapped
 }
 const round1 = (v: number) => Math.round(v * 10) / 10
+const isTurned = (r: Rotation) => r.x !== 0 || r.y !== 0 || r.z !== 0
+const moved = (a: Placement, b: Placement) => Math.abs(a.x - b.x) > 0.05 || Math.abs(a.y - b.y) > 0.05
 
 function rotationSteps(rotation: Rotation): TransformStep[] {
   const steps: TransformStep[] = []
   // The slicer is given one rotation at a time, X then Y then Z, each about the plate's own
-  // axes -- the same order the preview applies them in (Euler 'ZYX' below).
+  // axes -- the same order the preview applies them in (Euler 'ZYX').
   if (rotation.x !== 0) steps.push({ op: 'rotate_x', degrees: rotation.x })
   if (rotation.y !== 0) steps.push({ op: 'rotate_y', degrees: rotation.y })
   if (rotation.z !== 0) steps.push({ op: 'rotate_z', degrees: rotation.z })
@@ -60,9 +77,13 @@ function rotationSteps(rotation: Rotation): TransformStep[] {
 
 // What the scene lets the React side do. Everything inside is three.js state.
 interface SceneApi {
-  setRotation: (rotation: Rotation) => Footprint
-  setPosition: (x: number, y: number) => void
+  // Turn object i and put its footprint centre on pos; returns its footprint.
+  setObject: (index: number, rotation: Rotation, pos: Placement) => Footprint
+  // The object with the sliders is drawn in colour, the others greyed out (a single object always is).
+  select: (index: number) => void
   setView: (view: View) => void
+  // The turn that lays object i on its largest flat face, or null when it has none.
+  layFlat: (index: number, current: Rotation) => Rotation | null
   dispose: () => void
 }
 
@@ -70,8 +91,16 @@ interface SceneOptions {
   container: HTMLDivElement
   file: File
   bed: BedSize
-  onLoaded: () => void
+  // Only these objects (file indices) are shown; undefined shows them all.
+  only?: number[]
+  onLoaded: (objects: { fileIndex: number; centre: Placement; footprint: Footprint }[]) => void
   onError: (message: string) => void
+  onPickObject: (index: number) => void
+}
+
+interface SceneObject {
+  rotator: THREE.Group // turned by the sliders, then moved onto the plate
+  meshes: THREE.Mesh[]
 }
 
 function buildScene(options: SceneOptions): SceneApi {
@@ -118,10 +147,9 @@ function buildScene(options: SceneOptions): SceneApi {
   bedGroup.add(new THREE.LineLoop(outline, new THREE.LineBasicMaterial({ color: 0x6b7480 })))
   scene.add(bedGroup)
 
-  const rotator = new THREE.Group() // turned by the sliders, then moved onto the plate
-  scene.add(rotator)
-  let model: THREE.Object3D | null = null
-  const meshes: THREE.Mesh[] = []
+  const objects: SceneObject[] = []
+  const allMeshes: THREE.Mesh[] = []
+  const ghost = new THREE.MeshStandardMaterial({ color: 0x6b7480, transparent: true, opacity: 0.55, metalness: 0.05, roughness: 0.8 })
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = false
@@ -153,6 +181,28 @@ function buildScene(options: SceneOptions): SceneApi {
   }
   frame('3d')
 
+  // Clicking an object (without dragging, which turns the view) selects it.
+  const raycaster = new THREE.Raycaster()
+  const pointer = new THREE.Vector2()
+  let down: { x: number; y: number } | null = null
+  const canvas = renderer.domElement
+  const handleDown = (event: PointerEvent) => {
+    down = { x: event.clientX, y: event.clientY }
+  }
+  const handleUp = (event: PointerEvent) => {
+    const start = down
+    down = null
+    if (!start || objects.length < 2 || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return
+    const rect = canvas.getBoundingClientRect()
+    pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+    raycaster.setFromCamera(pointer, camera)
+    const first = raycaster.intersectObjects(allMeshes, false)[0]
+    const index = first ? (first.object.userData.objectIndex as number | undefined) : undefined
+    if (index !== undefined) options.onPickObject(index)
+  }
+  canvas.addEventListener('pointerdown', handleDown)
+  canvas.addEventListener('pointerup', handleUp)
+
   let disposed = false
   let animation = 0
   const animate = () => {
@@ -174,25 +224,67 @@ function buildScene(options: SceneOptions): SceneApi {
   const observer = new ResizeObserver(resize)
   observer.observe(container)
 
+  const settle = (item: SceneObject, rotation: Rotation, pos: Placement): Footprint => {
+    const { rotator } = item
+    rotator.quaternion.copy(rotationQuaternion(rotation))
+    rotator.position.set(0, 0, 0)
+    rotator.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(rotator, true)
+    if (box.isEmpty()) return { w: 0, d: 0, h: 0 }
+    const centre = box.getCenter(new THREE.Vector3())
+    // Footprint centre on the position, lowest point on the plate.
+    rotator.position.set(pos.x - centre.x, pos.y - centre.y, -box.min.z)
+    rotator.updateMatrixWorld(true)
+    const size = box.getSize(new THREE.Vector3())
+    return { w: size.x, d: size.y, h: size.z }
+  }
+
   loadObject(file)
-    .then((object) => {
+    .then((loaded) => {
       if (disposed) return
-      object.updateMatrixWorld(true)
-      const box = new THREE.Box3().setFromObject(object, true)
-      object.position.sub(box.getCenter(new THREE.Vector3()))
-      model = new THREE.Group()
-      model.add(object)
-      rotator.add(model)
-      object.traverse((child) => {
-        if (child instanceof THREE.Mesh) meshes.push(child)
+      const info: { fileIndex: number; centre: Placement; footprint: Footprint }[] = []
+      splitObjects(loaded).forEach((part, fileIndex) => {
+        if (options.only && !options.only.includes(fileIndex)) {
+          // Not on this plate: not shown, and its memory given back.
+          part.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose()
+              const mats = Array.isArray(child.material) ? child.material : [child.material]
+              mats.forEach((m) => m.dispose())
+            }
+          })
+          return
+        }
+        const index = objects.length
+        // Centre the object on the origin inside its own rotator, remembering where it started.
+        const box = new THREE.Box3().setFromObject(part, true)
+        const centre0 = box.getCenter(new THREE.Vector3())
+        const centred = new THREE.Group()
+        centred.position.set(-centre0.x, -centre0.y, -centre0.z)
+        centred.add(part)
+        const rotator = new THREE.Group()
+        rotator.add(centred)
+        scene.add(rotator)
+        const meshes: THREE.Mesh[] = []
+        part.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.userData.objectIndex = index
+            child.userData.original = child.material
+            meshes.push(child)
+          }
+        })
+        allMeshes.push(...meshes)
+        objects.push({ rotator, meshes })
+        const size = box.getSize(new THREE.Vector3())
+        info.push({ fileIndex, centre: { x: centre0.x, y: centre0.y }, footprint: { w: size.x, d: size.y, h: size.z } })
       })
       let triangles = 0
-      meshes.forEach((m) => {
+      allMeshes.forEach((m) => {
         const g = m.geometry
         triangles += g.index ? g.index.count / 3 : g.getAttribute('position').count / 3
       })
       if (triangles < 200_000) {
-        meshes.forEach((m) =>
+        allMeshes.forEach((m) =>
           m.add(
             new THREE.LineSegments(
               new THREE.EdgesGeometry(m.geometry, 30),
@@ -201,53 +293,51 @@ function buildScene(options: SceneOptions): SceneApi {
           ),
         )
       }
-      options.onLoaded()
+      options.onLoaded(info)
       requestRender()
     })
     .catch((err: unknown) => {
       if (!disposed) options.onError(err instanceof Error ? err.message : 'The model could not be shown')
     })
 
-  const place = { x: bedCentre.x, y: bedCentre.y }
-  const settle = (): Footprint => {
-    const box = new THREE.Box3()
-    rotator.position.set(0, 0, 0)
-    rotator.updateMatrixWorld(true)
-    box.setFromObject(rotator, true)
-    if (box.isEmpty()) return { w: 0, d: 0, h: 0 }
-    const centre = box.getCenter(new THREE.Vector3())
-    // Footprint centre on the placement, lowest point on the plate.
-    rotator.position.set(place.x - centre.x, place.y - centre.y, -box.min.z)
-    rotator.updateMatrixWorld(true)
-    const size = box.getSize(new THREE.Vector3())
-    return { w: size.x, d: size.y, h: size.z }
-  }
-
   return {
-    setRotation(rotation) {
-      // Extrinsic X, then Y, then Z about the plate axes: Euler order 'ZYX' in three.js.
-      rotator.quaternion.copy(rotationQuaternion(rotation))
-      const footprint = settle()
+    setObject(index, rotation, pos) {
+      const item = objects[index]
+      if (!item) return { w: 0, d: 0, h: 0 }
+      const footprint = settle(item, rotation, pos)
       requestRender()
       return footprint
     },
-    setPosition(x, y) {
-      place.x = x
-      place.y = y
-      settle()
+    select(index) {
+      objects.forEach((item, i) => {
+        item.meshes.forEach((m) => {
+          m.material = objects.length < 2 || i === index ? (m.userData.original as THREE.Material) : ghost
+        })
+      })
       requestRender()
     },
     setView: frame,
+    layFlat(index, current) {
+      const item = objects[index]
+      if (!item) return null
+      const normal = largestRestableFace(item.meshes)
+      return normal ? rotationToLayOnFace(current, normal) : null
+    },
     dispose() {
       disposed = true
       cancelAnimationFrame(animation)
       observer.disconnect()
+      canvas.removeEventListener('pointerdown', handleDown)
+      canvas.removeEventListener('pointerup', handleUp)
       controls.dispose()
+      ghost.dispose()
       scene.traverse((child) => {
         if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.LineLoop) {
           child.geometry.dispose()
           const mats = Array.isArray(child.material) ? child.material : [child.material]
           mats.forEach((m) => m.dispose())
+          const original = child.userData.original as THREE.Material | undefined
+          original?.dispose()
         }
       })
       renderer.dispose()
@@ -290,63 +380,104 @@ function AngleField({ value, disabled, label, onChange }: { value: number; disab
 /**
  * The "Rotate and move" window: a preview of the model on the printer's plate, a slider along
  * the left edge (front to back) and the bottom (left to right) to place it, and sliders to turn
- * it. Turning and placing only change the preview until Apply; "Lay flat" and "Pick a face"
- * ask the slicer straight away since it works out which face is flat.
+ * it. Turning and placing only change the preview until Apply. "Lay flat" on a single object asks
+ * the slicer straight away since it works out which face is flat.
+ *
+ * A file with several objects works one object at a time: pick one (chips, or click it) and the
+ * sliders act on it while the others stay greyed out. Apply writes every object's turn and
+ * position into the model together.
  */
 export default function RotateMoveDialog({
   file,
   bedSize,
   supportEnabled,
   placement,
-  rotateDisabledReason,
+  objectNames,
+  thumbnails,
   busyOp,
   onClose,
   onPlace,
   onTransform,
+  plateObjects,
+  onTransformObjects,
   onAutoOrient,
   onAutoArrange,
 }: RotateMoveDialogProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<SceneApi | null>(null)
+  const appliedRef = useRef<ObjectState[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [view, setView] = useState<View>('3d')
-  const [rotation, setRotation] = useState<Rotation>(ZERO)
   const startPosition = useMemo(() => placement ?? defaultPlacement(bedSize, supportEnabled), [placement, bedSize, supportEnabled])
-  const [position, setPosition] = useState<Placement>(startPosition)
-  const [footprint, setFootprint] = useState<Footprint>({ w: 0, d: 0, h: 0 })
+  const startRef = useRef(startPosition)
+  useEffect(() => {
+    startRef.current = startPosition
+  }, [startPosition])
+  // Where each object was when the window opened (shifted so the group is centred on the current
+  // position), and where it is now.
+  const [initial, setInitial] = useState<ObjectState[]>([])
+  // Each shown object's place in the file, and where it started in the file's own coordinates.
+  const [fileIndexes, setFileIndexes] = useState<number[]>([])
+  const [origins, setOrigins] = useState<Placement[]>([])
+  const [objs, setObjs] = useState<ObjectState[]>([])
+  const [footprints, setFootprints] = useState<Footprint[]>([])
+  const [selected, setSelected] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [pickedNote, setPickedNote] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
   const [working, setWorking] = useState<'apply' | 'lay_flat' | null>(null)
 
-  const canRotate = !rotateDisabledReason && loaded
+  const count = objs.length
+  const several = count > 1
+  // One object at a time through the file's own object placements; the slicer's rotate turns every
+  // object of every plate, so it is only used for a file with a single object.
+  const perObject = several || Boolean(plateObjects)
   const locked = working !== null || busyOp !== null
+  const canRotate = loaded && !loadError
+  const current: ObjectState = objs[selected] ?? { rot: ZERO, pos: startPosition }
+  const footprint: Footprint = footprints[selected] ?? { w: 0, d: 0, h: 0 }
 
-  // A different file (after Lay flat, Auto-orient, ...) or a placement set elsewhere starts over.
-  useEffect(() => {
-    setRotation(ZERO)
-    setPosition(startPosition)
-    setPickerOpen(false)
-    setPickedNote(false)
-  }, [file, startPosition])
-
+  // A different file (after Lay flat, Auto-orient, Apply ...) rebuilds the scene and starts over.
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
     setLoaded(false)
     setLoadError(null)
+    setPickerOpen(false)
+    setNote(null)
+    appliedRef.current = []
     const api = buildScene({
       container,
       file,
       bed: bedSize,
-      onLoaded: () => setLoaded(true),
+      only: plateObjects,
+      onLoaded: (info) => {
+        // Put the whole group's centre on the current position; each object keeps its place within it.
+        const minX = Math.min(...info.map((o) => o.centre.x - o.footprint.w / 2))
+        const maxX = Math.max(...info.map((o) => o.centre.x + o.footprint.w / 2))
+        const minY = Math.min(...info.map((o) => o.centre.y - o.footprint.d / 2))
+        const maxY = Math.max(...info.map((o) => o.centre.y + o.footprint.d / 2))
+        const shiftX = startRef.current.x - (minX + maxX) / 2
+        const shiftY = startRef.current.y - (minY + maxY) / 2
+        const start = info.map((o) => ({ rot: ZERO, pos: { x: o.centre.x + shiftX, y: o.centre.y + shiftY } }))
+        setInitial(start)
+        setObjs(start)
+        setFileIndexes(info.map((o) => o.fileIndex))
+        setOrigins(info.map((o) => o.centre))
+        setFootprints(info.map((o) => o.footprint))
+        setSelected(0)
+        setLoaded(true)
+      },
       onError: setLoadError,
+      onPickObject: setSelected,
     })
     sceneRef.current = api
     return () => {
       api.dispose()
       if (sceneRef.current === api) sceneRef.current = null
     }
+    // plateObjects only changes with the file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, bedSize])
 
   useEffect(() => {
@@ -354,32 +485,96 @@ export default function RotateMoveDialog({
   }, [view, loaded])
 
   useEffect(() => {
-    if (loaded) setFootprint(sceneRef.current?.setRotation(rotation) ?? footprint)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rotation, loaded])
+    if (loaded) sceneRef.current?.select(selected)
+  }, [selected, loaded, count])
 
-  // The centre can go anywhere the turned model still fits on the plate.
+  // Push whatever changed to the scene and read back each object's footprint.
+  useEffect(() => {
+    const api = sceneRef.current
+    if (!loaded || !api) return
+    let changed = false
+    const next = footprints.slice()
+    objs.forEach((o, i) => {
+      const before = appliedRef.current[i]
+      if (before && before.rot.x === o.rot.x && before.rot.y === o.rot.y && before.rot.z === o.rot.z && !moved(before.pos, o.pos)) return
+      next[i] = api.setObject(i, o.rot, o.pos)
+      appliedRef.current[i] = o
+      changed = true
+    })
+    if (changed) setFootprints(next)
+    // footprints is read, not a trigger: it only changes here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objs, loaded])
+
+  // The centre can go anywhere the turned object still fits on the plate.
   const yTop = bedSize.beltPrinterInfiniteY ? bedSize.minY + BELT_TRAVEL_MM + footprint.d : bedSize.minY + bedSize.depth
   const [xMin, xMax] = slideRange(bedSize.minX, bedSize.minX + bedSize.width, footprint.w / 2)
   const [yMin, yMax] = slideRange(bedSize.minY, yTop, footprint.d / 2)
-  const shown: Placement = { x: clamp(position.x, xMin, xMax), y: clamp(position.y, yMin, yMax) }
-
+  const shown: Placement = { x: clamp(current.pos.x, xMin, xMax), y: clamp(current.pos.y, yMin, yMax) }
+  // Turning can leave the selected object hanging past the plate; pull it back.
   useEffect(() => {
-    if (loaded) sceneRef.current?.setPosition(shown.x, shown.y)
-  }, [shown.x, shown.y, loaded, footprint.w, footprint.d]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!loaded || footprint.w === 0) return
+    if (moved(shown, current.pos)) {
+      setObjs((prev) => prev.map((o, i) => (i === selected ? { ...o, pos: shown } : o)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [footprint.w, footprint.d, selected, loaded])
 
-  const pending = rotationSteps(rotation)
-  const changed = pending.length > 0 || Math.abs(shown.x - startPosition.x) > 0.05 || Math.abs(shown.y - startPosition.y) > 0.05
+  const update = useCallback(
+    (patch: (o: ObjectState) => ObjectState) => {
+      setObjs((prev) => prev.map((o, i) => (i === selected ? patch(o) : o)))
+      setNote(null)
+    },
+    [selected],
+  )
+  const setAxis = useCallback(
+    (axis: Axis, degrees: number) => update((o) => ({ ...o, rot: { ...o.rot, [axis]: wrapAngle(Math.round(degrees * 10) / 10) } })),
+    [update],
+  )
+
+  // Which objects are pending changes, and which overlap.
+  const changedFlags = objs.map((o, i) => isTurned(o.rot) || (initial[i] ? moved(o.pos, initial[i].pos) : false))
+  const changedCount = changedFlags.filter(Boolean).length
+  const overlaps = useMemo(() => {
+    const found = new Map<number, { other: number; mm: number }>()
+    for (let i = 0; i < objs.length; i++) {
+      for (let j = i + 1; j < objs.length; j++) {
+        const a = footprints[i]
+        const b = footprints[j]
+        if (!a || !b) continue
+        const ox = Math.min(objs[i].pos.x + a.w / 2, objs[j].pos.x + b.w / 2) - Math.max(objs[i].pos.x - a.w / 2, objs[j].pos.x - b.w / 2)
+        const oy = Math.min(objs[i].pos.y + a.d / 2, objs[j].pos.y + b.d / 2) - Math.max(objs[i].pos.y - a.d / 2, objs[j].pos.y - b.d / 2)
+        if (ox > OVERLAP_MARGIN_MM && oy > OVERLAP_MARGIN_MM) {
+          const mm = Math.min(ox, oy)
+          if (!found.has(i)) found.set(i, { other: j, mm })
+          if (!found.has(j)) found.set(j, { other: i, mm })
+        }
+      }
+    }
+    return found
+  }, [objs, footprints])
   const tooTall = footprint.h > bedSize.height + 0.05
+  // A file's objects often share one name (several copies of a part); number them so each is distinct.
+  const nameOf = (i: number) => {
+    const fileIndex = fileIndexes[i] ?? i
+    const name = objectNames[fileIndex]
+    const shown = fileIndexes.map((f) => objectNames[f])
+    const shared = !name || shown.filter((n) => n === name).length > 1
+    return shared ? `${name || 'Object'} ${fileIndex + 1}` : name
+  }
 
-  const setAxis = useCallback((axis: Axis, degrees: number) => {
-    setRotation((prev) => ({ ...prev, [axis]: wrapAngle(Math.round(degrees * 10) / 10) }))
-  }, [])
+  const groupCentre = (): Placement => {
+    const minX = Math.min(...objs.map((o, i) => o.pos.x - (footprints[i]?.w ?? 0) / 2))
+    const maxX = Math.max(...objs.map((o, i) => o.pos.x + (footprints[i]?.w ?? 0) / 2))
+    const minY = Math.min(...objs.map((o, i) => o.pos.y - (footprints[i]?.d ?? 0) / 2))
+    const maxY = Math.max(...objs.map((o, i) => o.pos.y + (footprints[i]?.d ?? 0) / 2))
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+  }
 
-  const run = (kind: 'apply' | 'lay_flat', steps: TransformStep[]) => {
+  const run = (kind: 'apply' | 'lay_flat', task: Promise<boolean>) => {
     setWorking(kind)
-    setPickedNote(false)
-    onTransform(steps, shown)
+    setNote(null)
+    task
       .then((ok) => {
         if (ok && kind === 'apply') onClose()
       })
@@ -387,19 +582,58 @@ export default function RotateMoveDialog({
   }
 
   const apply = () => {
-    if (pending.length === 0) {
-      onPlace(shown)
+    if (!perObject) {
+      const steps = rotationSteps(current.rot)
+      if (steps.length === 0) {
+        onPlace(shown)
+        onClose()
+        return
+      }
+      run('apply', onTransform(steps, shown))
+      return
+    }
+    if (changedCount === 0) {
       onClose()
       return
     }
-    run('apply', pending)
+    // One plate of several: only what was changed is written, as a move from where the object was in
+    // the file, so its place on the plate and every other plate stay as they are. Otherwise every
+    // object is written at its place on the bed.
+    const edits: ObjectEdit[] = objs
+      .map((o, i) => ({ o, i }))
+      .filter(({ i }) => !plateObjects || changedFlags[i])
+      .map(({ o, i }) => ({
+        index: fileIndexes[i] ?? i,
+        x_deg: o.rot.x,
+        y_deg: o.rot.y,
+        z_deg: o.rot.z,
+        x: plateObjects ? (origins[i]?.x ?? 0) + (o.pos.x - initial[i].pos.x) : o.pos.x,
+        y: plateObjects ? (origins[i]?.y ?? 0) + (o.pos.y - initial[i].pos.y) : o.pos.y,
+      }))
+    run('apply', onTransformObjects(edits, groupCentre()))
   }
 
-  const reset = () => {
-    setRotation(ZERO)
-    setPosition(startPosition)
-    setPickedNote(false)
+  const layFlat = () => {
+    if (!perObject) {
+      run('lay_flat', onTransform([...rotationSteps(current.rot), { op: 'lay_flat' }], shown))
+      return
+    }
+    // Several objects: worked out here, so it is instant and touches only the selected one.
+    const turn = sceneRef.current?.layFlat(selected, current.rot)
+    if (turn) update((o) => ({ ...o, rot: turn }))
+    else setNote(`${nameOf(selected)} has no flat face to lie on.`)
   }
+
+  const resetSelected = () => {
+    const start = initial[selected]
+    if (start) update(() => start)
+    setNote(null)
+  }
+  const resetAll = () => {
+    setObjs(initial)
+    setNote(null)
+  }
+  const confirmDiscard = () => changedCount === 0 || window.confirm('Discard the changes you have not applied?')
 
   return (
     <div className="object-picker rotate-move" role="dialog" aria-modal="true" aria-label="Rotate and move">
@@ -410,6 +644,50 @@ export default function RotateMoveDialog({
         </button>
       </div>
       <div className="object-picker-scroll rotate-move-body">
+        {several && (
+          <div className="rm-objects" role="group" aria-label="Object to move">
+            <span className="rm-objects-label">Moving</span>
+            {count > MAX_CHIPS ? (
+              <select value={selected} aria-label="Object to move" onChange={(e) => setSelected(Number(e.target.value))}>
+                {objs.map((_, i) => (
+                  <option key={i} value={i}>
+                    {nameOf(i)}
+                    {changedFlags[i] ? ' (changed)' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              objs.map((o, i) => {
+                const overlap = overlaps.get(i)
+                const status = overlap
+                  ? `overlaps ${nameOf(overlap.other)}`
+                  : isTurned(o.rot) && initial[i] && moved(o.pos, initial[i].pos)
+                    ? 'turned and moved'
+                    : isTurned(o.rot)
+                      ? 'turned'
+                      : initial[i] && moved(o.pos, initial[i].pos)
+                        ? 'moved'
+                        : 'unchanged'
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`rm-chip${i === selected ? ' sel' : ''}${overlap ? ' warn' : ''}`}
+                    aria-pressed={i === selected}
+                    onClick={() => setSelected(i)}
+                  >
+                    {thumbnails[fileIndexes[i] ?? i] ? <img src={thumbnails[fileIndexes[i] ?? i]} alt="" /> : <span className="rm-chip-blank" aria-hidden="true" />}
+                    <span>
+                      {nameOf(i)}
+                      <small>{status}</small>
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        )}
+
         <div className="rm-stage">
           <div className="rm-vslider">
             <span>Back</span>
@@ -422,7 +700,7 @@ export default function RotateMoveDialog({
               max={yMax}
               step={0.5}
               disabled={locked || !loaded}
-              onChange={(y) => setPosition({ ...shown, y })}
+              onChange={(y) => update((o) => ({ ...o, pos: { ...shown, y } }))}
             />
             <span>Front</span>
           </div>
@@ -435,9 +713,14 @@ export default function RotateMoveDialog({
                 </button>
               ))}
             </div>
+            {several && overlaps.has(selected) && (
+              <div className="rm-tip rm-tip-bad">
+                {nameOf(selected)} overlaps {nameOf(overlaps.get(selected)!.other)} by about {overlaps.get(selected)!.mm.toFixed(0)} mm
+              </div>
+            )}
             {!loaded && !loadError && <div className="rm-overlay">Loading the model…</div>}
             {loadError && <div className="rm-overlay rm-error">This file can&rsquo;t be shown here ({loadError}).</div>}
-            {working && <div className="rm-overlay">{working === 'apply' ? 'Rotating…' : 'Laying it flat…'}</div>}
+            {working && <div className="rm-overlay">{working === 'apply' ? 'Applying…' : 'Laying it flat…'}</div>}
           </div>
           <div className="rm-hslider">
             <span>Left</span>
@@ -449,11 +732,11 @@ export default function RotateMoveDialog({
               max={xMax}
               step={0.5}
               disabled={locked || !loaded}
-              onChange={(x) => setPosition({ ...shown, x })}
+              onChange={(x) => update((o) => ({ ...o, pos: { ...shown, x } }))}
             />
             <span>Right</span>
             <span className="rm-readout">
-              X {(shown.x - bedSize.minX).toFixed(1)} · Y {(shown.y - bedSize.minY).toFixed(1)} mm
+              {several ? `${nameOf(selected)} · ` : ''}X {(shown.x - bedSize.minX).toFixed(1)} · Y {(shown.y - bedSize.minY).toFixed(1)} mm
             </span>
           </div>
         </div>
@@ -461,6 +744,7 @@ export default function RotateMoveDialog({
         <div className="rm-size" aria-live="polite">
           {footprint.w > 0 && (
             <>
+              {several ? `${nameOf(selected)}: ` : ''}
               {footprint.w.toFixed(1)} × {footprint.d.toFixed(1)} × {footprint.h.toFixed(1)} mm
               {tooTall && <span className="field-error"> · taller than the printer ({bedSize.height} mm)</span>}
             </>
@@ -476,8 +760,8 @@ export default function RotateMoveDialog({
               </span>
               <AxisSlider
                 ariaLabel={`${label}, degrees`}
-                valueText={`${rotation[axis]} degrees`}
-                value={rotation[axis]}
+                valueText={`${current.rot[axis]} degrees`}
+                value={current.rot[axis]}
                 min={-180}
                 max={180}
                 step={1}
@@ -485,71 +769,90 @@ export default function RotateMoveDialog({
                 disabled={locked || !canRotate}
                 onChange={(v) => setAxis(axis, v)}
               />
-              <AngleField label={`${label}, angle`} value={rotation[axis]} disabled={locked || !canRotate} onChange={(v) => setAxis(axis, v)} />
+              <AngleField label={`${label}, angle`} value={current.rot[axis]} disabled={locked || !canRotate} onChange={(v) => setAxis(axis, v)} />
               <span className="rm-quarter">
-                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, rotation[axis] - 90)}>
+                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, current.rot[axis] - 90)}>
                   −90
                 </button>
-                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, rotation[axis] + 90)}>
+                <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setAxis(axis, current.rot[axis] + 90)}>
                   +90
                 </button>
               </span>
             </div>
           ))}
         </div>
-        {rotateDisabledReason && <p className="auth-hint">{rotateDisabledReason}</p>}
 
         <div className="rm-tools">
-          <button
-            type="button"
-            className="preview-button"
-            disabled={locked || !canRotate}
-            onClick={() => run('lay_flat', [...pending, { op: 'lay_flat' }])}
-          >
+          <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={layFlat}>
             Lay flat
           </button>
+          <button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setPickerOpen(true)}>
+            Pick a face…
+          </button>
           <button
             type="button"
             className="preview-button"
-            disabled={locked || !canRotate}
-            onClick={() => setPickerOpen(true)}
+            disabled={locked || !(several ? changedFlags[selected] : changedCount > 0)}
+            onClick={resetSelected}
           >
-            Pick a face…
+            {several ? 'Reset this object' : 'Reset'}
           </button>
-          <button type="button" className="preview-button" disabled={locked || !changed} onClick={reset}>
-            Reset
-          </button>
+          {several && (
+            <button type="button" className="preview-button" disabled={locked || changedCount === 0} onClick={resetAll}>
+              Reset all
+            </button>
+          )}
           <span className="auth-hint rm-tools-note">
-            {pickedNote ? 'Turned to put the chosen face down. Press Apply to keep it.' : 'Lay flat runs in the slicer and takes a second or two.'}
+            {note ??
+              (several
+                ? 'Turning, moving and the face tools act on the selected object.'
+                : plateObjects
+                  ? 'Only the objects on this plate are shown; the other plates stay as they are.'
+                  : 'Lay flat runs in the slicer and takes a second or two.')}
           </span>
         </div>
       </div>
       <div className="rm-footer">
         <span className="rm-footer-left">
-          <button type="button" className="preview-button" disabled={locked || !loaded} onClick={onAutoOrient}>
-            {busyOp === 'orient' ? 'Orienting…' : 'Auto-orient'}
+          {!plateObjects && (
+            <>
+          <button
+            type="button"
+            className="preview-button"
+            disabled={locked || !loaded}
+            onClick={() => confirmDiscard() && onAutoOrient()}
+          >
+            {busyOp === 'orient' ? 'Orienting…' : several ? 'Auto-orient all' : 'Auto-orient'}
           </button>
-          <button type="button" className="preview-button" disabled={locked || !loaded} onClick={onAutoArrange}>
-            {busyOp === 'arrange' ? 'Arranging…' : 'Auto-arrange'}
+          <button
+            type="button"
+            className="preview-button"
+            disabled={locked || !loaded}
+            onClick={() => confirmDiscard() && onAutoArrange()}
+          >
+            {busyOp === 'arrange' ? 'Arranging…' : several ? 'Auto-arrange all' : 'Auto-arrange'}
           </button>
+            </>
+          )}
         </span>
         <span className="rm-footer-right">
           <button type="button" className="preview-button" onClick={onClose} disabled={working !== null}>
             Cancel
           </button>
           <button type="button" onClick={apply} disabled={locked || !loaded}>
-            {working === 'apply' ? 'Rotating…' : 'Apply'}
+            {working === 'apply' ? 'Applying…' : several && changedCount > 0 ? `Apply ${changedCount} change${changedCount === 1 ? '' : 's'}` : 'Apply'}
           </button>
         </span>
       </div>
       {pickerOpen && (
         <FacePickerDialog
           file={file}
-          rotation={rotation}
+          rotation={current.rot}
+          objectIndex={fileIndexes[selected] ?? selected}
           onCancel={() => setPickerOpen(false)}
           onChoose={(next) => {
-            setRotation(next)
-            setPickedNote(true)
+            update((o) => ({ ...o, rot: next }))
+            setNote('Turned to put the chosen face down. Press Apply to keep it.')
             setPickerOpen(false)
           }}
         />

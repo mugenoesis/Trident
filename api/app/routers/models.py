@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import cli_runner, meshcheck, threemf
+from .. import cli_runner, meshcheck, threemf, threemf_objects
 from ..auth import require_user
 from ..config import settings
 from ..schemas import (
@@ -21,6 +22,7 @@ from ..schemas import (
     ModelUploadResponse,
     ObjectInfo,
     PlateInfo,
+    ObjectsTransformRequest,
     ThreeMfInspection,
     TransformRequest,
 )
@@ -179,6 +181,31 @@ def transform_model(model_id: str, body: TransformRequest, current: User = Depen
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    stem = Path(resolve_model_original_name(model_id) or path.name).stem
+    return finalize_new_model(new_id, ".3mf", dest, f"{stem}.3mf", current.id)
+
+
+@router.post("/{model_id}/transform-objects", response_model=ModelUploadResponse)
+def transform_objects(model_id: str, body: ObjectsTransformRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+    """Turn and place objects of a multi-object .3mf one by one, writing the result as a new .3mf model
+    (the original is left alone). The slicer's own rotation turns every object at once, so this edits the
+    file's object transforms directly."""
+    path = resolve_model_path(model_id)
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    if path.suffix.lower() != ".3mf":
+        raise HTTPException(status_code=422, detail="Only a .3mf model has objects that can be moved one by one")
+    new_id = uuid.uuid4().hex
+    dest = settings.models_dir / f"{new_id}.3mf"
+    edits = [
+        threemf_objects.ObjectEdit(index=o.index, rotation=(o.x_deg, o.y_deg, o.z_deg), x=o.x, y=o.y) for o in body.objects
+    ]
+    try:
+        threemf_objects.edit_objects_3mf(path, dest, edits)
+    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     stem = Path(resolve_model_original_name(model_id) or path.name).stem
     return finalize_new_model(new_id, ".3mf", dest, f"{stem}.3mf", current.id)
 

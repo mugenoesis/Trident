@@ -628,3 +628,28 @@ def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_tha
         captured.clear()
         client.post("/jobs", json=_job(model_id, plate_index=1, filament_profiles=same))
         assert captured["model_path"].name != "input.3mf"
+
+
+def test_transform_objects_moves_and_turns_single_objects(client, tmp_path):
+    from app.threemf_objects import list_objects
+    from test_threemf_objects import _write_project
+
+    model_id = _upload_project(client, tmp_path)
+    resp = client.post(
+        f"/models/{model_id}/transform-objects",
+        json={"objects": [{"index": 1, "x_deg": 90, "x": 50, "y": 60}, {"index": 0, "x": 10, "y": 20}]},
+    )
+    assert resp.status_code == 200 and resp.json()["model_id"] != model_id
+    new_path = next(settings.models_dir.glob(f"{resp.json()['model_id']}.*"))
+    objs = list_objects(new_path)
+    assert (objs[1].width_mm, objs[1].depth_mm, objs[1].height_mm) == (15, 45, 15)
+    assert (objs[0].center_x_mm, objs[0].center_y_mm) == (10, 20)
+    bad = client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 99, "x": 0, "y": 0}]})
+    assert bad.status_code == 422
+    assert client.post(f"/models/{model_id}/transform-objects", json={"objects": []}).status_code == 422
+    assert client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x_deg": 999, "x": 0, "y": 0}]}).status_code == 422
+
+
+def test_transform_objects_needs_a_3mf(client):
+    model_id = _upload_model(client)
+    assert client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x": 0, "y": 0}]}).status_code == 422
