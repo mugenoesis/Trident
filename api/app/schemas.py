@@ -535,3 +535,19 @@ class TransformStep(BaseModel):
 
 class TransformRequest(BaseModel):
     steps: list[TransformStep] = Field(min_length=1, max_length=8)
+
+
+class ObjectEdit(BaseModel):
+    """One object of POST /models/{id}/transform-objects: turned (degrees, X then Y then Z about the
+    plate's axes) and placed with its footprint centre at (x, y), in plate coordinates (mm)."""
+
+    index: int = Field(ge=0)
+    x_deg: float = Field(default=0.0, ge=-360, le=360, allow_inf_nan=False)
+    y_deg: float = Field(default=0.0, ge=-360, le=360, allow_inf_nan=False)
+    z_deg: float = Field(default=0.0, ge=-360, le=360, allow_inf_nan=False)
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+
+
+class ObjectsTransformRequest(BaseModel):
+    objects: list[ObjectEdit] = Field(min_length=1, max_length=200)

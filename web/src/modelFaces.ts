@@ -131,6 +131,46 @@ export class FaceIndex {
     return { triangles: [...seen], normal: new THREE.Vector3(nx, ny, nz), area }
   }
 
+  /** The outward normal of one triangle, in the geometry's own coordinates. */
+  normalAt(triangle: number): THREE.Vector3 {
+    return new THREE.Vector3(this.normals[triangle * 3], this.normals[triangle * 3 + 1], this.normals[triangle * 3 + 2])
+  }
+
+  /** The first corner of a triangle, in the geometry's own coordinates. */
+  cornerOf(triangle: number, out: THREE.Vector3): THREE.Vector3 {
+    return out.fromBufferAttribute(this.position, this.vertex(triangle, 0))
+  }
+
+  /** Every flat face of the mesh (a seed triangle and the area), largest first. */
+  regions(): { seed: number; area: number }[] {
+    const visited = new Uint8Array(this.triangleCount)
+    const minDot = Math.cos((FLAT_TOLERANCE_DEGREES * Math.PI) / 180)
+    const found: { seed: number; area: number }[] = []
+    for (let seed = 0; seed < this.triangleCount; seed++) {
+      if (visited[seed]) continue
+      visited[seed] = 1
+      const nx = this.normals[seed * 3]
+      const ny = this.normals[seed * 3 + 1]
+      const nz = this.normals[seed * 3 + 2]
+      const stack = [seed]
+      let area = 0
+      while (stack.length > 0) {
+        const t = stack.pop() as number
+        area += this.areas[t]
+        for (let slot = 0; slot < 3; slot++) {
+          const next = this.neighbours[t * 3 + slot]
+          if (next < 0 || visited[next]) continue
+          if (this.normals[next * 3] * nx + this.normals[next * 3 + 1] * ny + this.normals[next * 3 + 2] * nz >= minDot) {
+            visited[next] = 1
+            stack.push(next)
+          }
+        }
+      }
+      found.push({ seed, area })
+    }
+    return found.sort((a, b) => b.area - a.area)
+  }
+
   /** A mesh of just the given triangles, for drawing the highlighted face. */
   highlightGeometry(triangles: number[]): THREE.BufferGeometry {
     const out = new Float32Array(triangles.length * 9)
@@ -146,4 +186,56 @@ export class FaceIndex {
     geometry.setAttribute('position', new THREE.BufferAttribute(out, 3))
     return geometry
   }
+}
+
+// How far past a face's plane the rest of the model may reach and still count as resting on it.
+const REST_TOLERANCE_MM = 0.05
+
+/**
+ * True when no vertex of the meshes reaches out past the plane through `pointOnFace` with outward
+ * `normal` (both in world coordinates): the face is part of the model's outer hull, so the model can
+ * stand on it.
+ */
+export function canRestOn(meshes: THREE.Mesh[], normal: THREE.Vector3, pointOnFace: THREE.Vector3): boolean {
+  const offset = normal.dot(pointOnFace)
+  const local = new THREE.Vector3()
+  for (const mesh of meshes) {
+    mesh.updateWorldMatrix(true, false)
+    // n . (M v + t) = (M^T n) . v + n . t, so each vertex costs one dot product.
+    const e = mesh.matrixWorld.elements
+    local.set(
+      e[0] * normal.x + e[1] * normal.y + e[2] * normal.z,
+      e[4] * normal.x + e[5] * normal.y + e[6] * normal.z,
+      e[8] * normal.x + e[9] * normal.y + e[10] * normal.z,
+    )
+    const shift = e[12] * normal.x + e[13] * normal.y + e[14] * normal.z
+    const position = mesh.geometry.getAttribute('position')
+    for (let i = 0; i < position.count; i++) {
+      if (local.x * position.getX(i) + local.y * position.getY(i) + local.z * position.getZ(i) + shift > offset + REST_TOLERANCE_MM) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+/**
+ * The outward direction (world coordinates) of the largest flat face the meshes can rest on, or null
+ * when there is none (a smooth sphere). Used for "Lay flat" on one object of several.
+ */
+export function largestRestableFace(meshes: THREE.Mesh[]): THREE.Vector3 | null {
+  const candidates: { mesh: THREE.Mesh; index: FaceIndex; seed: number; area: number }[] = []
+  for (const mesh of meshes) {
+    const index = new FaceIndex(mesh.geometry)
+    for (const r of index.regions()) candidates.push({ mesh, index, ...r })
+  }
+  candidates.sort((a, b) => b.area - a.area)
+  const corner = new THREE.Vector3()
+  for (const c of candidates.slice(0, 40)) {
+    c.mesh.updateWorldMatrix(true, false)
+    const normal = c.index.normalAt(c.seed).transformDirection(c.mesh.matrixWorld)
+    const point = c.index.cornerOf(c.seed, corner).clone().applyMatrix4(c.mesh.matrixWorld)
+    if (canRestOn(meshes, normal, point)) return normal
+  }
+  return null
 }

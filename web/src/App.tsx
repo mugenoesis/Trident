@@ -18,6 +18,7 @@ import {
   getModelPlates,
   orientModel,
   transformModel,
+  transformObjects,
   getProfileDetail,
   getSettingsSchema,
   listImportedProfiles,
@@ -86,6 +87,7 @@ import type {
   SettingDef,
   SettingsProfileRecord,
   ThreeMfInspection,
+  ObjectEdit,
   TransformStep,
 } from './types'
 import { pickBedType, supportedBedTypes } from './bedTypes'
@@ -840,6 +842,38 @@ function MainApp({
         return true
       } catch (err) {
         alert(`Could not turn the model: ${(err as Error).message}`)
+        return false
+      }
+    },
+    [modelId, applyInspection],
+  )
+
+  // Turn and move the objects of a multi-object file one by one (RotateMoveDialog). The new model
+  // keeps each object where it was put, so the group's centre is read back from it.
+  const handleTransformObjects = useCallback(
+    async (edits: ObjectEdit[], groupCentre: Placement): Promise<boolean> => {
+      if (!modelId) return false
+      try {
+        const res = await transformObjects(modelId, edits)
+        const [downloaded, inspection] = await Promise.all([downloadModelFile(res.model_id), getModelPlates(res.model_id)])
+        applyInspection(inspection)
+        setFile(downloaded)
+        setModelId(res.model_id)
+        setViewMode('model')
+        const listed = inspection.objects ?? []
+        if (listed.length > 0) {
+          // Measured the way the server measures it when it places the group, so the job moves nothing.
+          const minX = Math.min(...listed.map((o) => o.center_x_mm - o.width_mm / 2))
+          const maxX = Math.max(...listed.map((o) => o.center_x_mm + o.width_mm / 2))
+          const minY = Math.min(...listed.map((o) => o.center_y_mm - o.depth_mm / 2))
+          const maxY = Math.max(...listed.map((o) => o.center_y_mm + o.depth_mm / 2))
+          setPlacement({ x: (minX + maxX) / 2, y: (minY + maxY) / 2 })
+        } else {
+          setPlacement(groupCentre)
+        }
+        return true
+      } catch (err) {
+        alert(`Could not turn the objects: ${(err as Error).message}`)
         return false
       }
     },
@@ -2245,11 +2279,8 @@ function MainApp({
           bedSize={bedSize}
           supportEnabled={quickSettings.enable_support === '1'}
           placement={placement}
-          rotateDisabledReason={
-            hasObjectChoice
-              ? `This file has ${objects.length} objects. The slicer turns all of them at once, so turning is off here; you can still move it.`
-              : undefined
-          }
+          objectNames={objects.map((o) => o.name)}
+          thumbnails={objectThumbs}
           busyOp={positionBusy}
           onClose={() => setRotateMoveOpen(false)}
           onPlace={(p) => {
@@ -2257,6 +2288,7 @@ function MainApp({
             setViewMode('model')
           }}
           onTransform={handleTransformModel}
+          onTransformObjects={handleTransformObjects}
           onAutoOrient={() => runModelOp('orient')}
           onAutoArrange={() => runModelOp('arrange')}
         />

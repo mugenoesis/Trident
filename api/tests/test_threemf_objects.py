@@ -234,3 +234,92 @@ def test_copies_without_a_row_stay_stacked_and_get_their_own_uuid(tmp_path):
     with zipfile.ZipFile(out) as zf:
         uuids = re.findall(r'p:UUID="([^"]*)"', zf.read("3D/3dmodel.model").decode())
     assert len(uuids) == 3 and len(set(uuids)) == 3 and uuids[0] == "aaaaaaaa-0000-0000-0000-000000000001"
+
+
+def _item_boxes(path):
+    import zipfile as _z
+
+    from app.threemf_objects import _read_items
+
+    with _z.ZipFile(path) as zf:
+        return {it.index: it.box for it in _read_items(zf)}
+
+
+def test_edit_moves_one_object_and_leaves_the_others(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    src = _write_project(tmp_path)
+    dst = tmp_path / "moved.3mf"
+    edit_objects_3mf(src, dst, [ObjectEdit(index=1, rotation=(0, 0, 0), x=100.0, y=120.0)])
+    before, after = list_objects(src), list_objects(dst)
+    assert (after[1].center_x_mm, after[1].center_y_mm) == (100.0, 120.0)
+    assert (after[1].width_mm, after[1].depth_mm, after[1].height_mm) == (15, 15, 45)  # size unchanged
+    for i in (0, 2, 3):
+        assert after[i] == before[i]
+    with zipfile.ZipFile(dst) as zf:
+        assert zf.read("Metadata/extra.txt") == b"kept verbatim"
+
+
+def test_edit_turns_about_the_objects_own_centre_and_rests_it_on_the_plate(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    src = _write_project(tmp_path)
+    dst = tmp_path / "turned.3mf"
+    # "Tall B" is 15 x 15 x 45: tipped 90 degrees about X it lies along Y.
+    edit_objects_3mf(src, dst, [ObjectEdit(index=1, rotation=(90, 0, 0), x=50.0, y=60.0)])
+    obj = list_objects(dst)[1]
+    assert (obj.width_mm, obj.depth_mm, obj.height_mm) == (15, 45, 15)
+    assert (obj.center_x_mm, obj.center_y_mm) == (50.0, 60.0)
+    (_, _, z0), (_, _, z1) = _item_boxes(dst)[1]
+    assert abs(z0) < 1e-4 and abs(z1 - 15) < 1e-4  # lying on the plate
+
+
+def test_edit_spin_about_z_swaps_footprint_and_keeps_the_centre(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    src = _write_project(tmp_path)
+    dst = tmp_path / "spun.3mf"
+    edit_objects_3mf(src, dst, [ObjectEdit(index=0, rotation=(0, 0, 90), x=80.0, y=40.0)])
+    obj = list_objects(dst)[0]  # "Block A": 30 x 20 x 20
+    assert (obj.width_mm, obj.depth_mm, obj.height_mm) == (20, 30, 20)
+    assert (obj.center_x_mm, obj.center_y_mm) == (80.0, 40.0)
+
+
+def test_edit_turns_in_x_then_y_then_z_order(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    src = _write_project(tmp_path)
+    dst = tmp_path / "order.3mf"
+    # Tall B (15 x 15 x 45): X 90 lays it along Y; then Z 90 turns that to lie along X.
+    edit_objects_3mf(src, dst, [ObjectEdit(index=1, rotation=(90, 0, 90), x=0.0, y=0.0)])
+    obj = list_objects(dst)[1]
+    assert (obj.width_mm, obj.depth_mm, obj.height_mm) == (45, 15, 15)
+
+
+def test_edit_unknown_object_is_an_error(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    with pytest.raises(ValueError):
+        edit_objects_3mf(_write_project(tmp_path), tmp_path / "x.3mf", [ObjectEdit(index=9, rotation=(0, 0, 0), x=0, y=0)])
+
+
+def test_edit_works_on_components_in_an_external_model_file(tmp_path):
+    from app.threemf_objects import ObjectEdit, edit_objects_3mf
+
+    # Reuse the layout of test_component_objects_in_external_model_file by building one the same way.
+    ns = _NS + ' xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"'
+    child = f'<?xml version="1.0"?><model {ns}><resources><object id="1" type="model">{_mesh(10, 20, 30)}</object></resources><build/></model>'
+    root = (
+        f'<?xml version="1.0"?><model {ns}><resources><object id="2" type="model"><components>'
+        f'<component p:path="/3D/Objects/o.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 5 5 0"/></components></object></resources>'
+        f'<build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 50 50 0" printable="1"/></build></model>'
+    )
+    src = tmp_path / "c.3mf"
+    with zipfile.ZipFile(src, "w") as zf:
+        zf.writestr("3D/3dmodel.model", root)
+        zf.writestr("3D/Objects/o.model", child)
+    dst = tmp_path / "c2.3mf"
+    edit_objects_3mf(src, dst, [ObjectEdit(index=0, rotation=(0, 90, 0), x=70.0, y=80.0)])
+    obj = list_objects(dst)[0]
+    assert (obj.width_mm, obj.depth_mm, obj.height_mm) == (30, 20, 10)
+    assert (obj.center_x_mm, obj.center_y_mm) == (70.0, 80.0)

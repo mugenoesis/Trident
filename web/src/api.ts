@@ -21,6 +21,7 @@ import type {
   SettingsProfileUpdateRequest,
   SettingsSchema,
   ThreeMfInspection,
+  ObjectEdit,
   TransformStep,
 } from './types'
 
@@ -69,6 +70,11 @@ export function arrangeModel(modelId: string, printerProfile: string, processPro
 // Rotate the model or stand it on a face, using the slicer itself (api/app/routers/models.py).
 export function transformModel(modelId: string, steps: TransformStep[]): Promise<ModelUploadResponse> {
   return postJson(`/models/${encodeURIComponent(modelId)}/transform`, { steps })
+}
+
+// Turn and place the objects of a multi-object .3mf one by one (api/app/routers/models.py).
+export function transformObjects(modelId: string, objects: ObjectEdit[]): Promise<ModelUploadResponse> {
+  return postJson(`/models/${encodeURIComponent(modelId)}/transform-objects`, { objects })
 }
 
 export function importProfiles(files: File[], overwrite: boolean): Promise<ImportResult> {

@@ -1858,3 +1858,85 @@
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+/* Rotate and move: the object chips and the overlap note */
+.rm-objects {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.rm-objects-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.rm-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.3rem;
+  border-radius: 9px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.rm-chip img,
+.rm-chip-blank {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #2c313a;
+  object-fit: contain;
+  flex: none;
+}
+.rm-chip small {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+.rm-chip:hover:not(:disabled) {
+  background: #343a42;
+  color: var(--text);
+}
+.rm-chip.sel,
+.rm-chip.sel:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #2b2519;
+}
+.rm-chip.warn {
+  border-color: var(--danger);
+}
+.rm-tip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  max-width: calc(100% - 120px);
+  padding: 0.25rem 0.6rem;
+  border-radius: 7px;
+  border: 1px solid var(--panel-border);
+  background: rgba(42, 47, 55, 0.92);
+  font-size: 0.8rem;
+}
+.rm-tip-bad {
+  border-color: var(--danger);
+  color: #ffb3b3;
+}
+@media (max-width: 700px) {
+  .rm-objects {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+  }
+  .rm-chip {
+    flex: none;
+  }
+}
+
+/* Rotate and move: sections keep their height and the window scrolls instead of squashing them */
+.rotate-move-body > * {
+  flex-shrink: 0;
+}

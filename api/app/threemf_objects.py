@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import uuid
 import zipfile
@@ -141,6 +142,36 @@ class _ModelFiles:
                         box = _merge(box, _transform_box(_parse_matrix(comp.get("transform")), child))
         self._boxes[key] = box
         return box
+
+    def local_points(self, path: str, object_id: str, matrix: Matrix | None = None, _depth: int = 0):
+        """Every vertex of one object in its own coordinates (components applied), one at a time."""
+        obj = self._find_object(path, object_id)
+        if obj is None or _depth >= 16:
+            return
+        m = matrix or list(_IDENTITY)
+        mesh = obj.find(_c("mesh"))
+        if mesh is not None:
+            verts = mesh.find(_c("vertices"))
+            if verts is not None:
+                for v in verts.findall(_c("vertex")):
+                    yield _apply(m, (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0))))
+        comps = obj.find(_c("components"))
+        if comps is not None:
+            for comp in comps.findall(_c("component")):
+                child_path = comp.get(f"{{{_PROD}}}path") or path
+                yield from self.local_points(
+                    child_path, comp.get("objectid", ""), _compose(m, _parse_matrix(comp.get("transform"))), _depth + 1
+                )
+
+
+def _compose(outer: Matrix, inner: Matrix) -> Matrix:
+    """The transform that applies `inner` first, then `outer`."""
+    out: Matrix = []
+    for j in range(3):
+        col = (inner[3 * j], inner[3 * j + 1], inner[3 * j + 2])
+        out += [sum(outer[3 * k + i] * col[k] for k in range(3)) for i in range(3)]
+    t = _apply(outer, (inner[9], inner[10], inner[11]))
+    return out + list(t)
 
 
 @dataclass
@@ -488,3 +519,100 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
             ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
         (target_default if collapse else plate).append(clone)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _rotation(rx: float, ry: float, rz: float) -> list[list[float]]:
+    """The 3x3 matrix for turning about X, then Y, then Z (degrees), each about the plate's own axes."""
+    ax, ay, az = (math.radians(v) for v in (rx, ry, rz))
+    cx, sx, cy, sy, cz, sz = math.cos(ax), math.sin(ax), math.cos(ay), math.sin(ay), math.cos(az), math.sin(az)
+    rot_x = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
+    rot_y = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
+    rot_z = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]]
+
+    def mul(a, b):
+        return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+    return mul(rot_z, mul(rot_y, rot_x))
+
+
+@dataclass
+class ObjectEdit:
+    """Turn one object and put its footprint centre at (x, y) in plate coordinates."""
+
+    index: int
+    rotation: tuple[float, float, float]  # degrees: X, then Y, then Z
+    x: float
+    y: float
+
+
+def edit_objects_3mf(src: Path, dst: Path, edits: list[ObjectEdit]) -> None:
+    """Copy src to dst with some objects turned and moved.
+
+    Each edited object is turned about the centre of its own bounding box (about X, then Y, then Z, each
+    about the plate's own axes), then placed so its footprint centre lands on (x, y). A turned object is
+    also dropped so its lowest point rests on the plate; one that is only moved keeps its height. Only
+    the object's <build><item> transform changes, so plates, colours and settings stay as they were.
+    Raises ValueError for an unknown object or a file this rewrite does not understand.
+    """
+    with zipfile.ZipFile(src) as zf:
+        items = _read_items(zf)
+        files = _ModelFiles(zf)
+        by_index = {it.index: it for it in items}
+        model_text = zf.read(_ROOT_MODEL).decode("utf-8")
+        matches = list(_ITEM_RE.finditer(model_text))
+        if len(matches) != len(items):
+            raise ValueError("Unsupported 3MF build layout (items could not be rewritten safely)")
+        tags: dict[int, str] = {}
+        for edit in edits:
+            it = by_index.get(edit.index)
+            if it is None or it.box is None:
+                raise ValueError(f"Object {edit.index} was not found")
+            old = it.transform
+            if all(abs(a) < 1e-9 for a in edit.rotation):
+                (x0, y0, _), (x1, y1, _) = it.box
+                new = list(old)
+                new[9] += edit.x - (x0 + x1) / 2
+                new[10] += edit.y - (y0 + y1) / 2
+            else:
+                rot = _rotation(*edit.rotation)
+                # Where the object is now (world), then where it would be after the turn about its centre.
+                points = [_apply(old, p) for p in files.local_points(_ROOT_MODEL, it.object_id)]
+                if not points:
+                    raise ValueError(f"Object {edit.index} has no geometry")
+                mins = [min(p[a] for p in points) for a in range(3)]
+                maxs = [max(p[a] for p in points) for a in range(3)]
+                centre = [(mins[a] + maxs[a]) / 2 for a in range(3)]
+                turned = [
+                    tuple(sum(rot[i][k] * (p[k] - centre[k]) for k in range(3)) for i in range(3)) for p in points
+                ]
+                t_min = [min(p[a] for p in turned) for a in range(3)]
+                t_max = [max(p[a] for p in turned) for a in range(3)]
+                shift = (edit.x - (t_min[0] + t_max[0]) / 2, edit.y - (t_min[1] + t_max[1]) / 2, -t_min[2])
+                new = []
+                for j in range(3):
+                    col = (old[3 * j], old[3 * j + 1], old[3 * j + 2])
+                    new += [sum(rot[i][k] * col[k] for k in range(3)) for i in range(3)]
+                offset = (old[9] - centre[0], old[10] - centre[1], old[11] - centre[2])
+                new += [sum(rot[i][k] * offset[k] for k in range(3)) + shift[i] for i in range(3)]
+            tag = matches[edit.index].group(0)
+            value = _format_matrix(new)
+            if _TRANSFORM_RE.search(tag):
+                tag = _TRANSFORM_RE.sub(f'transform="{value}"', tag, count=1)
+            else:
+                tag = tag.replace("<item", f'<item transform="{value}"', 1)
+            tags[edit.index] = tag
+        out_model = []
+        cursor = 0
+        for i, match in enumerate(matches):
+            out_model.append(model_text[cursor : match.start()])
+            out_model.append(tags.get(i, match.group(0)))
+            cursor = match.end()
+        out_model.append(model_text[cursor:])
+        new_model = "".join(out_model)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
+            for info in zf.infolist():
+                if info.filename == _ROOT_MODEL:
+                    out.writestr(info.filename, new_model)
+                else:
+                    out.writestr(info, zf.read(info.filename))

@@ -75,3 +75,21 @@ export function rotationToLayOnFace(current: Rotation, normal: THREE.Vector3): R
   }
   return { x: clean(e.x), y: clean(e.y), z: clean(e.z) }
 }
+
+/**
+ * The objects of a loaded model: a 3MF's build items (one three.js child each, in file order, which
+ * is the order the server numbers them in), or the model itself for an STL or Draco file. Each one
+ * is detached from the file's group with the group's own transform baked in.
+ */
+export function splitObjects(object: THREE.Object3D): THREE.Object3D[] {
+  object.updateMatrixWorld(true)
+  if (!(object instanceof THREE.Group) || object.children.length === 0) return [object]
+  return object.children.slice().map((child) => {
+    const world = child.matrixWorld.clone()
+    child.removeFromParent()
+    child.matrix.copy(world)
+    child.matrix.decompose(child.position, child.quaternion, child.scale)
+    child.updateMatrixWorld(true)
+    return child
+  })
+}
