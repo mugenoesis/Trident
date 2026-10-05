@@ -33,8 +33,10 @@ machine that has no slicer installed.
   4-head printers like the Snapmaker U1. The build plate list only offers plates your chosen filament supports.
 - **Multi-plate 3MF files.** Preview each plate, slice any plate, and choose which objects in a file to print, with
   thumbnails so you can tell them apart.
-- **Position, scale and copies.** Move the model on the plate, scale it, auto-orient, auto-arrange, and print several
-  copies.
+- **Rotate and move.** A preview of your plate with sliders to place the model and to turn it on each axis, plus
+  "Lay flat" and "Pick a face" (click the face that should sit on the plate). Works for 3MF files too.
+- **Scale, auto-orient, auto-arrange and copies.** Scale the model, let the slicer orient or arrange it, and print
+  several copies.
 - **Mesh check.** STL files are checked on upload for the defects the slicer repairs, and holes it cannot repair are
   flagged before they become a bad print.
 - **Send to your printer.** Upload the G-code to a Moonraker (Klipper, Mainsail, Fluidd) or OctoPrint printer.

@@ -349,3 +349,9 @@ export interface ImportResult {
   conflicts: ImportedProfile[]
   skipped: ImportIssue[]
 }
+
+// One step of POST /models/{id}/transform (api/app/schemas.py TransformStep).
+export type TransformStep =
+  | { op: 'rotate_x' | 'rotate_y' | 'rotate_z'; degrees: number }
+  | { op: 'lay_flat' }
+  | { op: 'face_normal'; normal: [number, number, number] }

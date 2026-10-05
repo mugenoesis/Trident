@@ -177,3 +177,16 @@ export function defaultPlacement(bed: BedSize, supportEnabled: boolean): { x: nu
   return { x, y: bed.minY + bed.depth / 2 }
 }
 
+
+// A belt bed is effectively endless; this is how far along it the placement slider goes.
+export const BELT_TRAVEL_MM = 400
+
+/**
+ * The range a footprint centre can slide over so the footprint stays inside
+ * [lo, hi]. A model larger than the bed has no valid range; it is pinned to the middle.
+ */
+export function slideRange(lo: number, hi: number, half: number): [number, number] {
+  const min = lo + half
+  const max = hi - half
+  return min <= max ? [min, max] : [(lo + hi) / 2, (lo + hi) / 2]
+}

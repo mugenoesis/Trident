@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class JobStatus(StrEnum):
@@ -506,3 +507,31 @@ class ModelOpRequest(BaseModel):
 
     printer_profile: str | None = None
     process_profile: str | None = None
+
+
+class TransformStep(BaseModel):
+    """One step of POST /models/{id}/transform, run by the slicer in the order given.
+
+    rotate_x / rotate_y / rotate_z turn the model by `degrees` about that plate axis;
+    lay_flat stands it on its largest flat face; face_normal stands it on the flat face
+    whose outward direction is closest to `normal` (in plate axes, after the steps
+    before it)."""
+
+    op: Literal["rotate_x", "rotate_y", "rotate_z", "lay_flat", "face_normal"]
+    degrees: float | None = None
+    normal: list[float] | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "TransformStep":
+        if self.op.startswith("rotate_"):
+            if self.degrees is None or not math.isfinite(self.degrees) or abs(self.degrees) > 360:
+                raise ValueError("A rotation needs an angle between -360 and 360 degrees")
+        elif self.op == "face_normal":
+            n = self.normal
+            if n is None or len(n) != 3 or not all(math.isfinite(v) for v in n) or math.sqrt(sum(v * v for v in n)) < 1e-6:
+                raise ValueError("face_normal needs a direction of three numbers")
+        return self
+
+
+class TransformRequest(BaseModel):
+    steps: list[TransformStep] = Field(min_length=1, max_length=8)

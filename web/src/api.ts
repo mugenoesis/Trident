@@ -21,6 +21,7 @@ import type {
   SettingsProfileUpdateRequest,
   SettingsSchema,
   ThreeMfInspection,
+  TransformStep,
 } from './types'
 
 // In production the built frontend is served by the same FastAPI app
@@ -63,6 +64,11 @@ export function arrangeModel(modelId: string, printerProfile: string, processPro
     printer_profile: printerProfile,
     process_profile: processProfile,
   })
+}
+
+// Rotate the model or stand it on a face, using the slicer itself (api/app/routers/models.py).
+export function transformModel(modelId: string, steps: TransformStep[]): Promise<ModelUploadResponse> {
+  return postJson(`/models/${encodeURIComponent(modelId)}/transform`, { steps })
 }
 
 export function importProfiles(files: File[], overwrite: boolean): Promise<ImportResult> {

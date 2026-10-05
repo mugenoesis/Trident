@@ -210,6 +210,28 @@ class ConvertError(RuntimeError):
     pass
 
 
+def transform_args(steps) -> list[str]:
+    """Slicer command-line options for TransformStep-like steps. Give the slicer ONE step
+    per run: when several are given together it does not apply them in the order they
+    appear (several rotations run in a fixed axis order of its own, and a "lay on face"
+    can land before or after them), so routers/models.py chains one run per step."""
+    args: list[str] = []
+    for step in steps:
+        if step.op == "rotate_x":
+            args.append(f"--rotate-x={step.degrees:.6g}")
+        elif step.op == "rotate_y":
+            args.append(f"--rotate-y={step.degrees:.6g}")
+        elif step.op == "rotate_z":
+            args.append(f"--rotate={step.degrees:.6g}")
+        elif step.op == "lay_flat":
+            args.append("--ground-largest-face=1")
+        elif step.op == "face_normal":
+            args.append("--ground-face-normal=" + ",".join(f"{v:.6g}" for v in step.normal))
+        else:
+            raise ValueError(f"Unknown transform step: {step.op}")
+    return args
+
+
 def convert_model(
     model_path: Path,
     dest: Path,
@@ -219,6 +241,7 @@ def convert_model(
     user_id: str | None = None,
     orient: bool = False,
     arrange: bool = False,
+    transforms=(),
     timeout_s: float = 300.0,
 ) -> Path:
     """Write `model_path` out as a project .3mf at `dest`, optionally after
@@ -244,6 +267,12 @@ def convert_model(
             _resolve_profile_detail("process", process_profile, user_id), scratch, "process"
         )
         cmd += ["--load-settings", f"{printer_path};{process_path}"]
+    transform_options = transform_args(transforms)
+    cmd += transform_options
+    if transform_options and not (orient or arrange):
+        # Keep the model where the transform left it; a re-export would otherwise
+        # arrange it again, and the arrangement may turn it about Z.
+        cmd.append("--arrange=0")
     if orient:
         cmd.append("--orient=1")
     if arrange:

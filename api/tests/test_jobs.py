@@ -1,5 +1,7 @@
 import io
 
+import pytest
+
 from app import cli_runner
 from app.cli_runner import SliceResult
 from app.config import settings
@@ -412,6 +414,60 @@ def test_orient_and_arrange_store_a_new_3mf_model(client, tmp_path, monkeypatch)
     assert client.post(f"/models/{model_id}/arrange", json={}).status_code == 400  # needs the printer
     arranged = client.post(f"/models/{model_id}/arrange", json={"printer_profile": "P", "process_profile": "Q"})
     assert arranged.status_code == 200 and calls[-1]["arrange"] is True and calls[-1]["printer_profile"] == "P"
+
+
+def test_transform_runs_the_steps_in_order_and_stores_a_new_3mf(client, tmp_path, monkeypatch):
+    from test_threemf_objects import _write_project
+
+    model_id = _upload_model(client)
+    project = _write_project(tmp_path)
+    seen = []
+
+    def fake_convert(src, dest, **kw):
+        seen.append(cli_runner.transform_args(kw["transforms"]))
+        dest.write_bytes(project.read_bytes())
+        return dest
+
+    monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
+    steps = [
+        {"op": "rotate_x", "degrees": 90},
+        {"op": "rotate_y", "degrees": -12.5},
+        {"op": "rotate_z", "degrees": 30},
+        {"op": "face_normal", "normal": [0, 0, -1]},
+        {"op": "lay_flat"},
+    ]
+    resp = client.post(f"/models/{model_id}/transform", json={"steps": steps})
+    assert resp.status_code == 200 and resp.json()["model_id"] != model_id and resp.json()["filename"].endswith(".3mf")
+    # one slicer run per step, in the order given
+    assert seen == [
+        ["--rotate-x=90"],
+        ["--rotate-y=-12.5"],
+        ["--rotate=30"],
+        ["--ground-face-normal=0,0,-1"],
+        ["--ground-largest-face=1"],
+    ]
+    assert not list(settings.models_dir.glob("trident-transform-*"))
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        [],
+        [{"op": "spin", "degrees": 5}],
+        [{"op": "rotate_x"}],
+        [{"op": "rotate_x", "degrees": 721}],
+        [{"op": "face_normal", "normal": [0, 0, 0]}],
+        [{"op": "face_normal", "normal": [1, 2]}],
+        [{"op": "lay_flat"}] * 9,
+    ],
+)
+def test_transform_refuses_bad_steps(client, steps):
+    model_id = _upload_model(client)
+    assert client.post(f"/models/{model_id}/transform", json={"steps": steps}).status_code == 422
+
+
+def test_transform_of_an_unknown_model_is_404(client):
+    assert client.post("/models/nope/transform", json={"steps": [{"op": "lay_flat"}]}).status_code == 404
 
 
 def test_copies_on_a_belt_printer_become_a_row(client, tmp_path, monkeypatch):
