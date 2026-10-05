@@ -3,7 +3,7 @@
 // and the slicer refuses the whole job ("Filaments are not compatible with the
 // plate type") if the chosen plate has one. A plate the profile does not
 // mention at all is left available.
-const PLATE_TEMP_KEYS: [string, string][] = [
+export const PLATE_TEMP_KEYS: [string, string][] = [
   ['textured_plate_temp', 'Textured PEI Plate'],
   ['cool_plate_temp', 'Cool Plate'],
   ['eng_plate_temp', 'Engineering Plate'],

@@ -1,4 +1,5 @@
 import type {
+  FilamentForm,
   ImportedProfile,
   ImportResult,
   AuthStatus,
@@ -77,6 +78,22 @@ export function listImportedProfiles(): Promise<ImportedProfile[]> {
 
 export function deleteImportedProfile(kind: string, name: string): Promise<{ deleted: boolean }> {
   return request(`/profiles/imported/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function createFilament(form: FilamentForm): Promise<ImportedProfile> {
+  return request('/profiles/filaments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  })
+}
+
+export function updateFilament(form: FilamentForm): Promise<ImportedProfile> {
+  return request(`/profiles/filaments/${encodeURIComponent(form.name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  })
 }
 
 export function listProfiles(): Promise<ProfileSummary[]> {

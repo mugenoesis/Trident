@@ -19,6 +19,7 @@ import {
   orientModel,
   getProfileDetail,
   getSettingsSchema,
+  listImportedProfiles,
   listJobs,
   listMaterialProfiles,
   listPrinters,
@@ -44,6 +45,7 @@ import {
 import type { BeltTransform } from './beltTransform'
 import AdvancedSettings from './components/AdvancedSettings'
 import FilamentSelect from './components/FilamentSelect'
+import MaterialDialog from './components/MaterialDialog'
 import GcodeViewer from './components/GcodeViewer'
 import JobPanel from './components/JobPanel'
 import LoginGate from './components/LoginGate'
@@ -350,6 +352,12 @@ function MainApp({
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [importOpen, setImportOpen] = useState(false)
+  // The "New material" / "Edit material" form, opened from a material slot.
+  const [materialDialog, setMaterialDialog] = useState<{
+    mode: 'create' | 'edit'
+    slot: number
+    base: { vendor: string; name: string }
+  } | null>(null)
   // Build plates the selected material(s) can print on (null = no restriction
   // known), and the printer's own default plate.
   const [allowedBedTypes, setAllowedBedTypes] = useState<string[] | null>(null)
@@ -1088,6 +1096,41 @@ function MainApp({
     setFilamentSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, ...patch } : slot)))
     setViewMode('model')
   }, [])
+
+  // A material was created or edited: reload the list first so the slot's
+  // choice exists in it, then select it.
+  const handleMaterialSaved = useCallback(
+    (slot: number, name: string) => {
+      setMaterialDialog(null)
+      listProfiles()
+        .then((list) => {
+          setProfiles(list)
+          handleFilamentSlotChange(slot, { profile: name })
+        })
+        .catch(() => handleFilamentSlotChange(slot, { profile: name }))
+    },
+    [handleFilamentSlotChange],
+  )
+
+  // Delete one of the user's own materials; the slot falls back to the
+  // material it was based on, or the first one available.
+  const handleDeleteCustomFilament = useCallback(
+    async (slot: number, name: string) => {
+      try {
+        const imported = await listImportedProfiles()
+        const parent = imported.find((p) => p.kind === 'filament' && p.name === name)?.inherits ?? null
+        await deleteImportedProfile('filament', name)
+        const list = await listProfiles()
+        setProfiles(list)
+        const stillThere = (n: string | null) => n !== null && list.some((p) => p.kind === 'filament' && p.name === n)
+        const fallback = stillThere(parent) ? parent : list.find((p) => p.kind === 'filament')?.name ?? ''
+        handleFilamentSlotChange(slot, { profile: fallback as string })
+      } catch (err) {
+        alert(`Failed to delete the material: ${(err as Error).message}`)
+      }
+    },
+    [handleFilamentSlotChange],
+  )
 
   // A fresh slot's nozzle diameter/type defaults from the last existing
   // slot (adding a physical head is usually adding one similar to what you
@@ -1980,8 +2023,12 @@ function MainApp({
                 <FilamentSelect
                   profiles={profiles}
                   vendor={vendor}
+                  printerName={printerName}
                   filamentName={slot.profile}
                   onFilamentChange={(name) => handleFilamentSlotChange(i, { profile: name })}
+                  onNewMaterial={(base) => setMaterialDialog({ mode: 'create', slot: i, base: { vendor: base.vendor, name: base.name } })}
+                  onEditMaterial={(m) => setMaterialDialog({ mode: 'edit', slot: i, base: { vendor: m.vendor, name: m.name } })}
+                  onDeleteMaterial={(m) => void handleDeleteCustomFilament(i, m.name)}
                   label={filamentSlots.length > 1 ? `Slot ${i + 1} material` : 'Material'}
                   accessory={
                     <input
@@ -2168,6 +2215,15 @@ function MainApp({
         </div>
       )}
       {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
+      {materialDialog && (
+        <MaterialDialog
+          mode={materialDialog.mode}
+          base={materialDialog.base}
+          printerName={printerName}
+          onClose={() => setMaterialDialog(null)}
+          onSaved={(name) => handleMaterialSaved(materialDialog.slot, name)}
+        />
+      )}
       {meshReport && !meshToastDismissed && (
         <div className="toast toast-top" role="status">
           <div className="toast-message">

@@ -2,9 +2,15 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProfileSummary } from '../types'
 
+// Where the user's own (imported or created) profiles live; they are offered for every printer unless
+// the material names the printers it is limited to (compatible_printers).
+const IMPORTED_VENDOR = 'My profiles'
+
 interface FilamentSelectProps {
   profiles: ProfileSummary[]
   vendor: string
+  // The selected printer's machine profile name (to apply a material's printer limit).
+  printerName?: string
   filamentName: string
   onFilamentChange: (name: string) => void
   // Overridable so App.tsx can label multiple instances "Slot 1 material",
@@ -25,6 +31,10 @@ interface FilamentSelectProps {
   // as the label text would either overflow or force an awkward wrap on
   // narrow screens.
   belowLabel?: ReactNode
+  // "+ New material from …" and, for the user's own materials, Edit / Delete.
+  onNewMaterial?: (base: ProfileSummary) => void
+  onEditMaterial?: (material: ProfileSummary) => void
+  onDeleteMaterial?: (material: ProfileSummary) => void
 }
 
 // Split out of PrinterSelect.tsx: material/filament choice is something you
@@ -36,13 +46,18 @@ interface FilamentSelectProps {
 export default function FilamentSelect({
   profiles,
   vendor,
+  printerName,
   filamentName,
   onFilamentChange,
   label = 'Material',
   accessory,
   belowLabel,
+  onNewMaterial,
+  onEditMaterial,
+  onDeleteMaterial,
 }: FilamentSelectProps) {
   const [filamentQuery, setFilamentQuery] = useState('')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const filaments = useMemo(() => {
     const inVendor = profiles.filter((p) => p.vendor === vendor && p.kind === 'filament')
@@ -52,10 +67,26 @@ export default function FilamentSelect({
     // their own. Falling back to the full catalog (rather than leaving the
     // list permanently empty) is what keeps material selection -- and by
     // extension saving a printer or slicing at all -- possible for those.
-    const pool = inVendor.length > 0 ? inVendor : profiles.filter((p) => p.kind === 'filament')
+    // The user's own materials are offered whichever printer is chosen.
+    const mine = profiles.filter(
+      (p) =>
+        p.vendor === IMPORTED_VENDOR &&
+        p.kind === 'filament' &&
+        // Limited to some printers: only offered when one of them is selected.
+        (!p.compatible_printers?.length || !printerName || p.compatible_printers.includes(printerName)),
+    )
+    const pool =
+      inVendor.length > 0
+        ? [...inVendor, ...mine.filter((m) => !inVendor.some((p) => p.name === m.name))]
+        : profiles.filter((p) => p.kind === 'filament')
     const q = filamentQuery.trim().toLowerCase()
     const matches = q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool
-    const sorted = matches.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200)
+    const byName = (a: ProfileSummary, b: ProfileSummary) => a.name.localeCompare(b.name)
+    // The user's own materials come first so a search window of 200 never cuts them off.
+    const sorted = [
+      ...matches.filter((p) => p.vendor === IMPORTED_VENDOR).sort(byName),
+      ...matches.filter((p) => p.vendor !== IMPORTED_VENDOR).sort(byName),
+    ].slice(0, 200)
 
     // The current selection can easily fall outside this search/200-item
     // window (confirmed: an auto-picked fallback default alphabetically
@@ -69,7 +100,11 @@ export default function FilamentSelect({
       if (current) sorted.unshift(current)
     }
     return sorted
-  }, [profiles, vendor, filamentQuery, filamentName])
+  }, [profiles, vendor, printerName, filamentQuery, filamentName])
+
+  const selected = profiles.find((p) => p.kind === 'filament' && p.name === filamentName)
+  const selectedIsMine = selected?.vendor === IMPORTED_VENDOR
+  const mineInList = filaments.filter((p) => p.vendor === IMPORTED_VENDOR)
 
   return (
     <div className="field-group">
@@ -85,14 +120,78 @@ export default function FilamentSelect({
           value={filamentQuery}
           onChange={(e) => setFilamentQuery(e.target.value)}
         />
-        <select value={filamentName} size={6} onChange={(e) => onFilamentChange(e.target.value)}>
-          {filaments.map((f) => (
-            <option key={f.name} value={f.name}>
-              {f.name}
-            </option>
-          ))}
+        <select
+          value={filamentName}
+          size={6}
+          onChange={(e) => {
+            setConfirmingDelete(false)
+            onFilamentChange(e.target.value)
+          }}
+        >
+          {mineInList.length > 0 ? (
+            <>
+              <optgroup label="My materials">
+                {mineInList.map((f) => (
+                  <option key={f.name} value={f.name}>
+                    {f.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Built in">
+                {filaments
+                  .filter((p) => p.vendor !== IMPORTED_VENDOR)
+                  .map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.name}
+                    </option>
+                  ))}
+              </optgroup>
+            </>
+          ) : (
+            filaments.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
+            ))
+          )}
         </select>
       </label>
+      {selected && onNewMaterial && (
+        <div className="material-links">
+          <button type="button" className="link-button" onClick={() => onNewMaterial(selected)}>
+            + New material from &ldquo;{selected.name}&rdquo;&hellip;
+          </button>
+          {selectedIsMine && onEditMaterial && (
+            <button type="button" className="link-button" onClick={() => onEditMaterial(selected)}>
+              Edit
+            </button>
+          )}
+          {selectedIsMine &&
+            onDeleteMaterial &&
+            (confirmingDelete ? (
+              <span>
+                Delete this material?{' '}
+                <button
+                  type="button"
+                  className="link-button danger-text"
+                  onClick={() => {
+                    setConfirmingDelete(false)
+                    onDeleteMaterial(selected)
+                  }}
+                >
+                  Yes, delete
+                </button>{' '}
+                <button type="button" className="link-button" onClick={() => setConfirmingDelete(false)}>
+                  Keep
+                </button>
+              </span>
+            ) : (
+              <button type="button" className="link-button danger-text" onClick={() => setConfirmingDelete(true)}>
+                Delete
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   )
 }

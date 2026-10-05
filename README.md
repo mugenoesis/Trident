@@ -27,6 +27,8 @@ machine that has no slicer installed.
 - **Your printer is probably already in it.** OrcaSlicer's whole printer, filament and process library is built in,
   from 70+ vendors (Bambu Lab, Prusa, Creality, Snapmaker, Voron, Elegoo, Anycubic, Qidi, Sovol and many more). You can
   also import your own profiles (`.json`, `.zip`, `.orca_printer`, `.orca_filament`, `.orca_bundle`).
+- **Make your own materials.** Create a new material from any existing one with a short form (temperatures, bed
+  temperature per plate, flow, fan); everything else is inherited, and you choose whether it is for the current printer only or for every printer.
 - **Multi-material and tool changers.** Assign a file's colours to nozzles and slice multi-colour models, including
   4-head printers like the Snapmaker U1. The build plate list only offers plates your chosen filament supports.
 - **Multi-plate 3MF files.** Preview each plate, slice any plate, and choose which objects in a file to print, with

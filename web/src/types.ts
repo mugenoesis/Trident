@@ -6,6 +6,8 @@ export interface ProfileSummary {
   kind: 'machine' | 'process' | 'filament' | 'unknown'
   name: string
   path: string
+  // Printers a user-made material is limited to (empty or absent = every printer).
+  compatible_printers?: string[]
 }
 
 export interface ProfileDetail extends ProfileSummary {
@@ -307,6 +309,27 @@ export interface SettingsProfileUpdateRequest {
 }
 
 // Result of importing profile files (api/app/userprofiles.py).
+// The "New material" form (POST/PUT /profiles/filaments).
+export interface FilamentForm {
+  name: string
+  base_name?: string
+  filament_type: string
+  filament_vendor: string
+  nozzle_temperature: number
+  nozzle_temperature_initial_layer: number
+  nozzle_temperature_range_low: number
+  nozzle_temperature_range_high: number
+  plate_temps: Record<string, number>
+  filament_flow_ratio: number
+  filament_max_volumetric_speed: number
+  filament_density: number
+  filament_diameter: number
+  fan_min_speed: number
+  fan_max_speed: number
+  // Printers (machine profile names) the material is limited to; empty = every printer.
+  printers?: string[]
+}
+
 export interface ImportedProfile {
   kind: string // 'machine' | 'process' | 'filament'
   name: string
