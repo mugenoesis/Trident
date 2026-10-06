@@ -58,6 +58,8 @@ import { beltRowShifts, type RowMode } from './beltLayout'
 import PlatePicker from './components/PlatePicker'
 import PositionPanel from './components/PositionPanel'
 import ProfileImportDialog from './components/ProfileImportDialog'
+import PrinterDialog from './components/PrinterDialog'
+import ExportDialog from './components/ExportDialog'
 import PrinterSelect from './components/PrinterSelect'
 import QuickSettings, {
   BELT_BRIM_TYPES,
@@ -305,6 +307,9 @@ function fileRolesFromInspection(info: ThreeMfInspection | null): FileRole[] {
   return Array.from({ length: count }, () => ({ color: null, name: null }))
 }
 
+// Where your own (imported or created) profiles live (api/app/userprofiles.py).
+const IMPORTED_VENDOR = 'My profiles'
+
 export default function App() {
   const auth = useAuth()
 
@@ -358,6 +363,10 @@ function MainApp({
 }: MainAppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [importOpen, setImportOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  // The "New printer" / "Edit printer" form, and a printer just saved that is to be selected once the list has it.
+  const [printerDialog, setPrinterDialog] = useState<{ mode: 'create' | 'edit' } | null>(null)
+  const [pendingPrinter, setPendingPrinter] = useState<string | null>(null)
   // The "Rotate and move" window (RotateMoveDialog).
   const [rotateMoveOpen, setRotateMoveOpen] = useState(false)
   // The "New material" / "Edit material" form, opened from a material slot.
@@ -1111,6 +1120,30 @@ function MainApp({
     },
     [vendor, profiles, schema],
   )
+
+  // A printer was made or changed: reload the list, then select it (the list has to contain it first).
+  const handlePrinterSaved = useCallback(
+    (name: string) => {
+      setPrinterDialog(null)
+      listProfiles()
+        .then((list) => {
+          setProfiles(list)
+          setVendor(IMPORTED_VENDOR)
+          setPendingPrinter(name)
+        })
+        .catch(() => {
+          setVendor(IMPORTED_VENDOR)
+          setPendingPrinter(name)
+        })
+    },
+    [],
+  )
+  useEffect(() => {
+    if (pendingPrinter && vendor === IMPORTED_VENDOR && profiles.some((p) => p.kind === 'machine' && p.vendor === IMPORTED_VENDOR && p.name === pendingPrinter)) {
+      handlePrinterChange(pendingPrinter)
+      setPendingPrinter(null)
+    }
+  }, [pendingPrinter, vendor, profiles, handlePrinterChange])
 
   const handleVendorChange = useCallback((v: string) => {
     setVendor(v)
@@ -2073,6 +2106,9 @@ function MainApp({
               onPrinterChange={handlePrinterChange}
               onProcessChange={handleProcessChange}
               onImportClick={() => setImportOpen(true)}
+              onExportClick={() => setExportOpen(true)}
+              onNewPrinter={() => setPrinterDialog({ mode: 'create' })}
+              onEditPrinter={() => setPrinterDialog({ mode: 'edit' })}
               onDeleteImportedPrinter={() => {
                 if (!printerName) return
                 deleteImportedProfile('machine', printerName)
@@ -2315,6 +2351,21 @@ function MainApp({
         </div>
       )}
       {importOpen && <ProfileImportDialog onClose={() => setImportOpen(false)} onChanged={refreshProfiles} />}
+      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {printerDialog && (
+        <PrinterDialog
+          mode={printerDialog.mode}
+          current={
+            printerDialog.mode === 'edit' || printerName
+              ? { vendor: printerDialog.mode === 'edit' ? IMPORTED_VENDOR : vendor, name: printerName }
+              : null
+          }
+          profiles={profiles}
+          schema={schema}
+          onClose={() => setPrinterDialog(null)}
+          onSaved={handlePrinterSaved}
+        />
+      )}
       {rotateMoveOpen && file && bedSize && showRotateMove && (
         <RotateMoveDialog
           file={file}

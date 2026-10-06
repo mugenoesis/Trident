@@ -290,6 +290,40 @@ class ProfileCatalog:
         self._user_cache.pop(user_id, None)
         return ImportedProfile(kind="filament", name=name, inherits=preset.data.get("inherits") or None)
 
+    def save_printer(
+        self, user_id: str, name: str, form: dict, *, base_name: str | None = None, edit: bool = False
+    ) -> ImportedProfile:
+        """Create (or, with edit, change) one of the user's own printers from the form. A new printer copies
+        `base_name` (a built-in printer or one of the user's own), or the slicer's generic printer for the
+        firmware (a belt printer's generic one) when none is given; an edited one keeps the base it has."""
+        existing_raw = userprofiles.store.load_all(user_id)
+        if edit:
+            current = existing_raw.get(("machine", name))
+            if current is None:
+                raise userprofiles.PrinterNotFound("That printer no longer exists")
+            inherits = current.get("inherits") or None
+            resolved = self.get(userprofiles.IMPORTED_VENDOR, "machine", name, user_id)
+            base_data = resolved.data if resolved else {}
+            preset = userprofiles.build_printer_preset(name, inherits or "", base_data, form, current)
+            if not inherits:
+                preset.data.pop("inherits", None)
+        else:
+            belt = bool(form.get("belt"))
+            chosen = base_name or userprofiles.generic_printer_base(form.get("gcode_flavor"), belt)
+            base = self.get_by_name("machine", chosen, user_id)
+            if base is None:
+                raise userprofiles.PrinterNotFound(f"The printer '{chosen}' was not found")
+            if ("machine", name) in existing_raw or any(k == "machine" and n == name for (_, k, n) in self._by_key):
+                raise userprofiles.PrinterConflict(f"A printer called '{name}' already exists; pick another name")
+            preset = userprofiles.build_printer_preset(name, chosen, base.data, form)
+        userprofiles.store.save(user_id, preset)
+        self._user_cache.pop(user_id, None)
+        return ImportedProfile(kind="machine", name=name, inherits=preset.data.get("inherits") or None)
+
+    def stored_preset(self, user_id: str, kind: str, name: str) -> dict | None:
+        """The preset as stored (only what the user set, plus its `inherits` pointer), not resolved."""
+        return userprofiles.store.load_all(user_id).get((kind, name))
+
     def delete_imported(self, user_id: str, kind: str, name: str) -> bool:
         removed = userprofiles.store.delete(user_id, kind, name)
         self._user_cache.pop(user_id, None)

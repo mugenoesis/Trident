@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import re
+import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -311,3 +312,289 @@ class MaterialConflict(MaterialError):
 
 class MaterialNotFound(MaterialError):
     """No such material (to edit, or to base a new one on)."""
+
+
+# ---------------------------------------------------------------------------
+# Printers made in the app (the "New printer" form): a machine preset that
+# inherits from a printer the user copies, or from one of the slicer's generic
+# printers, with the settings people change overridden. Stored like an import.
+
+GENERIC_PRINTER_BASES = {
+    "klipper": "MyKlipper 0.4 nozzle",
+    "reprapfirmware": "MyRRF 0.4 nozzle",
+    "repetier": "MyRepetier 0.4 nozzle",
+}
+GENERIC_MARLIN_BASE = "MyMarlin 0.4 nozzle"
+GENERIC_BELT_BASE = "MyBeltPrinter 0.4 nozzle"
+# How long an endless belt is drawn and sized as when the printer has no real limit.
+ENDLESS_BELT_LENGTH_MM = 2000.0
+
+# Keys the form sets itself; every other printer key a preset holds is an "advanced" override.
+PRINTER_MANAGED_KEYS = frozenset(
+    {
+        "printable_area", "printable_height", "belt_printer", "belt_printer_infinite_y", "belt_slice_rotation_angle",
+        "nozzle_diameter", "nozzle_type", "gcode_flavor", "machine_start_gcode", "machine_end_gcode",
+        "machine_max_speed_x", "machine_max_speed_y", "machine_max_acceleration_x", "machine_max_acceleration_y",
+        "machine_max_acceleration_extruding", "machine_max_acceleration_travel", "retraction_length",
+        "retraction_speed", "deretraction_speed", "z_hop", "auxiliary_fan", "default_print_profile",
+        "default_filament_profile",
+    }
+)
+_PRINTER_META_KEYS = frozenset({"name", "type", "from", "instantiation", "inherits", "version"})
+
+
+class PrinterError(ValueError):
+    """A printer form value that is not acceptable (the message is shown to the user)."""
+
+
+class PrinterConflict(PrinterError):
+    """The name is already used (by a built-in printer or one of the user's own)."""
+
+
+class PrinterNotFound(PrinterError):
+    """No such printer (to edit, or to base a new one on)."""
+
+
+def generic_printer_base(flavour: str | None, belt: bool) -> str:
+    """The slicer's generic printer to start from when the user copies none."""
+    if belt:
+        return GENERIC_BELT_BASE
+    return GENERIC_PRINTER_BASES.get((flavour or "marlin").lower(), GENERIC_MARLIN_BASE)
+
+
+_enum_cache: dict[str, list[str] | None] = {}
+
+
+def _allowed_values(key: str) -> list[str] | None:
+    """The values the slicer accepts for an enumerated setting, or None when it cannot say."""
+    if key not in _enum_cache:
+        values = None
+        try:
+            from . import cli_runner  # imported here: cli_runner needs this module
+
+            for item in cli_runner.fetch_help_json() or []:
+                if item.get("key") == key:
+                    values = item.get("enum_values")
+                    break
+        except Exception:  # noqa: BLE001 - validation is best effort
+            values = None
+        _enum_cache[key] = values
+    return _enum_cache[key]
+
+
+def _number(form: dict, key: str, label: str, lo: float, hi: float) -> float | None:
+    value = form.get(key)
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise PrinterError(f"{label} must be a number") from None
+    if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
+        raise PrinterError(f"{label} must be between {lo:g} and {hi:g}")
+    return number
+
+
+def _text(form: dict, key: str, label: str, limit: int = 50000) -> str | None:
+    value = form.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > limit or "\x00" in value:
+        raise PrinterError(f"{label} is not valid")
+    return value
+
+
+def _area_points(shape: str, x0: float, y0: float, width: float, depth: float) -> list[str]:
+    """printable_area as the "XxY" corner strings presets use; a circle is a many-sided polygon."""
+    if shape == "circle":
+        import math
+
+        radius = width / 2
+        cx, cy = x0 + radius, y0 + radius
+        return [
+            f"{_fmt(cx + radius * math.cos(2 * math.pi * i / 48), False)}x{_fmt(cy + radius * math.sin(2 * math.pi * i / 48), False)}"
+            for i in range(48)
+        ]
+    x1, y1 = x0 + width, y0 + depth
+    return [f"{_fmt(x0, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y1, False)}", f"{_fmt(x0, False)}x{_fmt(y1, False)}"]
+
+
+def _encode_extra(base_value: object, text: str) -> object:
+    """An advanced setting's text in the shape the base preset keeps it: a list of strings when the base's
+    value is a list (comma separated), otherwise one string."""
+    if isinstance(base_value, list):
+        return [part.strip() for part in text.split(",")] if text.strip() else []
+    return text
+
+
+def build_printer_overrides(base: dict, form: dict) -> dict:
+    """The preset keys a printer form sets, validated, in the shape presets use. `base` is the resolved preset
+    the printer is based on (for list lengths and the belt state); a value the form leaves out is inherited."""
+    out: dict = {}
+    flavour = _text(form, "gcode_flavor", "The G-code flavour", 40)
+    if flavour:
+        allowed = _allowed_values("gcode_flavor")
+        if allowed is not None and flavour not in allowed:
+            raise PrinterError("Choose one of the listed G-code flavours")
+        out["gcode_flavor"] = flavour
+    nozzle_type = _text(form, "nozzle_type", "The nozzle type", 40)
+    if nozzle_type:
+        allowed = _allowed_values("nozzle_type")
+        if allowed is not None and nozzle_type not in allowed:
+            raise PrinterError("Choose one of the listed nozzle types")
+        out["nozzle_type"] = _list_like(base, "nozzle_type", nozzle_type)
+
+    nozzle = _number(form, "nozzle_diameter", "The nozzle diameter", 0.1, 2.0)
+    if nozzle is not None:
+        out["nozzle_diameter"] = _list_like(base, "nozzle_diameter", _fmt(nozzle, False))
+
+    # Build plate. A belt printer's length is the belt's: endless (drawn as a long plate, no limit when slicing)
+    # or a real length.
+    belt = form.get("belt")
+    belt = bool(base.get("belt_printer") in ("1", 1, True)) if belt is None else bool(belt)
+    shape = form.get("shape") or "rectangle"
+    if shape not in ("rectangle", "circle"):
+        raise PrinterError("The bed shape must be a rectangle or a circle")
+    width = _number(form, "width", "The bed width", 10, 5000)
+    depth = _number(form, "depth", "The bed depth", 10, 5000)
+    height = _number(form, "height", "The maximum height", 10, 5000)
+    if belt:
+        endless = form.get("belt_endless", True)
+        length = ENDLESS_BELT_LENGTH_MM if endless else _number(form, "belt_length", "The belt length", 10, 100000)
+        if length is None:
+            raise PrinterError("Give the belt length, or tick Endless belt")
+        depth = length
+        out["belt_printer"] = "1"
+        out["belt_printer_infinite_y"] = "1" if endless else "0"
+        angle = _number(form, "belt_angle", "The belt angle", 1, 89)
+        if angle is not None:
+            out["belt_slice_rotation_angle"] = _fmt(angle, False)
+    elif form.get("belt") is not None:
+        out["belt_printer"] = "0"
+        out["belt_printer_infinite_y"] = "0"
+    if width is not None and (depth is not None or shape == "circle"):
+        if form.get("origin_centre"):
+            span = width if shape == "circle" else depth
+            x0, y0 = -width / 2, -(span or 0) / 2
+        else:
+            x0 = _number(form, "origin_x", "The origin X offset", -5000, 5000) or 0.0
+            y0 = _number(form, "origin_y", "The origin Y offset", -5000, 5000) or 0.0
+        out["printable_area"] = _area_points(shape, x0, y0, width, depth or width)
+    if height is not None:
+        out["printable_height"] = _fmt(height, False)
+
+    start = _text(form, "start_gcode", "The start G-code")
+    if start is not None:
+        if not start.strip():
+            raise PrinterError("The start G-code can't be empty")
+        out["machine_start_gcode"] = start
+    end = _text(form, "end_gcode", "The end G-code")
+    if end is not None:
+        out["machine_end_gcode"] = end
+
+    speed = _number(form, "max_speed", "The maximum speed", 1, 20000)
+    if speed is not None:
+        for key in ("machine_max_speed_x", "machine_max_speed_y"):
+            out[key] = _list_like(base, key, _fmt(speed, False))
+    accel = _number(form, "max_acceleration", "The maximum acceleration", 1, 200000)
+    if accel is not None:
+        for key in ("machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_extruding", "machine_max_acceleration_travel"):
+            out[key] = _list_like(base, key, _fmt(accel, False))
+    retract = _number(form, "retraction_length", "The retraction length", 0, 100)
+    if retract is not None:
+        out["retraction_length"] = _list_like(base, "retraction_length", _fmt(retract, False))
+    retract_speed = _number(form, "retraction_speed", "The retraction speed", 1, 1000)
+    if retract_speed is not None:
+        out["retraction_speed"] = _list_like(base, "retraction_speed", _fmt(retract_speed, False))
+        out["deretraction_speed"] = _list_like(base, "deretraction_speed", _fmt(retract_speed, False))
+    z_hop = _number(form, "z_hop", "The Z hop", 0, 50)
+    if z_hop is not None:
+        out["z_hop"] = _list_like(base, "z_hop", _fmt(z_hop, False))
+    if form.get("auxiliary_fan") is not None:
+        out["auxiliary_fan"] = "1" if form["auxiliary_fan"] else "0"
+
+    process = _text(form, "default_process", "The default process", 200)
+    if process:
+        out["default_print_profile"] = process
+    material = _text(form, "default_material", "The default material", 200)
+    if material:
+        out["default_filament_profile"] = [material]
+    return out
+
+
+def build_printer_preset(
+    name: str, inherits: str, base: dict, form: dict, existing: dict | None = None
+) -> ParsedPreset:
+    """The preset to store: the form's overrides (and its advanced settings) over `existing` when editing, pointing
+    at `inherits`. Advanced settings the form no longer lists are dropped; settings that are not printer
+    settings, kept from an import, are left alone."""
+    from .printer_keys import PRINTER_KEYS
+
+    if not valid_name(name):
+        raise PrinterError("The name is not valid: it must be plain text without slashes")
+    advanced = form.get("advanced") or {}
+    if not isinstance(advanced, dict) or len(advanced) > 400:
+        raise PrinterError("The advanced settings are not valid")
+    extra_allowed = PRINTER_KEYS - PRINTER_MANAGED_KEYS - _PRINTER_META_KEYS
+    for key, value in advanced.items():
+        if key not in extra_allowed:
+            raise PrinterError(f"'{key}' is not a printer setting that can be added here")
+        if not isinstance(value, str) or len(value) > 50000 or "\x00" in value:
+            raise PrinterError(f"The value of '{key}' is not valid")
+    data = {k: v for k, v in (existing or {}).items() if k not in extra_allowed}
+    data.update(build_printer_overrides(base, form))
+    for key, value in advanced.items():
+        data[key] = _encode_extra(base.get(key), value)
+    data.update(
+        {
+            "name": name,
+            "type": "machine",
+            "from": "User",
+            "instantiation": "true",
+            "inherits": inherits,
+            "version": data.get("version") or "1.0.0.0",
+        }
+    )
+    return ParsedPreset("machine", name, data)
+
+
+def build_export(user_id: str, items: list[tuple[str, str]]) -> tuple[bytes, str]:
+    """A zip of the user's own presets, in the layout desktop OrcaSlicer reads (bundle_structure.json and a
+    folder per kind), and the file name to offer: .orca_printer for one printer, .orca_filament for one
+    material, .orca_bundle otherwise."""
+    if not items:
+        raise PrinterError("Choose something to export")
+    stored = store.load_all(user_id)
+    folders = {"machine": "printer", "filament": "filament", "process": "process"}
+    buffer = io.BytesIO()
+    names: dict[str, list[str]] = {"machine": [], "filament": [], "process": []}
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for kind, name in dict.fromkeys(items):
+            data = stored.get((kind, name))
+            if data is None:
+                raise PrinterNotFound(f"'{name}' is not one of your profiles")
+            safe = re.sub(r"[^\w .@()+-]", "_", name)
+            zf.writestr(f"{folders[kind]}/{safe}.json", json.dumps(data, indent=4))
+            names[kind].append(name)
+        zf.writestr(
+            _BUNDLE_METADATA,
+            json.dumps(
+                {
+                    "bundle_id": str(uuid.uuid4()),
+                    "bundle_type": "Trident export",
+                    "version": "1.0.0.0",
+                    "printer_preset_name": names["machine"],
+                    "filament_preset_name": names["filament"],
+                    "process_preset_name": names["process"],
+                },
+                indent=4,
+            ),
+        )
+    only = [(k, n) for k, ns in names.items() for n in ns]
+    if len(only) == 1 and only[0][0] == "machine":
+        suffix, stem = ".orca_printer", only[0][1]
+    elif len(only) == 1 and only[0][0] == "filament":
+        suffix, stem = ".orca_filament", only[0][1]
+    else:
+        suffix, stem = ".orca_bundle", "trident-profiles"
+    return buffer.getvalue(), re.sub(r"[^\w .@()+-]", "_", stem) + suffix

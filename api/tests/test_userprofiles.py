@@ -5,6 +5,7 @@ import zipfile
 import pytest
 
 from app import cli_runner, profiles as profiles_module, userprofiles
+from app.profiles import ProfileCatalog
 from app.config import settings
 
 
@@ -317,3 +318,177 @@ def test_material_printer_scope_is_stored_listed_and_kept_on_edit(material_catal
 
 def test_built_in_profiles_report_no_printer_scope(material_catalog):
     assert all(p.compatible_printers == [] for p in material_catalog.list("u1") if p.vendor != userprofiles.IMPORTED_VENDOR)
+
+
+# --- printers made in the app ------------------------------------------------
+
+@pytest.fixture
+def printer_catalog(tmp_path, monkeypatch):
+    """A catalog with a built-in printer (a copy of which is made) and the slicer's generic ones."""
+    monkeypatch.setattr(userprofiles.settings, "models_dir", tmp_path / "models")
+    monkeypatch.setattr(userprofiles, "_allowed_values", lambda key: None)
+    cat = ProfileCatalog(tmp_path / "profiles")
+    vendor = tmp_path / "profiles" / "Acme" / "machine"
+    vendor.mkdir(parents=True)
+    (tmp_path / "profiles" / "Acme.json").write_text("{}")
+    (vendor / "Acme X 0.4 nozzle.json").write_text(json.dumps({
+        "name": "Acme X 0.4 nozzle", "type": "machine", "instantiation": "true", "printer_model": "Acme X",
+        "nozzle_diameter": ["0.4"], "printable_area": ["0x0", "220x0", "220x220", "0x220"], "printable_height": "250",
+        "gcode_flavor": "marlin2", "machine_start_gcode": "G28\nM109 S[nozzle_temperature_initial_layer]",
+        "machine_max_speed_x": ["500", "200"], "machine_max_speed_y": ["500", "200"],
+        "retraction_length": ["0.8", "0.8"], "z_hop": ["0.4", "0.4"],
+        "default_print_profile": "0.20mm Standard @Acme", "default_filament_profile": ["Acme PLA"],
+    }))
+    custom = tmp_path / "profiles" / "Custom" / "machine"
+    custom.mkdir(parents=True)
+    (tmp_path / "profiles" / "Custom.json").write_text("{}")
+    for generic, extra in (
+        ("MyMarlin 0.4 nozzle", {"gcode_flavor": "marlin"}),
+        ("MyKlipper 0.4 nozzle", {"gcode_flavor": "klipper"}),
+        ("MyBeltPrinter 0.4 nozzle", {"gcode_flavor": "klipper", "belt_printer": "1", "belt_printer_infinite_y": "1", "belt_slice_rotation_angle": "45"}),
+    ):
+        (custom / f"{generic}.json").write_text(json.dumps({
+            "name": generic, "type": "machine", "instantiation": "true", "nozzle_diameter": ["0.4"],
+            "printable_area": ["0x0", "250x0", "250x250", "0x250"], "printable_height": "250",
+            "machine_start_gcode": "G28", **extra,
+        }))
+    cat.load()
+    return cat
+
+
+def _pform(**over):
+    form = {"width": 300, "depth": 220, "height": 250, "start_gcode": "G28", "nozzle_diameter": 0.4}
+    form.update(over)
+    return form
+
+
+def test_printer_copy_inherits_the_base_and_sets_the_bed(printer_catalog):
+    ref = printer_catalog.save_printer("u1", "My Acme", _pform(origin_x=5, origin_y=-3, max_speed=300, retraction_length=1.2, z_hop=0.6), base_name="Acme X 0.4 nozzle")
+    assert (ref.kind, ref.name, ref.inherits) == ("machine", "My Acme", "Acme X 0.4 nozzle")
+    d = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "My Acme", "u1").data
+    assert d["printable_area"] == ["5x-3", "305x-3", "305x217", "5x217"] and d["printable_height"] == "250"
+    assert d["machine_max_speed_x"] == ["300", "300"]  # keeps the base's list length
+    assert d["retraction_length"] == ["1.2", "1.2"] and d["z_hop"] == ["0.6", "0.6"]
+    assert d["printer_model"] == "Acme X"  # inherited, not copied
+    assert d["default_filament_profile"] == ["Acme PLA"]
+
+
+def test_printer_with_no_base_starts_from_the_generic_printer_for_the_firmware(printer_catalog):
+    marlin = printer_catalog.save_printer("u1", "From nothing", _pform(gcode_flavor="marlin2"))
+    klipper = printer_catalog.save_printer("u1", "Klipper one", _pform(gcode_flavor="klipper"))
+    assert marlin.inherits == "MyMarlin 0.4 nozzle" and klipper.inherits == "MyKlipper 0.4 nozzle"
+    assert printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "From nothing", "u1").data["gcode_flavor"] == "marlin2"
+
+
+def test_endless_belt_gets_a_long_plate_and_the_flag(printer_catalog):
+    printer_catalog.save_printer("u1", "Belt", _pform(width=250, belt=True, belt_endless=True, belt_angle=40))
+    d = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Belt", "u1").data
+    assert d["belt_printer"] == "1" and d["belt_printer_infinite_y"] == "1" and d["belt_slice_rotation_angle"] == "40"
+    assert d["printable_area"] == ["0x0", "250x0", "250x2000", "0x2000"]
+    assert printer_catalog.stored_preset("u1", "machine", "Belt")["inherits"] == "MyBeltPrinter 0.4 nozzle"
+
+
+def test_limited_belt_uses_the_given_length(printer_catalog):
+    printer_catalog.save_printer("u1", "Short belt", _pform(width=95, belt=True, belt_endless=False, belt_length=500))
+    d = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Short belt", "u1").data
+    assert d["belt_printer_infinite_y"] == "0" and d["printable_area"] == ["0x0", "95x0", "95x500", "0x500"]
+    with pytest.raises(userprofiles.PrinterError):
+        printer_catalog.save_printer("u1", "No length", _pform(belt=True, belt_endless=False))
+
+
+def test_centred_and_round_beds(printer_catalog):
+    printer_catalog.save_printer("u1", "Centred", _pform(origin_centre=True))
+    assert printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Centred", "u1").data["printable_area"] == ["-150x-110", "150x-110", "150x110", "-150x110"]
+    printer_catalog.save_printer("u1", "Round", _pform(shape="circle", width=200, origin_centre=True))
+    pts = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Round", "u1").data["printable_area"]
+    assert len(pts) == 48 and "100x0" in pts
+
+
+def test_printer_advanced_settings_keep_the_base_shape_and_can_be_removed(printer_catalog):
+    printer_catalog.save_printer("u1", "Adv", _pform(advanced={"machine_pause_gcode": "M601", "bed_exclude_area": "0x0, 20x0, 20x20"}), base_name="Acme X 0.4 nozzle")
+    stored = printer_catalog.stored_preset("u1", "machine", "Adv")
+    assert stored["machine_pause_gcode"] == "M601" and stored["bed_exclude_area"] == "0x0, 20x0, 20x20"  # base has none: kept as text
+    # editing without one drops it; with another keeps the others
+    printer_catalog.save_printer("u1", "Adv", _pform(advanced={"machine_pause_gcode": "M25"}), edit=True)
+    stored = printer_catalog.stored_preset("u1", "machine", "Adv")
+    assert stored["machine_pause_gcode"] == "M25" and "bed_exclude_area" not in stored and stored["inherits"] == "Acme X 0.4 nozzle"
+
+
+@pytest.mark.parametrize(
+    "over,message",
+    [
+        ({"width": 5}, "bed width"),
+        ({"height": 99999}, "maximum height"),
+        ({"nozzle_diameter": 5}, "nozzle diameter"),
+        ({"start_gcode": "   "}, "can't be empty"),
+        ({"shape": "triangle"}, "rectangle or a circle"),
+        ({"advanced": {"filament_type": "PLA"}}, "not a printer setting"),
+        ({"advanced": {"printable_area": "0x0"}}, "not a printer setting"),
+        ({"max_speed": "fast"}, "must be a number"),
+    ],
+)
+def test_printer_form_values_are_validated(printer_catalog, over, message):
+    with pytest.raises(userprofiles.PrinterError, match=message):
+        printer_catalog.save_printer("u1", "Bad", _pform(**over), base_name="Acme X 0.4 nozzle")
+
+
+def test_printer_name_clashes_and_unknown_bases_are_refused(printer_catalog):
+    with pytest.raises(userprofiles.PrinterConflict):
+        printer_catalog.save_printer("u1", "Acme X 0.4 nozzle", _pform())
+    printer_catalog.save_printer("u1", "Mine", _pform())
+    with pytest.raises(userprofiles.PrinterConflict):
+        printer_catalog.save_printer("u1", "Mine", _pform())
+    with pytest.raises(userprofiles.PrinterNotFound):
+        printer_catalog.save_printer("u1", "Other", _pform(), base_name="Nope")
+    with pytest.raises(userprofiles.PrinterNotFound):
+        printer_catalog.save_printer("u1", "Ghost", _pform(), edit=True)
+    with pytest.raises(userprofiles.PrinterError):
+        printer_catalog.save_printer("u1", "a/b", _pform())
+
+
+def test_export_round_trips_through_the_importer(printer_catalog):
+    printer_catalog.save_printer("u1", "Export me", _pform(advanced={"machine_pause_gcode": "M601"}), base_name="Acme X 0.4 nozzle")
+    data, filename = userprofiles.build_export("u1", [("machine", "Export me")])
+    assert filename == "Export me.orca_printer"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert "printer/Export me.json" in zf.namelist() and "bundle_structure.json" in zf.namelist()
+        meta = json.loads(zf.read("bundle_structure.json"))
+        assert meta["printer_preset_name"] == ["Export me"]
+    presets, issues = userprofiles.parse_upload(filename, data)
+    assert not issues and [(p.kind, p.name) for p in presets] == [("machine", "Export me")]
+    assert presets[0].data["inherits"] == "Acme X 0.4 nozzle" and presets[0].data["machine_pause_gcode"] == "M601"
+    two, name2 = userprofiles.build_export("u1", [("machine", "Export me"), ("machine", "Export me")])
+    assert name2 == "Export me.orca_printer"  # duplicates collapse
+    with pytest.raises(userprofiles.PrinterNotFound):
+        userprofiles.build_export("u1", [("machine", "nope")])
+    with pytest.raises(userprofiles.PrinterError):
+        userprofiles.build_export("u1", [])
+
+
+def test_printer_routes_create_edit_export_and_delete(client, printer_catalog, monkeypatch):
+    monkeypatch.setattr(profiles_module, "catalog", printer_catalog)
+    body = {"name": "Route printer", "base_name": "Acme X 0.4 nozzle", "width": 300, "depth": 220, "height": 250, "start_gcode": "G28", "advanced": {"machine_pause_gcode": "M601"}}
+    created = client.post("/profiles/printers", json=body)
+    assert created.status_code == 200 and created.json()["inherits"] == "Acme X 0.4 nozzle"
+    assert "Route printer" in {p["name"] for p in client.get("/profiles").json() if p["kind"] == "machine"}
+    stored = client.get("/stored-profiles/machine/Route printer").json()
+    assert stored["machine_pause_gcode"] == "M601" and stored["inherits"] == "Acme X 0.4 nozzle"
+    assert client.get("/stored-profiles/machine/Nope").status_code == 404
+    keys = client.get("/profiles/printer-keys").json()
+    assert "machine_pause_gcode" in keys and "printable_area" not in keys and "filament_type" not in keys
+
+    assert client.post("/profiles/printers", json=body).status_code == 409
+    assert client.post("/profiles/printers", json={**body, "name": "Other", "base_name": "Nope"}).status_code == 404
+    assert client.post("/profiles/printers", json={**body, "name": "Wide", "width": 1}).status_code == 422
+    edited = client.put("/profiles/printers/Route printer", json={**body, "width": 310, "advanced": {}})
+    assert edited.status_code == 200
+    assert client.get("/stored-profiles/machine/Route printer").json().get("machine_pause_gcode") is None
+    assert client.put("/profiles/printers/Route printer", json={**body, "name": "Renamed"}).status_code == 422
+
+    exported = client.post("/profiles/export", json={"items": [{"kind": "machine", "name": "Route printer"}]})
+    assert exported.status_code == 200 and 'filename="Route printer.orca_printer"' in exported.headers["content-disposition"]
+    assert zipfile.ZipFile(io.BytesIO(exported.content)).namelist()
+    assert client.post("/profiles/export", json={"items": [{"kind": "machine", "name": "Nope"}]}).status_code == 404
+    assert client.post("/profiles/export", json={"items": []}).status_code == 422
+
+    assert client.delete("/profiles/imported/machine/Route printer").status_code == 200

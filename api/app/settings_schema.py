@@ -64,6 +64,7 @@ def build_settings_schema() -> SettingsSchema:
                 label=item.get("label"),
                 description=item.get("description"),
                 enum_values=item.get("enum_values"),
+                enum_labels=item.get("enum_labels"),
                 default=item.get("default"),
             )
             for item in help_json

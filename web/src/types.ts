@@ -20,6 +20,7 @@ export interface SettingDef {
   label: string | null
   description: string | null
   enum_values: string[] | null
+  enum_labels?: string[] | null
   default: unknown
 }
 
@@ -368,4 +369,41 @@ export interface ObjectEdit {
   z_deg: number
   x: number
   y: number
+}
+
+// The "New printer" form (POST/PUT /profiles/printers, api/app/schemas.py PrinterForm). A value left out
+// is inherited from the printer the new one is based on.
+export interface PrinterForm {
+  name: string
+  base_name?: string | null
+  gcode_flavor?: string
+  shape?: 'rectangle' | 'circle'
+  width?: number
+  depth?: number
+  height?: number
+  origin_x?: number
+  origin_y?: number
+  origin_centre?: boolean
+  belt?: boolean
+  belt_endless?: boolean
+  belt_length?: number
+  belt_angle?: number
+  nozzle_diameter?: number
+  nozzle_type?: string
+  start_gcode?: string
+  end_gcode?: string
+  max_speed?: number
+  max_acceleration?: number
+  retraction_length?: number
+  retraction_speed?: number
+  z_hop?: number
+  auxiliary_fan?: boolean
+  default_process?: string
+  default_material?: string
+  advanced?: Record<string, string>
+}
+
+export interface ExportItem {
+  kind: 'machine' | 'filament' | 'process'
+  name: string
 }

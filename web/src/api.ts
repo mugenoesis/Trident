@@ -21,7 +21,9 @@ import type {
   SettingsProfileUpdateRequest,
   SettingsSchema,
   ThreeMfInspection,
+  ExportItem,
   ObjectEdit,
+  PrinterForm,
   TransformStep,
 } from './types'
 
@@ -98,6 +100,53 @@ export function createFilament(form: FilamentForm): Promise<ImportedProfile> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(form),
   })
+}
+
+export function createPrinterProfile(form: PrinterForm): Promise<ImportedProfile> {
+  return request('/profiles/printers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  })
+}
+
+export function updatePrinterProfile(form: PrinterForm): Promise<ImportedProfile> {
+  return request(`/profiles/printers/${encodeURIComponent(form.name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  })
+}
+
+// What the user set on one of their printers (not the inherited values).
+export function getStoredPrinter(name: string): Promise<Record<string, unknown>> {
+  return request(`/stored-profiles/machine/${encodeURIComponent(name)}`)
+}
+
+// The settings a printer preset holds that the form's Basics tab does not cover (the Advanced tab's list).
+export function getPrinterKeys(): Promise<string[]> {
+  return request('/profiles/printer-keys')
+}
+
+// The chosen profiles as a file desktop OrcaSlicer opens; returns the bytes and the file name to save as.
+export async function exportProfiles(items: ExportItem[]): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/profiles/export`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      detail = ((await res.json()) as { detail?: string }).detail ?? detail
+    } catch {
+      // keep the status text
+    }
+    throw new Error(`${res.status} ${detail}`)
+  }
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+  return { blob: await res.blob(), filename: match ? match[1] : 'trident-profiles.orca_bundle' }
 }
 
 export function updateFilament(form: FilamentForm): Promise<ImportedProfile> {
