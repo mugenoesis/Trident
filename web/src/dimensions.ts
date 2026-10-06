@@ -108,7 +108,8 @@ export function parseBedSize(profileData: Record<string, unknown>): BedSize | nu
  * current orientation as uploaded.
  */
 export function computeFitScale(model: Dimensions, bed: BedSize): number | null {
-  const ratios = [bed.width / model.x, bed.depth / model.y, bed.height / model.z]
+  // An endless belt has no length limit (the slicer ignores the plate's Y), so only width and height count.
+  const ratios = [bed.width / model.x, bed.height / model.z, ...(bed.beltPrinterInfiniteY ? [] : [bed.depth / model.y])]
   const minRatio = Math.min(...ratios)
   return minRatio < 1 ? minRatio * FIT_MARGIN : null
 }

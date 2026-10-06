@@ -2001,3 +2001,129 @@
   color: var(--text-dim);
   font-size: 0.78rem;
 }
+
+/* New printer / Edit printer */
+.dialog-tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+.dialog-tabs button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+.dialog-tabs button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+.dialog-tabs button.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.printer-bed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 1rem;
+  align-items: start;
+}
+.printer-bed-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.printer-bed-drawing {
+  background: #14171b;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px;
+}
+.bed-drawing {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.printer-belt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: #1f2328;
+}
+.printer-aux {
+  align-self: end;
+  padding-bottom: 0.5rem;
+}
+.gcode-box {
+  background: #2c313a;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  width: 100%;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+.advanced-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #1f2328;
+}
+.advanced-results li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+.advanced-results li:last-child {
+  border-bottom: 0;
+}
+.advanced-results small {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.advanced-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 1 45%;
+  min-width: 0;
+}
+.advanced-edit input,
+.advanced-edit select,
+.advanced-edit textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .printer-bed-row {
+    grid-template-columns: 1fr;
+  }
+  .advanced-results li {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .advanced-edit {
+    flex: none;
+  }
+}

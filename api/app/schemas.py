@@ -139,6 +139,7 @@ class SettingDef(BaseModel):
     label: str | None = None
     description: str | None = None
     enum_values: list[str] | None = None
+    enum_labels: list[str] | None = None
     default: Any | None = None
 
 
@@ -555,3 +556,47 @@ class ObjectEdit(BaseModel):
 
 class ObjectsTransformRequest(BaseModel):
     objects: list[ObjectEdit] = Field(min_length=1, max_length=200)
+
+
+class PrinterForm(BaseModel):
+    """The "New printer" form (see userprofiles.build_printer_overrides). A value left out is inherited from
+    the printer the new one is based on."""
+
+    name: str
+    # The printer to copy; None starts from the slicer's generic printer for the firmware (or belt).
+    base_name: str | None = None
+    gcode_flavor: str | None = None
+    shape: Literal["rectangle", "circle"] = "rectangle"
+    width: float | None = None  # X in mm (a circle's diameter)
+    depth: float | None = None  # Y in mm (a belt printer's length comes from belt_endless / belt_length)
+    height: float | None = None
+    origin_x: float = 0.0
+    origin_y: float = 0.0
+    origin_centre: bool = False
+    belt: bool | None = None
+    belt_endless: bool = True
+    belt_length: float | None = None
+    belt_angle: float | None = None
+    nozzle_diameter: float | None = None
+    nozzle_type: str | None = None
+    start_gcode: str | None = None
+    end_gcode: str | None = None
+    max_speed: float | None = None
+    max_acceleration: float | None = None
+    retraction_length: float | None = None
+    retraction_speed: float | None = None
+    z_hop: float | None = None
+    auxiliary_fan: bool | None = None
+    default_process: str | None = None
+    default_material: str | None = None
+    # Any other printer setting: key -> text (a list setting is comma separated).
+    advanced: dict[str, str] = Field(default_factory=dict)
+
+
+class ExportItem(BaseModel):
+    kind: Literal["machine", "filament", "process"]
+    name: str
+
+
+class ExportRequest(BaseModel):
+    items: list[ExportItem] = Field(min_length=1, max_length=200)

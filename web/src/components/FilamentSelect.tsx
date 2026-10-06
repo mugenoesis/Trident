@@ -59,8 +59,18 @@ export default function FilamentSelect({
   const [filamentQuery, setFilamentQuery] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
+  // One of your own printers has no materials of its own: use those of the vendor of the chosen material
+  // (the printer it was copied from).
+  const materialVendor =
+    vendor === IMPORTED_VENDOR
+      ? (() => {
+          const chosen = profiles.find((p) => p.kind === 'filament' && p.name === filamentName)?.vendor
+          return chosen && chosen !== IMPORTED_VENDOR ? chosen : ''
+        })()
+      : vendor
+
   const filaments = useMemo(() => {
-    const inVendor = profiles.filter((p) => p.vendor === vendor && p.kind === 'filament')
+    const inVendor = profiles.filter((p) => p.vendor === materialVendor && p.kind === 'filament')
     // Not every printer vendor bundles its own filament profiles -- Voron,
     // Creality's DIY-oriented lines, and other community/OEM-machine-only
     // vendors have machine/process profiles but zero filament ones of
@@ -100,7 +110,7 @@ export default function FilamentSelect({
       if (current) sorted.unshift(current)
     }
     return sorted
-  }, [profiles, vendor, printerName, filamentQuery, filamentName])
+  }, [profiles, materialVendor, printerName, filamentQuery, filamentName])
 
   const selected = profiles.find((p) => p.kind === 'filament' && p.name === filamentName)
   const selectedIsMine = selected?.vendor === IMPORTED_VENDOR

@@ -12,7 +12,11 @@ interface PrinterSelectProps {
   // "Import profiles…" link, and (only when an imported printer is the
   // current one) a delete link -- see ProfileImportDialog.
   onImportClick: () => void
+  onExportClick: () => void
   onDeleteImportedPrinter: () => void
+  // "+ New printer from …" (a copy of the selected printer, or of nothing in particular), and Edit for your own.
+  onNewPrinter: () => void
+  onEditPrinter: () => void
 }
 
 // Vendor the importer files user profiles under (api/app/userprofiles.py).
@@ -29,7 +33,10 @@ export default function PrinterSelect({
   onPrinterChange,
   onProcessChange,
   onImportClick,
+  onExportClick,
   onDeleteImportedPrinter,
+  onNewPrinter,
+  onEditPrinter,
 }: PrinterSelectProps) {
   const vendors = useMemo(
     () => [...new Set(profiles.map((p) => p.vendor))].sort(),
@@ -42,18 +49,26 @@ export default function PrinterSelect({
       ),
     [profiles, vendor],
   )
+  // One of your own printers has no processes of its own: offer those of the vendor its chosen process
+  // belongs to (the printer it was copied from), plus your own.
+  const processVendor =
+    vendor === IMPORTED_VENDOR ? (profiles.find((p) => p.kind === 'process' && p.name === processName)?.vendor ?? vendor) : vendor
   const processes = useMemo(
     () =>
-      profiles.filter((p) => p.vendor === vendor && p.kind === 'process').sort((a, b) =>
-        a.name.localeCompare(b.name),
-      ),
-    [profiles, vendor],
+      profiles
+        .filter((p) => p.kind === 'process' && (p.vendor === processVendor || (vendor === IMPORTED_VENDOR && p.vendor === IMPORTED_VENDOR)))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [profiles, processVendor, vendor],
   )
   return (
     <div className="field-group">
       <div className="profile-import-link-row">
         <button type="button" className="link-button" onClick={onImportClick}>
           Import profiles…
+        </button>
+        {' · '}
+        <button type="button" className="link-button" onClick={onExportClick}>
+          Export…
         </button>
       </div>
       <label>
@@ -88,11 +103,21 @@ export default function PrinterSelect({
         </select>
       </label>
 
-      {vendor === IMPORTED_VENDOR && printerName && (
-        <button type="button" className="link-button" onClick={onDeleteImportedPrinter}>
-          Delete this imported printer
+      <div className="material-links">
+        <button type="button" className="link-button" onClick={onNewPrinter}>
+          {printerName ? <>+ New printer from &ldquo;{printerName}&rdquo;&hellip;</> : <>+ New printer&hellip;</>}
         </button>
-      )}
+        {vendor === IMPORTED_VENDOR && printerName && (
+          <>
+            <button type="button" className="link-button" onClick={onEditPrinter}>
+              Edit
+            </button>
+            <button type="button" className="link-button danger-text" onClick={onDeleteImportedPrinter}>
+              Delete
+            </button>
+          </>
+        )}
+      </div>
 
       <details className="advanced-process">
         <summary>Process profile (auto-selected from printer default)</summary>
