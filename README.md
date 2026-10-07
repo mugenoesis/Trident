@@ -10,6 +10,8 @@
   Works with the printers OrcaSlicer supports, and with belt printers as a bonus.
 </p>
 
+https://www.youtube.com/watch?v=1vSq-iEaazE
+
 <p align="center">
   <a href="https://ko-fi.com/mugenoesis"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
 </p>
