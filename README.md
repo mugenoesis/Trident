@@ -8,12 +8,14 @@
   <b>A self-hosted slicer for your server.</b><br>
   OrcaSlicer's slicing engine, run headless in Docker, with a web UI you can use from any browser or phone.
   Works with the printers OrcaSlicer supports, and with belt printers as a bonus.
-</p>
-
-https://www.youtube.com/watch?v=1vSq-iEaazE
 
 <p align="center">
   <a href="https://ko-fi.com/mugenoesis"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+</p>
+
+</p>
+<p align="center">
+https://www.youtube.com/watch?v=1vSq-iEaazE
 </p>
 
 <p align="center">
