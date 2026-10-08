@@ -492,3 +492,41 @@ def test_printer_routes_create_edit_export_and_delete(client, printer_catalog, m
     assert client.post("/profiles/export", json={"items": []}).status_code == 422
 
     assert client.delete("/profiles/imported/machine/Route printer").status_code == 200
+
+
+# --- materials: the Advanced settings ----------------------------------------
+
+def test_material_advanced_settings_keep_the_base_shape_and_can_be_removed(material_catalog):
+    material_catalog.save_filament("u1", "Adv PLA", _form(advanced={"filament_cost": "27.5", "slow_down_layer_time": "6, 8"}), base_name="Acme PLA")
+    stored = material_catalog.stored_preset("u1", "filament", "Adv PLA")
+    assert stored["filament_cost"] == "27.5"
+    assert stored["slow_down_layer_time"] == "6, 8"  # base has no value for it: kept as typed
+    resolved = material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "Adv PLA", "u1").data
+    assert resolved["filament_cost"] == "27.5"
+    # a form with no advanced list leaves them as they are; one with a list makes it exact
+    material_catalog.save_filament("u1", "Adv PLA", _form(nozzle_temperature=205), edit=True)
+    assert material_catalog.stored_preset("u1", "filament", "Adv PLA")["filament_cost"] == "27.5"
+    material_catalog.save_filament("u1", "Adv PLA", _form(advanced={"slow_down_layer_time": "9"}), edit=True)
+    stored = material_catalog.stored_preset("u1", "filament", "Adv PLA")
+    assert "filament_cost" not in stored and stored["slow_down_layer_time"] == "9" and stored["inherits"] == "Acme PLA"
+    material_catalog.save_filament("u1", "Adv PLA", _form(advanced={}), edit=True)
+    assert "slow_down_layer_time" not in material_catalog.stored_preset("u1", "filament", "Adv PLA")
+
+
+@pytest.mark.parametrize("advanced", [{"nozzle_temperature": "999"}, {"layer_height": "0.1"}, {"machine_start_gcode": "G28"}, {"name": "x"}])
+def test_material_advanced_refuses_managed_and_non_filament_settings(material_catalog, advanced):
+    with pytest.raises(userprofiles.MaterialError, match="not a material setting"):
+        material_catalog.save_filament("u1", "Bad Adv", _form(advanced=advanced), base_name="Acme PLA")
+
+
+def test_material_advanced_routes(client, material_catalog, monkeypatch):
+    monkeypatch.setattr(profiles_module, "catalog", material_catalog)
+    body = _api_form(name="Route Adv", advanced={"filament_cost": "30"})
+    assert client.post("/profiles/filaments", json=body).status_code == 200
+    assert client.get("/stored-profiles/filament/Route Adv").json()["filament_cost"] == "30"
+    assert client.get("/stored-profiles/filament/Nope").status_code == 404
+    assert client.get("/stored-profiles/bogus/Route Adv").status_code == 404
+    keys = client.get("/profiles/filament-keys").json()
+    assert "filament_cost" in keys and "nozzle_temperature" not in keys and "machine_start_gcode" not in keys
+    bad = client.post("/profiles/filaments", json=_api_form(name="Bad", advanced={"layer_height": "1"}))
+    assert bad.status_code == 422

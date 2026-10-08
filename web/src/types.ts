@@ -332,6 +332,8 @@ export interface FilamentForm {
   fan_max_speed: number
   // Printers (machine profile names) the material is limited to; empty = every printer.
   printers?: string[]
+  // Any other filament setting, key -> text. Left out, a material keeps the extra settings it has.
+  advanced?: Record<string, string>
 }
 
 export interface ImportedProfile {

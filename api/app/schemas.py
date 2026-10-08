@@ -116,6 +116,9 @@ class FilamentForm(BaseModel):
     # Printers (machine profile names) the material is limited to; empty = every printer.
     # None on an edit keeps what is stored.
     printers: list[str] | None = None
+    # Any other filament setting: key -> text (a list setting is comma separated). None leaves the ones a
+    # material already has as they are; a dict makes those exactly the material's extra settings.
+    advanced: dict[str, str] | None = None
 
 
 class ImportIssue(BaseModel):
