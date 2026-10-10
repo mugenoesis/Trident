@@ -26,6 +26,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slicer: runs the real slicer (api/tests_slicer)"]
 
 [build-system]
 requires = ["setuptools>=68"]
