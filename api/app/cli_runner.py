@@ -104,7 +104,7 @@ def _out_of_range_overrides(model_path: Path, setting_overrides: dict[str, Any])
 def _filament_map_overrides(
     printer_data: dict[str, Any], filament_count: int, overrides: dict[str, Any]
 ) -> dict[str, str]:
-    """Which extruder each loaded filament sits on, when the slicer would not know.
+    """Which extruder each loaded filament sits on, and may print on, when the slicer would not know.
 
     With three or more filaments the slicer is left with a one-entry
     filament_map, and the brim code then reads past its end for any part
@@ -112,17 +112,25 @@ def _filament_map_overrides(
     remap on the Snapmaker U1). Filament N is put on extruder N (the last
     extruder takes any extra) and the mode is Manual, since the slicer
     recalculates the map otherwise. A map the caller supplies wins.
+
+    A project saved by the slicer lists, per filament, the extruders it may
+    print on as a bit mask, and the usual value (3) is only extruders 1 and 2:
+    on a printer with more nozzles the slicer then refuses a filament mapped
+    to the third or fourth ("Some filaments cannot be printed on the extruder
+    mapped to"). Which filament goes on which nozzle is the user's choice
+    here, so every filament may print on every extruder.
     """
-    if filament_count < 3 or "filament_map" in overrides:
-        return {}
     nozzles = overrides.get("nozzle_diameter") or printer_data.get("nozzle_diameter")
     if isinstance(nozzles, str):
         nozzles = nozzles.split(",")
     extruders = len(nozzles) if isinstance(nozzles, list) and nozzles else 1
-    return {
-        "filament_map": ",".join(str(min(i + 1, extruders)) for i in range(filament_count)),
-        "filament_map_mode": "Manual",
-    }
+    out: dict[str, str] = {}
+    if filament_count >= 2 and extruders >= 2 and "filament_printable" not in overrides:
+        out["filament_printable"] = ",".join([str((1 << extruders) - 1)] * filament_count)
+    if filament_count >= 3 and "filament_map" not in overrides:
+        out["filament_map"] = ",".join(str(min(i + 1, extruders)) for i in range(filament_count))
+        out["filament_map_mode"] = "Manual"
+    return out
 
 
 def _resolve_profile_detail(kind: str, name: str, user_id: str | None = None) -> ProfileDetail:
