@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createFilament, getProfileDetail, updateFilament } from '../api'
+import { createFilament, getFilamentKeys, getProfileDetail, getStoredProfile, updateFilament } from '../api'
 import { PLATE_TEMP_KEYS } from '../bedTypes'
+import type { SettingDef } from '../types'
+import { settingText } from '../settingText'
+import AdvancedSettingsTab from './AdvancedSettingsTab'
 
 // Material types the form offers (the slicer's own filament_type strings).
 const MATERIAL_TYPES = [
@@ -13,6 +16,8 @@ interface MaterialDialogProps {
   base: { vendor: string; name: string }
   // The selected printer's machine profile name: what "This printer" means.
   printerName: string
+  // Every setting the slicer has, to search on the Advanced tab.
+  schema: SettingDef[]
   onClose: () => void
   onSaved: (name: string) => void
 }
@@ -50,7 +55,7 @@ function message(err: Error): string {
  * from the base, so the result behaves exactly like it. Saved under "My
  * profiles" and offered for every printer.
  */
-export default function MaterialDialog({ mode, base, printerName, onClose, onSaved }: MaterialDialogProps) {
+export default function MaterialDialog({ mode, base, printerName, schema, onClose, onSaved }: MaterialDialogProps) {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plates, setPlates] = useState<{ key: string; label: string }[]>([])
   const [name, setName] = useState(mode === 'edit' ? base.name : `${base.name} (custom)`)
@@ -60,6 +65,14 @@ export default function MaterialDialog({ mode, base, printerName, onClose, onSav
   // Which printers the material is for. Editing keeps the stored choice (any printers it names stay).
   const [scope, setScope] = useState<'this' | 'all'>(mode === 'create' && printerName ? 'this' : 'all')
   const [storedPrinters, setStoredPrinters] = useState<string[]>([])
+  const [tab, setTab] = useState<'basics' | 'advanced'>('basics')
+  // The values the material inherits, the settings changed beyond the form's own, and which of them can be added.
+  const [inherited, setInherited] = useState<Record<string, unknown>>({})
+  const [advanced, setAdvanced] = useState<Record<string, string>>({})
+  // Sent only once what the material already holds has been read, so a failed read never wipes it.
+  const [advancedReady, setAdvancedReady] = useState(mode === 'create')
+  const [filamentKeys, setFilamentKeys] = useState<string[]>([])
+  const defs = useMemo(() => new Map(schema.map((s) => [s.key, s])), [schema])
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +80,7 @@ export default function MaterialDialog({ mode, base, printerName, onClose, onSav
       .then((detail) => {
         if (cancelled) return
         const d = detail.data
+        setInherited(d)
         if (mode === 'edit') {
           const listed = Array.isArray(d.compatible_printers) ? d.compatible_printers.map(String).filter(Boolean) : []
           setStoredPrinters(listed)
@@ -87,6 +101,22 @@ export default function MaterialDialog({ mode, base, printerName, onClose, onSav
         setDraft(next)
       })
       .catch((err: Error) => !cancelled && setLoadError(message(err)))
+    getFilamentKeys()
+      .then((keys) => !cancelled && setFilamentKeys(keys))
+      .catch(() => undefined)
+    if (mode === 'edit') {
+      // The settings this material holds beyond the form's own become its advanced list.
+      Promise.all([getStoredProfile('filament', base.name), getFilamentKeys()])
+        .then(([stored, keys]) => {
+          if (cancelled) return
+          const allowed = new Set(keys)
+          const extras: Record<string, string> = {}
+          for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v)
+          setAdvanced(extras)
+          setAdvancedReady(true)
+        })
+        .catch(() => undefined)
+    }
     return () => {
       cancelled = true
     }
@@ -126,6 +156,7 @@ export default function MaterialDialog({ mode, base, printerName, onClose, onSav
         fan_min_speed: num('fan_min_speed', 'Fan min'),
         fan_max_speed: num('fan_max_speed', 'Fan max'),
         printers: scope === 'all' ? [] : mode === 'edit' && storedPrinters.length > 0 ? storedPrinters : [printerName],
+        advanced: advancedReady ? advanced : undefined,
         plate_temps: Object.fromEntries(plates.map((p) => [p.key, num(p.key, `${p.label} bed temperature`)])),
       }
     } catch (err) {
@@ -150,10 +181,28 @@ export default function MaterialDialog({ mode, base, printerName, onClose, onSav
           Close ✕
         </button>
       </div>
+      <div className="dialog-tabs" role="tablist">
+        {(['basics', 'advanced'] as const).map((t) => (
+          <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
+            {t === 'basics' ? 'Basics' : `Advanced${Object.keys(advanced).length ? ` (${Object.keys(advanced).length})` : ''}`}
+          </button>
+        ))}
+      </div>
       <div className="object-picker-scroll material-form">
         {loadError && <p className="banner-error">{loadError}</p>}
         {!draft && !loadError && <p className="auth-hint">Loading…</p>}
-        {draft && (
+        {tab === 'advanced' && draft && (
+          <AdvancedSettingsTab
+            keys={filamentKeys}
+            defs={defs}
+            advanced={advanced}
+            onChange={setAdvanced}
+            inherited={inherited}
+            noun="material"
+            placeholder="cost, cooling, pressure, retraction …"
+          />
+        )}
+        {tab === 'basics' && draft && (
           <>
             <p className="profile-import-help">
               {mode === 'create' ? (

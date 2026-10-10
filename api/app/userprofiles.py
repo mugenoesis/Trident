@@ -207,6 +207,18 @@ _MATERIAL_NUMBERS: dict[str, tuple[float, float, bool]] = {
 }
 
 
+# Keys the material form sets itself; every other filament key a preset holds is an "advanced" override.
+FILAMENT_MANAGED_KEYS = frozenset(
+    {
+        "filament_type", "filament_vendor", "nozzle_temperature", "nozzle_temperature_initial_layer",
+        "nozzle_temperature_range_low", "nozzle_temperature_range_high", "filament_flow_ratio",
+        "filament_max_volumetric_speed", "filament_density", "filament_diameter", "fan_min_speed", "fan_max_speed",
+        "compatible_printers", "compatible_printers_condition",
+    }
+    | {k for key in ("cool", "eng", "hot", "textured", "textured_cool", "supertack") for k in (f"{key}_plate_temp", f"{key}_plate_temp_initial_layer")}
+)
+
+
 class MaterialError(ValueError):
     """A material form value that is not acceptable (the message is shown to the user)."""
 
@@ -283,8 +295,24 @@ def build_material_preset(name: str, inherits: str, base: dict, form: dict, exis
     so other keys the preset already had are kept) pointing at `inherits`."""
     if not valid_name(name):
         raise MaterialError("The name is not valid: it must be plain text without slashes")
-    data = dict(existing or {})
+    from .filament_keys import FILAMENT_KEYS
+
+    extra_allowed = FILAMENT_KEYS - FILAMENT_MANAGED_KEYS - _PRINTER_META_KEYS
+    advanced = form.get("advanced")
+    if advanced is not None:
+        if not isinstance(advanced, dict) or len(advanced) > 400:
+            raise MaterialError("The advanced settings are not valid")
+        for key, value in advanced.items():
+            if key not in extra_allowed:
+                raise MaterialError(f"'{key}' is not a material setting that can be added here")
+            if not isinstance(value, str) or len(value) > 50000 or "\x00" in value:
+                raise MaterialError(f"The value of '{key}' is not valid")
+    # With no advanced list given, a material keeps the extra settings it already has; with one, it holds
+    # exactly those.
+    data = {k: v for k, v in (existing or {}).items() if advanced is None or k not in extra_allowed}
     data.update(build_material_overrides(base, form))
+    for key, value in (advanced or {}).items():
+        data[key] = _encode_extra(base.get(key), value)
     printers = form.get("printers")
     if printers is None:
         # Editing without a choice keeps what is stored; a new material is for every printer.

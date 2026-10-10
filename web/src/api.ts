@@ -124,6 +124,16 @@ export function getStoredPrinter(name: string): Promise<Record<string, unknown>>
 }
 
 // The settings a printer preset holds that the form's Basics tab does not cover (the Advanced tab's list).
+// What the user set on one of their own profiles (not the inherited values).
+export function getStoredProfile(kind: 'machine' | 'filament' | 'process', name: string): Promise<Record<string, unknown>> {
+  return request(`/stored-profiles/${kind}/${encodeURIComponent(name)}`)
+}
+
+// The settings a filament preset holds that the material form does not cover (the Advanced tab's list).
+export function getFilamentKeys(): Promise<string[]> {
+  return request('/profiles/filament-keys')
+}
+
 export function getPrinterKeys(): Promise<string[]> {
   return request('/profiles/printer-keys')
 }

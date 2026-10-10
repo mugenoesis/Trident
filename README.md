@@ -33,7 +33,7 @@ machine that has no slicer installed.
   also import your own profiles (`.json`, `.zip`, `.orca_printer`, `.orca_filament`, `.orca_bundle`).
 - **Make your own printers.** A printer that isn't in the list: copy one (or start from nothing, or a generic Marlin, Klipper, RRF, Repetier or belt printer) and set the bed, nozzle, firmware, start and end G-code and motion, with every other printer setting a search away on the Advanced tab. Belt printers can be endless or have a real length. You can export your printers and materials for desktop OrcaSlicer.
 - **Make your own materials.** Create a new material from any existing one with a short form (temperatures, bed
-  temperature per plate, flow, fan); everything else is inherited, and you choose whether it is for the current printer only or for every printer.
+  temperature per plate, flow, fan); everything else is inherited, and any other material setting is a search away on the Advanced tab, and you choose whether it is for the current printer only or for every printer.
 - **Multi-material and tool changers.** Assign a file's colours to nozzles and slice multi-colour models, including
   4-head printers like the Snapmaker U1. The build plate list only offers plates your chosen filament supports.
 - **Multi-plate 3MF files.** Preview each plate, slice any plate, and choose which objects in a file to print, with

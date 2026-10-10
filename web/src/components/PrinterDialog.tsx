@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPrinterProfile, getPrinterKeys, getProfileDetail, getStoredPrinter, updatePrinterProfile } from '../api'
 import type { PrinterForm, ProfileSummary, SettingDef } from '../types'
+import { settingText } from '../settingText'
+import AdvancedSettingsTab from './AdvancedSettingsTab'
 
 // A belt printer with no limit is drawn this long (the same length the server writes for it).
 const ENDLESS_BELT_LENGTH_MM = 2000
@@ -79,12 +81,6 @@ function first(data: Record<string, unknown>, key: string): string {
   const v = data[key]
   const x = Array.isArray(v) ? v[0] : v
   return typeof x === 'string' || typeof x === 'number' ? String(x) : ''
-}
-
-// The text an advanced setting shows: a list comma separated.
-function textOf(v: unknown): string {
-  if (Array.isArray(v)) return v.map(String).join(', ')
-  return v === null || v === undefined ? '' : String(v)
 }
 
 const round = (n: number) => String(Math.round(n * 100) / 100)
@@ -225,7 +221,6 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
   const [inherited, setInherited] = useState<Record<string, unknown>>({})
   const [advanced, setAdvanced] = useState<Record<string, string>>({})
   const [printerKeys, setPrinterKeys] = useState<string[]>([])
-  const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -308,7 +303,7 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
           const inheritsFrom = typeof stored.inherits === 'string' ? stored.inherits : ''
           const allowed = new Set(keys)
           const extras: Record<string, string> = {}
-          for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = textOf(v)
+          for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v)
           setAdvanced(extras)
           setBaseNote(inheritsFrom)
         })
@@ -343,24 +338,6 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
   const labelFor = (def: SettingDef | undefined, value: string) => {
     const at = def?.enum_values?.indexOf(value) ?? -1
     return at >= 0 && def?.enum_labels?.[at] ? def.enum_labels[at] : value
-  }
-
-  // Advanced tab: search the printer settings that are not on Basics.
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
-    return printerKeys
-      .filter((key) => !(key in advanced))
-      .map((key) => defs.get(key))
-      .filter((d): d is SettingDef => Boolean(d))
-      .filter((d) => d.key.includes(q) || (d.label ?? '').toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q))
-      .slice(0, 30)
-  }, [query, printerKeys, defs, advanced])
-
-  const addAdvanced = (def: SettingDef) => {
-    const inheritedText = textOf(inherited[def.key])
-    setAdvanced((prev) => ({ ...prev, [def.key]: inheritedText !== '' ? inheritedText : String(def.default ?? '') }))
-    setQuery('')
   }
 
   const save = () => {
@@ -692,85 +669,15 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
         )}
 
         {tab === 'advanced' && (
-          <>
-            <label>
-              Search printer settings
-              <input type="text" placeholder="retract, pause, exclude …" value={query} onChange={(e) => setQuery(e.target.value)} />
-            </label>
-            {query.trim() !== '' && (
-              <ul className="advanced-results">
-                {results.length === 0 && <li className="auth-hint">Nothing matches. The Basics tab already covers the common settings.</li>}
-                {results.map((d) => (
-                  <li key={d.key}>
-                    <span>
-                      {d.label || d.key}
-                      <small>
-                        {(d.description ?? '').slice(0, 110)} · {d.key}
-                      </small>
-                    </span>
-                    <button type="button" className="preview-button" onClick={() => addAdvanced(d)}>
-                      Add
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <h3 className="material-section">Changed for this printer ({Object.keys(advanced).length})</h3>
-            {Object.keys(advanced).length === 0 && <p className="auth-hint">Nothing yet. Search above to add a setting.</p>}
-            <ul className="advanced-results advanced-added">
-              {Object.entries(advanced).map(([key, value]) => {
-                const def = defs.get(key)
-                const was = textOf(inherited[key])
-                const multiline = key.endsWith('_gcode') || value.includes('\n')
-                return (
-                  <li key={key}>
-                    <span>
-                      {def?.label || key}
-                      <small>
-                        {was !== '' && was !== value ? `inherited: ${was.slice(0, 60)} · ` : ''}
-                        {key}
-                      </small>
-                    </span>
-                    <span className="advanced-edit">
-                      {def?.type === 'bool' ? (
-                        <select value={value} onChange={(e) => setAdvanced((prev) => ({ ...prev, [key]: e.target.value }))}>
-                          <option value="1">true</option>
-                          <option value="0">false</option>
-                        </select>
-                      ) : def?.enum_values?.length ? (
-                        <select value={value} onChange={(e) => setAdvanced((prev) => ({ ...prev, [key]: e.target.value }))}>
-                          {!def.enum_values.includes(value) && <option value={value}>{value}</option>}
-                          {def.enum_values.map((v) => (
-                            <option key={v} value={v}>
-                              {labelFor(def, v)}
-                            </option>
-                          ))}
-                        </select>
-                      ) : multiline ? (
-                        <textarea className="gcode-box" rows={4} value={value} spellCheck={false} onChange={(e) => setAdvanced((prev) => ({ ...prev, [key]: e.target.value }))} />
-                      ) : (
-                        <input type="text" value={value} onChange={(e) => setAdvanced((prev) => ({ ...prev, [key]: e.target.value }))} />
-                      )}
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() =>
-                          setAdvanced((prev) => {
-                            const next = { ...prev }
-                            delete next[key]
-                            return next
-                          })
-                        }
-                      >
-                        Remove
-                      </button>
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-            <p className="auth-hint">Removing a setting puts back the value the printer inherits.</p>
-          </>
+          <AdvancedSettingsTab
+            keys={printerKeys}
+            defs={defs}
+            advanced={advanced}
+            onChange={setAdvanced}
+            inherited={inherited}
+            noun="printer"
+            placeholder="retract, pause, exclude …"
+          />
         )}
 
         {error && <p className="banner-error">{error}</p>}

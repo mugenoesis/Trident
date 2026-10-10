@@ -139,13 +139,15 @@ def update_printer(name: str, body: PrinterForm, current: User = Depends(require
     return _save_printer(current.id, body, edit=True)
 
 
-@router.get("/stored-profiles/machine/{name}")
-def get_stored_printer(name: str, current: User = Depends(require_user)) -> dict:
-    """What the user set on one of their printers (not the inherited values), so the editor can list the
+@router.get("/stored-profiles/{kind}/{name}")
+def get_stored_profile(kind: str, name: str, current: User = Depends(require_user)) -> dict:
+    """What the user set on one of their own profiles (not the inherited values), so an editor can list the
     advanced settings it holds."""
-    stored = profiles_module.catalog.stored_preset(current.id, "machine", name)
+    if kind not in ("machine", "filament", "process"):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    stored = profiles_module.catalog.stored_preset(current.id, kind, name)
     if stored is None:
-        raise HTTPException(status_code=404, detail="Printer not found")
+        raise HTTPException(status_code=404, detail="Profile not found")
     return stored
 
 
@@ -172,3 +174,11 @@ def export_profiles(body: ExportRequest, current: User = Depends(require_user)) 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/profiles/filament-keys", response_model=list[str])
+def filament_keys(current: User = Depends(require_user)) -> list[str]:
+    """The settings a filament preset holds beyond the material form, for its Advanced tab."""
+    from ..filament_keys import FILAMENT_KEYS
+
+    return sorted(FILAMENT_KEYS - userprofiles.FILAMENT_MANAGED_KEYS - userprofiles._PRINTER_META_KEYS)

@@ -2392,6 +2392,7 @@ function MainApp({
           mode={materialDialog.mode}
           base={materialDialog.base}
           printerName={printerName}
+          schema={schema}
           onClose={() => setMaterialDialog(null)}
           onSaved={(name) => handleMaterialSaved(materialDialog.slot, name)}
         />
