@@ -43,7 +43,7 @@ export default function Uploader({ onFileSelected, fileName, uploadStatus, meshN
       />
       {fileName ? (
         <>
-          <strong>{fileName}</strong>
+          <strong title={fileName}>{fileName}</strong>
           <span className="uploader-status">
             {uploadStatus === 'uploading' && (fileName.toLowerCase().endsWith('.stl') ? 'Uploading and checking the mesh…' : 'Uploading…')}
             {uploadStatus === 'done' && (meshNote ? `Ready to slice · ${meshNote}` : 'Ready to slice')}

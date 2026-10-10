@@ -336,14 +336,34 @@ def test_run_slice_lets_a_3mf_from_a_newer_bambu_studio_through(tmp_path: Path, 
 
 def test_filament_map_is_set_for_three_or_more_filaments():
     four_heads = {"nozzle_diameter": ["0.4"] * 4}
-    assert cli_runner._filament_map_overrides(four_heads, 4, {}) == {"filament_map": "1,2,3,4", "filament_map_mode": "Manual"}
+    assert cli_runner._filament_map_overrides(four_heads, 4, {}) == {
+        "filament_printable": "15,15,15,15",
+        "filament_map": "1,2,3,4",
+        "filament_map_mode": "Manual",
+    }
     assert cli_runner._filament_map_overrides(four_heads, 3, {})["filament_map"] == "1,2,3"
     # more filaments than extruders: the extras share the last one
     assert cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4", "0.4"]}, 4, {})["filament_map"] == "1,2,2,2"
     assert cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4"]}, 3, {})["filament_map"] == "1,1,1"
     # the job's own nozzle list counts, and so does a caller-supplied map
     assert cli_runner._filament_map_overrides({}, 3, {"nozzle_diameter": "0.4,0.4,0.4"})["filament_map"] == "1,2,3"
-    assert cli_runner._filament_map_overrides(four_heads, 4, {"filament_map": "1,1,2,2"}) == {}
-    # one or two filaments are left to the slicer
-    assert cli_runner._filament_map_overrides(four_heads, 2, {}) == {}
+    assert "filament_map" not in cli_runner._filament_map_overrides(four_heads, 4, {"filament_map": "1,1,2,2"})
+    # one or two filaments get no map: the slicer works that out
+    assert "filament_map" not in cli_runner._filament_map_overrides(four_heads, 2, {})
     assert cli_runner._filament_map_overrides(four_heads, 1, {}) == {}
+
+
+def test_every_filament_may_print_on_every_extruder():
+    # A project saved by the slicer says a filament may print on extruders 1 and 2 only (bit mask 3); on a printer
+    # with more nozzles the slicer refuses a filament mapped to the third ("Some filaments cannot be printed on
+    # the extruder mapped to"). Which filament goes on which nozzle is the user's choice, so all are allowed.
+    four = {"nozzle_diameter": ["0.4"] * 4}
+    two = {"nozzle_diameter": ["0.4"] * 2}
+    assert cli_runner._filament_map_overrides(four, 2, {}) == {"filament_printable": "15,15"}
+    assert cli_runner._filament_map_overrides(four, 3, {})["filament_printable"] == "15,15,15"
+    assert cli_runner._filament_map_overrides(two, 2, {}) == {"filament_printable": "3,3"}
+    # the job's own nozzle list counts, a caller-supplied value wins, and one extruder or one filament needs none
+    assert cli_runner._filament_map_overrides({}, 2, {"nozzle_diameter": "0.4,0.4,0.4"}) == {"filament_printable": "7,7"}
+    assert "filament_printable" not in cli_runner._filament_map_overrides(four, 3, {"filament_printable": "1,1,1"})
+    assert "filament_printable" not in cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4"]}, 3, {})
+    assert "filament_printable" not in cli_runner._filament_map_overrides(four, 1, {})

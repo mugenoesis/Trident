@@ -653,3 +653,53 @@ def test_transform_objects_moves_and_turns_single_objects(client, tmp_path):
 def test_transform_objects_needs_a_3mf(client):
     model_id = _upload_model(client)
     assert client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x": 0, "y": 0}]}).status_code == 422
+
+
+def test_a_slicer_crash_on_the_trimmed_copy_is_retried_with_the_projects_own_settings(client, tmp_path, monkeypatch):
+    from app import threemf_objects
+    from app.routers import jobs as jobs_router
+
+    model_id = _upload_project(client, tmp_path)
+    monkeypatch.setattr(threemf_objects, "keys_sized_for_fewer_filaments", lambda path, n: {"filament_colour"})
+    prepared = []
+    real_prepare = jobs_router._prepare_model
+
+    def spy(job_id, model_path, request, user_id=None, *, drop_sized=True):
+        prepared.append(drop_sized)
+        return real_prepare(job_id, model_path, request, user_id, drop_sized=drop_sized)
+
+    monkeypatch.setattr(jobs_router, "_prepare_model", spy)
+    calls = []
+
+    def fake_run_slice(**kwargs):
+        calls.append(kwargs)
+        crashed = len(calls) == 1
+        return SliceResult(
+            return_code=-11 if crashed else 0,
+            result_json=None if crashed else {"return_code": 0, "error_string": ""},
+            stdout="",
+            stderr="",
+            used_result_json=not crashed,
+        )
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    resp = client.post("/jobs", json=_job(model_id, filament_profiles=["A", "B", "C", "D"]))
+    assert resp.status_code == 200
+    assert prepared == [True, False] and len(calls) == 2  # first trimmed, then the project's own settings
+    assert client.get(f"/jobs/{resp.json()['id']}").json()["status"] == "succeeded"
+
+
+def test_an_ordinary_failure_is_not_retried(client, tmp_path, monkeypatch):
+    from app import threemf_objects
+
+    model_id = _upload_project(client, tmp_path)
+    monkeypatch.setattr(threemf_objects, "keys_sized_for_fewer_filaments", lambda path, n: {"filament_colour"})
+    calls = []
+
+    def fake_run_slice(**kwargs):
+        calls.append(kwargs)
+        return SliceResult(return_code=1, result_json={"return_code": 1, "error_string": "bad"}, stdout="", stderr="", used_result_json=True)
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    resp = client.post("/jobs", json=_job(model_id, filament_profiles=["A", "B", "C", "D"]))
+    assert resp.status_code == 200 and len(calls) == 1

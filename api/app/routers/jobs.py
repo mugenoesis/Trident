@@ -63,11 +63,11 @@ _PRINTER_SPECIFIC_KEYS = ("extruder_printable_area", "extruder_printable_height"
 
 
 def _leaked_printer_keys(
-    model_path: Path, printer_profile: str, user_id: str | None, filament_count: int = 1
+    model_path: Path, printer_profile: str, user_id: str | None, filament_count: int = 1, drop_sized: bool = True
 ) -> set[str]:
     if model_path.suffix.lower() != ".3mf":
         return set()
-    drop = threemf_objects.keys_sized_for_fewer_filaments(model_path, filament_count)
+    drop = threemf_objects.keys_sized_for_fewer_filaments(model_path, filament_count) if drop_sized else set()
     present = threemf_objects.project_keys(model_path, _PRINTER_SPECIFIC_KEYS)
     if present:
         machine = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
@@ -76,7 +76,7 @@ def _leaked_printer_keys(
 
 
 def _prepare_model(
-    job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None
+    job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None, *, drop_sized: bool = True
 ) -> tuple[Path, int | None, bool, bool]:
     """(model to slice, plate to slice, whether the CLI may re-arrange,
     whether it must keep every object exactly where placed).
@@ -91,7 +91,7 @@ def _prepare_model(
     copies = request.copies
     try:
         is_belt, center_x = _machine_bed(request.printer_profile, user_id)
-        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id, len(request.filament_profiles))
+        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id, len(request.filament_profiles), drop_sized)
     except ValueError:
         # Unknown profile: run_slice reports it; nothing to decide here.
         is_belt, center_x, drop = False, 0.0, set()
@@ -230,6 +230,7 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
 
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
+    source_path = model_path
     try:
         model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, model_path, request, user_id)
         slice_args = dict(
@@ -245,6 +246,22 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             user_id=user_id,
         )
         result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
+        # The slicer crashed outright (killed by a signal, with no error message of its own) on the copy that had
+        # the per-filament settings sized for fewer filaments removed: a project with painted colours cannot load
+        # without them. Try again with the project's own settings kept; the slicer copes with their count not
+        # matching and, at worst, only fails when it exits, after the G-code is written.
+        if (
+            not result.succeeded
+            and result.return_code < 0
+            and source_path.suffix.lower() == ".3mf"
+            and threemf_objects.keys_sized_for_fewer_filaments(source_path, len(request.filament_profiles))
+        ):
+            model_path, plate_index, arrange, keep_positions = _prepare_model(
+                job_id, source_path, request, user_id, drop_sized=False
+            )
+            slice_args.update(model_path=model_path, plate_index=plate_index, arrange=arrange, keep_positions=keep_positions)
+            shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
+            result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
         # The file's own layout did not fit this printer's bed: fall back to
         # having the slicer arrange everything (what every 3mf used to get).
         if (
