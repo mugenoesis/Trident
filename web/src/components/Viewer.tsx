@@ -432,7 +432,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
         // Post-centering world box (object.position was just shifted above)
         // -- setFromObject updates the object's world matrix itself, so this
         // is accurate regardless of whether `box` above was local or world.
-        liveRef.current.modelBox = new THREE.Box3().setFromObject(object)
+        liveRef.current.modelBox = new THREE.Box3().setFromObject(object, true)
       }
 
       onDimensions?.({ x: size.x, y: size.y, z: size.z })
@@ -617,7 +617,9 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             loadedObject = group
             loadedGroupRef.current = group
             baseChildPos.current = group.children.map((c) => c.position.clone())
-            finishLoad(group, new THREE.Box3().setFromObject(group))
+            // Measured from the vertices: the quick box of a part turned by its own transform is bigger than the part, which
+            // would put the plate below the model and leave it floating.
+            finishLoad(group, new THREE.Box3().setFromObject(group, true))
             renderObjectThumbnails(group)
             setLoadVersion((n) => n + 1)
             URL.revokeObjectURL(url)
@@ -759,7 +761,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     group.updateMatrixWorld(true)
     const box = new THREE.Box3()
     group.children.forEach((item) => {
-      if (item.visible) box.expandByObject(item)
+      if (item.visible) box.expandByObject(item, true)
     })
     group.position.copy(saved)
     group.updateMatrixWorld(true)
