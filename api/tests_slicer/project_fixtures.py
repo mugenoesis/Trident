@@ -45,13 +45,33 @@ def paint_code(state: int) -> str:
     return format(((state - 3) << 4) | 0xC, "02X")
 
 
-def make_project(out: Path, *, authoring_printer: str, authoring_process: str, authoring_filament: str, colours: int, bin_path: str, datadir: str, resolved_dir: Path, painted: bool = True) -> Path:
-    """Export a project saved for `authoring_printer` with `colours` filaments, painted in all of them."""
+def make_project(
+    out: Path,
+    *,
+    authoring_printer: str,
+    authoring_process: str,
+    authoring_filament: str,
+    colours: int,
+    bin_path: str,
+    datadir: str,
+    resolved_dir: Path,
+    style: str = "painted",
+) -> Path:
+    """Export a project saved for `authoring_printer` with `colours` filaments, coloured one of two ways.
+
+    painted: one object whose triangles are painted in every colour (how a model painted in the slicer is saved).
+    objects: one object per colour, each assigned its own extruder (how separate parts of a model are saved).
+    """
     from app import cli_runner
 
+    if style not in ("painted", "objects"):
+        raise ValueError(style)
     work = Path(tempfile.mkdtemp(prefix="mcfix-"))
-    stl = work / "cube.stl"
-    _subdivided_cube_stl(stl)
+    stls = []
+    for i in range(colours if style == "objects" else 1):
+        stl = work / f"part{i + 1}.stl"
+        _subdivided_cube_stl(stl, size=30.0 if style == "painted" else 18.0, grid=8 if style == "painted" else 1)
+        stls.append(str(stl))
     printer = cli_runner._write_resolved_profile(cli_runner._resolve_profile_detail("machine", authoring_printer), resolved_dir, "printer")
     process = cli_runner._write_resolved_profile(cli_runner._resolve_profile_detail("process", authoring_process), resolved_dir, "process")
     filaments = [
@@ -60,7 +80,7 @@ def make_project(out: Path, *, authoring_printer: str, authoring_process: str, a
     ]
     raw = work / "raw.3mf"
     cmd = [bin_path, "--datadir", datadir, "--outputdir", str(work), "--arrange=1", "--load-settings", f"{printer};{process}",
-           "--load-filaments", ";".join(filaments), "--export-3mf", raw.name, str(stl)]
+           "--load-filaments", ";".join(filaments), "--export-3mf", raw.name, *stls]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if not raw.is_file():
         raise RuntimeError(f"could not export the project (exit {proc.returncode}): {proc.stdout[-400:]} {proc.stderr[-400:]}")
@@ -68,7 +88,7 @@ def make_project(out: Path, *, authoring_printer: str, authoring_process: str, a
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
         for info in zin.infolist():
             data = zin.read(info.filename)
-            if painted and info.filename.startswith("3D/Objects/") and info.filename.endswith(".model"):
+            if style == "painted" and info.filename.startswith("3D/Objects/") and info.filename.endswith(".model"):
                 text = data.decode()
                 counter = [0]
 
@@ -79,8 +99,22 @@ def make_project(out: Path, *, authoring_printer: str, authoring_process: str, a
 
                 text = re.sub(r"<triangle ([^>/]*?)/>", repaint, text)
                 data = text.encode()
+            if style == "objects" and info.filename.endswith("model_settings.config"):
+                text = data.decode()
+                number = [0]
+
+                def assign(match):
+                    number[0] += 1
+                    block = re.sub(r'(key="extruder" value=")\d+(")', rf'\g<1>{number[0]}\g<2>', match.group(0))
+                    return block
+
+                text = re.sub(r'<object id="\d+">.*?</object>', assign, text, flags=re.S)
+                if number[0] != colours:
+                    raise RuntimeError(f"expected {colours} objects in the project, found {number[0]}")
+                data = text.encode()
             if info.filename.endswith("project_settings.config"):
                 import json
+
                 proj = json.loads(data)
                 palette = ["#F2754E", "#3F8E43", "#2A6FDB", "#E8C547", "#8A4FBF", "#D94F8C", "#4FC0C0", "#222222", "#FFFFFF", "#7A7A7A", "#A0522D", "#00FF7F", "#FF8C00", "#1E90FF", "#C71585", "#556B2F"]
                 proj["filament_colour"] = palette[:colours]

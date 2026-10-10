@@ -1,7 +1,8 @@
 """Multi-colour 3MF projects through the real slicer, over colour counts, printers and nozzle assignments.
 
-Each project is a cube painted in N colours and saved by the slicer for another printer, the way a downloaded
-multi-colour model arrives. A job is started the way the app starts one: one filament profile per colour in the
+Each project is saved by the slicer for another printer, the way a downloaded multi-colour model arrives, in the two
+ways a slicer saves colours: a cube painted in N colours ("painted"), and N objects each assigned its own extruder
+("objects"). Every test runs both. A job is started the way the app starts one: one filament profile per colour in the
 file, and a remap from each colour to the nozzle the user chose. Every case must slice and write G-code.
 """
 from __future__ import annotations
@@ -9,6 +10,8 @@ from __future__ import annotations
 import pytest
 
 pytestmark = pytest.mark.slicer
+
+STYLES = ["painted", "objects"]
 
 PRINTERS = {
     "U1 (4 nozzles)": dict(printer="Snapmaker U1 (0.4 nozzle)", process="0.20 Standard @Snapmaker U1 (0.4 nozzle)", material="Snapmaker PLA Basic @U1", nozzles=4),
@@ -27,16 +30,17 @@ def assert_slices(result, case: str):
     assert status == "succeeded" and wrote_gcode, f"{case}: {status} {error}"
 
 
+@pytest.mark.parametrize("style", STYLES)
 @pytest.mark.parametrize("colours", [1, 2, 3, 4, 5, 6])
 @pytest.mark.parametrize("printer", list(PRINTERS))
-def test_colours_in_order_onto_the_nozzles(projects, slice_project, printer, colours):
+def test_colours_in_order_onto_the_nozzles(projects, slice_project, printer, colours, style):
     """Up to six colours on one, a few or four nozzles; extra colours share the last nozzle."""
     p = PRINTERS[printer]
     result = slice_project(
-        projects(colours), printer=p["printer"], process=p["process"], material=p["material"],
+        projects(colours, style=style), printer=p["printer"], process=p["process"], material=p["material"],
         profiles_count=colours, nozzles=p["nozzles"], remap=default_remap(colours, p["nozzles"]), colours=colours,
     )
-    assert_slices(result, f"{colours} colours on {printer}")
+    assert_slices(result, f"{colours} {style} colours on {printer}")
 
 
 @pytest.mark.parametrize(
@@ -52,35 +56,38 @@ def test_colours_in_order_onto_the_nozzles(projects, slice_project, printer, col
         (6, "1:1,2:1,3:1,4:1,5:1,6:1"),  # everything on one nozzle
     ],
 )
-def test_colours_assigned_to_chosen_nozzles_on_the_u1(projects, slice_project, colours, remap):
+@pytest.mark.parametrize("style", STYLES)
+def test_colours_assigned_to_chosen_nozzles_on_the_u1(projects, slice_project, colours, remap, style):
     p = PRINTERS["U1 (4 nozzles)"]
     result = slice_project(
-        projects(colours), printer=p["printer"], process=p["process"], material=p["material"],
+        projects(colours, style=style), printer=p["printer"], process=p["process"], material=p["material"],
         profiles_count=colours, nozzles=4, remap=remap, colours=colours,
     )
-    assert_slices(result, f"{colours} colours, remap {remap}")
+    assert_slices(result, f"{colours} {style} colours, remap {remap}")
 
 
+@pytest.mark.parametrize("style", STYLES)
 @pytest.mark.parametrize("colours", [2, 3])
-def test_a_project_with_fewer_colours_than_nozzles_given_a_profile_per_nozzle(projects, slice_project, colours):
+def test_a_project_with_fewer_colours_than_nozzles_given_a_profile_per_nozzle(projects, slice_project, colours, style):
     """Four filament profiles for a file of two or three colours (the settings sized for fewer filaments are
     trimmed, and a slicer crash on the trimmed copy is retried with the project's own)."""
     p = PRINTERS["U1 (4 nozzles)"]
     result = slice_project(
-        projects(colours), printer=p["printer"], process=p["process"], material=p["material"],
+        projects(colours, style=style), printer=p["printer"], process=p["process"], material=p["material"],
         profiles_count=4, nozzles=4, remap=default_remap(colours, 4), colours=colours,
     )
-    assert_slices(result, f"{colours} colours with 4 profiles")
+    assert_slices(result, f"{colours} {style} colours with 4 profiles")
 
 
+@pytest.mark.parametrize("style", STYLES)
 @pytest.mark.parametrize("colours", [2, 3, 4])
-def test_a_project_saved_on_the_u1_itself(projects, slice_project, colours):
+def test_a_project_saved_on_the_u1_itself(projects, slice_project, colours, style):
     p = PRINTERS["U1 (4 nozzles)"]
     result = slice_project(
-        projects(colours, "u1"), printer=p["printer"], process=p["process"], material=p["material"],
+        projects(colours, "u1", style), printer=p["printer"], process=p["process"], material=p["material"],
         profiles_count=colours, nozzles=4, remap=default_remap(colours, 4), colours=colours,
     )
-    assert_slices(result, f"{colours} colours saved on the U1")
+    assert_slices(result, f"{colours} {style} colours saved on the U1")
 
 
 @pytest.mark.xfail(

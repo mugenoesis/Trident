@@ -1,10 +1,16 @@
 # Slicer tests
 
-These run the real OrcaSlicer on multi-colour 3MF projects the tests generate (a cube painted in 1 to 6 colours,
-saved for a Bambu X1C or the Snapmaker U1) and check that a job started the way the app starts one slices and
-writes G-code, over colour counts, printers (U1, a single-nozzle printer, the belt printer) and colour-to-nozzle
-assignments. They need the slicer binary and profiles, so they are skipped where those are missing, and they are
-kept out of the fast suite (`tests/`).
+These run the real OrcaSlicer on multi-colour 3MF projects the tests generate, saved for a Bambu X1C or the Snapmaker U1, in
+the two ways a slicer saves colours:
+
+- **painted**: one object whose triangles are painted in 1 to 6 colours (a model painted in the slicer);
+- **objects**: one object per colour, each assigned its own extruder (separate parts of a model).
+
+A job started the way the app starts one (a filament profile per colour in the file, and a remap from each colour to the
+nozzle chosen) must slice and write G-code, over colour counts, printers (the four-nozzle U1, a single-nozzle printer,
+the belt printer) and colour-to-nozzle assignments. `test_colour_roles.py` checks the app finds the right number of
+colours in each kind of project, since that is how many filaments it sends. They need the slicer binary and profiles,
+so they are skipped where those are missing, and they are kept out of the fast suite (`tests/`).
 
 Run them in the container image (about four minutes):
 

@@ -53,7 +53,10 @@ def client():
 
 @pytest.fixture(scope="session")
 def projects(client):
-    """Multi-colour projects, made once each: projects(colours, authored_on) -> Path."""
+    """Multi-colour projects, made once each: projects(colours, authored_on, style) -> Path.
+
+    style is "painted" (triangles painted in every colour) or "objects" (one object per colour, each on its own extruder).
+    """
     from app.config import settings
 
     from project_fixtures import make_project
@@ -74,12 +77,13 @@ def projects(client):
         ),
     }
 
-    def make(colours: int, authored_on: str = "x1c") -> Path:
-        key = (colours, authored_on)
+    def make(colours: int, authored_on: str = "x1c", style: str = "painted") -> Path:
+        key = (colours, authored_on, style)
         if key not in made:
             made[key] = make_project(
-                folder / f"{authored_on}_{colours}.3mf",
+                folder / f"{authored_on}_{style}_{colours}.3mf",
                 colours=colours,
+                style=style,
                 bin_path=settings.orcaslicer_bin,
                 datadir=str(settings.orcaslicer_datadir),
                 resolved_dir=Path(tempfile.mkdtemp(prefix="slicer-profiles-")),
