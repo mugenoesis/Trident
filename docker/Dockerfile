@@ -15,7 +15,7 @@ ARG UBUNTU_VERSION=24.04
 # Frontend build stage -- independent of the OrcaSlicer C++ build below, so
 # changes here never invalidate that (multi-hour, cached) stage.
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS frontend
+FROM node:26-slim AS frontend
 
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
