@@ -1,61 +1,55 @@
-import { useRef, useState } from 'react'
+import { useRef, useState } from 'react';
 
 interface UploaderProps {
-  onFileSelected: (file: File) => void
-  fileName: string | null
-  uploadStatus: 'idle' | 'uploading' | 'done' | 'error'
-  // Set when the upload-time check auto-fixed (or flagged) the mesh.
-  meshNote?: string | null
+	onFileSelected: (file: File) => void;
+	fileName: string | null;
+	uploadStatus: 'idle' | 'uploading' | 'done' | 'error';
+	// Set when the upload-time check auto-fixed (or flagged) the mesh.
+	meshNote?: string | null;
 }
 
-const ACCEPT = '.stl,.3mf,.obj,.step,.stp'
+const ACCEPT = '.stl,.3mf,.obj,.step,.stp';
 
 export default function Uploader({ onFileSelected, fileName, uploadStatus, meshNote }: UploaderProps) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [dragOver, setDragOver] = useState(false)
+	const inputRef = useRef<HTMLInputElement>(null);
+	const [dragOver, setDragOver] = useState(false);
 
-  const handleFiles = (files: FileList | null) => {
-    const file = files?.[0]
-    if (file) onFileSelected(file)
-  }
+	const handleFiles = (files: FileList | null) => {
+		const file = files?.[0];
+		if (file) onFileSelected(file);
+	};
 
-  return (
-    <div
-      className={`uploader${dragOver ? ' uploader-drag' : ''}`}
-      onClick={() => inputRef.current?.click()}
-      onDragOver={(e) => {
-        e.preventDefault()
-        setDragOver(true)
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault()
-        setDragOver(false)
-        handleFiles(e.dataTransfer.files)
-      }}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPT}
-        hidden
-        onChange={(e) => handleFiles(e.target.files)}
-      />
-      {fileName ? (
-        <>
-          <strong title={fileName}>{fileName}</strong>
-          <span className="uploader-status">
-            {uploadStatus === 'uploading' && (fileName.toLowerCase().endsWith('.stl') ? 'Uploading and checking the mesh…' : 'Uploading…')}
-            {uploadStatus === 'done' && (meshNote ? `Ready to slice · ${meshNote}` : 'Ready to slice')}
-            {uploadStatus === 'error' && 'Upload failed — click to retry'}
-          </span>
-        </>
-      ) : (
-        <>
-          <strong>Drop an STL/3MF/OBJ/STEP here</strong>
-          <span className="uploader-status">or click to choose a file</span>
-        </>
-      )}
-    </div>
-  )
+	return (
+		<div
+			className={`uploader${dragOver ? ' uploader-drag' : ''}`}
+			onClick={() => inputRef.current?.click()}
+			onDragOver={(e) => {
+				e.preventDefault();
+				setDragOver(true);
+			}}
+			onDragLeave={() => setDragOver(false)}
+			onDrop={(e) => {
+				e.preventDefault();
+				setDragOver(false);
+				handleFiles(e.dataTransfer.files);
+			}}
+		>
+			<input ref={inputRef} type="file" accept={ACCEPT} hidden onChange={(e) => handleFiles(e.target.files)} />
+			{fileName ? (
+				<>
+					<strong title={fileName}>{fileName}</strong>
+					<span className="uploader-status">
+						{uploadStatus === 'uploading' && (fileName.toLowerCase().endsWith('.stl') ? 'Uploading and checking the mesh…' : 'Uploading…')}
+						{uploadStatus === 'done' && (meshNote ? `Ready to slice · ${meshNote}` : 'Ready to slice')}
+						{uploadStatus === 'error' && 'Upload failed — click to retry'}
+					</span>
+				</>
+			) : (
+				<>
+					<strong>Drop an STL/3MF/OBJ/STEP here</strong>
+					<span className="uploader-status">or click to choose a file</span>
+				</>
+			)}
+		</div>
+	);
 }
