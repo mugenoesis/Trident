@@ -31,6 +31,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from defusedxml import ElementTree as DET
 
@@ -556,9 +557,7 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
                 break
         else:
             ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
-        container = target_default if collapse else plate
-        if container is not None:
-            container.append(clone)
+        cast("ET.Element", target_default if collapse else plate).append(clone)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 

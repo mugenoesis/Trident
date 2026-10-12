@@ -15,7 +15,7 @@
     "functions": [
       {
         "name": "run_slice",
-        "complexity": 19
+        "complexity": 18
       }
     ]
   },
@@ -53,7 +53,7 @@
       },
       {
         "name": "create_job",
-        "complexity": 25
+        "complexity": 22
       },
       {
         "name": "_align_to_purge_line",
@@ -107,7 +107,7 @@
       },
       {
         "name": "_read_settings",
-        "complexity": 30
+        "complexity": 26
       },
       {
         "name": "_rewrite_settings",

@@ -10,7 +10,7 @@
 		"module": "nodenext",
 		"allowImportingTsExtensions": true,
 		"verbatimModuleSyntax": true,
-    "strict": true,
+		"strict": true,
 		"moduleDetection": "force",
 		"noEmit": true,
 
