@@ -1,0 +1,3 @@
+# The container runs as root. It creates and writes the mounted /data folders, whoever owns them on the host, and a
+# non-root user would need a PUID/PGID option to match them. Not done yet; remove this line when it is.
+DS-0002
