@@ -57,6 +57,31 @@ def _read_meta(model_id: str) -> dict | None:
         return None
 
 
+def _inspection_meta(dest: Path) -> dict[str, Any]:
+    """What a .3mf's plates, objects and colours add to the sidecar meta; nothing if it cannot be read."""
+    try:
+        inspection = threemf.inspect_3mf(dest)
+        return {
+            "plates": [p.model_dump() for p in inspection.plates],
+            "objects": [o.model_dump() for o in inspection.objects],
+            "extruder_indices": inspection.extruder_indices,
+            "embedded_filament_colors": inspection.embedded_filament_colors,
+            "embedded_filament_names": inspection.embedded_filament_names,
+            "color_tree": [c.model_dump() for c in inspection.color_tree],
+        }
+    except Exception:
+        return {}
+
+
+def _mesh_report(dest: Path) -> MeshReport | None:
+    """The STL's mesh report when it found something to fix or warn about."""
+    try:
+        report = meshcheck.analyze_stl(dest)
+    except Exception:
+        return None
+    return report if report is not None and (report.fixed or report.warnings) else None
+
+
 def finalize_new_model(
     model_id: str, suffix: str, dest: Path, original_name: str, owner_user_id: str
 ) -> ModelUploadResponse:
@@ -73,25 +98,10 @@ def finalize_new_model(
         "uploaded_at": datetime.now(UTC).isoformat(),
     }
     if suffix == ".3mf":
-        try:
-            inspection = threemf.inspect_3mf(dest)
-            meta["plates"] = [p.model_dump() for p in inspection.plates]
-            meta["objects"] = [o.model_dump() for o in inspection.objects]
-            meta["extruder_indices"] = inspection.extruder_indices
-            meta["embedded_filament_colors"] = inspection.embedded_filament_colors
-            meta["embedded_filament_names"] = inspection.embedded_filament_names
-            meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
-        except Exception:
-            pass
-    mesh_report: MeshReport | None = None
-    if suffix == ".stl":
-        try:
-            report = meshcheck.analyze_stl(dest)
-            if report is not None and (report.fixed or report.warnings):
-                mesh_report = report
-                meta["mesh_report"] = report.model_dump()
-        except Exception:
-            pass
+        meta.update(_inspection_meta(dest))
+    mesh_report = _mesh_report(dest) if suffix == ".stl" else None
+    if mesh_report is not None:
+        meta["mesh_report"] = mesh_report.model_dump()
     _meta_path(model_id).write_text(json.dumps(meta))
 
     return ModelUploadResponse(model_id=model_id, filename=original_name, mesh_report=mesh_report)

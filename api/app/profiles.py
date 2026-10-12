@@ -272,6 +272,29 @@ class ProfileCatalog:
         self._user_cache.pop(user_id, None)
         return result
 
+    def _name_taken(self, kind: str, name: str, existing_raw: dict) -> bool:
+        """Whether a built-in preset or one of the user's own already has this name."""
+        return (kind, name) in existing_raw or any(k == kind and n == name for (_, k, n) in self._by_key)
+
+    def _edited_preset(
+        self, user_id: str, kind: str, name: str, form: dict, existing_raw: dict, not_found: Exception, builder
+    ) -> userprofiles.ParsedPreset:
+        """The user's stored preset of this name with the form applied, keeping the base it already has."""
+        current = existing_raw.get((kind, name))
+        if current is None:
+            raise not_found
+        inherits = current.get("inherits") or None
+        resolved = self.get(userprofiles.IMPORTED_VENDOR, kind, name, user_id)
+        preset = builder(name, inherits or "", resolved.data if resolved else {}, form, current)
+        if not inherits:
+            preset.data.pop("inherits", None)
+        return preset
+
+    def _saved(self, user_id: str, kind: str, name: str, preset: userprofiles.ParsedPreset) -> ImportedProfile:
+        userprofiles.store.save(user_id, preset)
+        self._user_cache.pop(user_id, None)
+        return ImportedProfile(kind=kind, name=name, inherits=preset.data.get("inherits") or None)
+
     def save_filament(
         self, user_id: str, name: str, form: dict, *, base_name: str | None = None, edit: bool = False
     ) -> ImportedProfile:
@@ -280,27 +303,25 @@ class ProfileCatalog:
         the user's own); an edited one keeps the base it already has."""
         existing_raw = userprofiles.store.load_all(user_id)
         if edit:
-            current = existing_raw.get(("filament", name))
-            if current is None:
-                raise userprofiles.MaterialNotFound("That material no longer exists")
-            inherits = current.get("inherits") or None
-            resolved = self.get(userprofiles.IMPORTED_VENDOR, "filament", name, user_id)
-            base_data = resolved.data if resolved else {}
-            preset = userprofiles.build_material_preset(name, inherits or "", base_data, form, current)
-            if not inherits:
-                preset.data.pop("inherits", None)
+            preset = self._edited_preset(
+                user_id,
+                "filament",
+                name,
+                form,
+                existing_raw,
+                userprofiles.MaterialNotFound("That material no longer exists"),
+                userprofiles.build_material_preset,
+            )
         else:
             if not base_name:
                 raise userprofiles.MaterialNotFound("Choose a material to base the new one on")
             base = self.get_by_name("filament", base_name, user_id)
             if base is None:
                 raise userprofiles.MaterialNotFound(f"The material '{base_name}' was not found")
-            if ("filament", name) in existing_raw or any(k == "filament" and n == name for (_, k, n) in self._by_key):
+            if self._name_taken("filament", name, existing_raw):
                 raise userprofiles.MaterialConflict(f"A material called '{name}' already exists; pick another name")
             preset = userprofiles.build_material_preset(name, base_name, base.data, form)
-        userprofiles.store.save(user_id, preset)
-        self._user_cache.pop(user_id, None)
-        return ImportedProfile(kind="filament", name=name, inherits=preset.data.get("inherits") or None)
+        return self._saved(user_id, "filament", name, preset)
 
     def save_printer(
         self, user_id: str, name: str, form: dict, *, base_name: str | None = None, edit: bool = False
@@ -310,27 +331,24 @@ class ProfileCatalog:
         firmware (a belt printer's generic one) when none is given; an edited one keeps the base it has."""
         existing_raw = userprofiles.store.load_all(user_id)
         if edit:
-            current = existing_raw.get(("machine", name))
-            if current is None:
-                raise userprofiles.PrinterNotFound("That printer no longer exists")
-            inherits = current.get("inherits") or None
-            resolved = self.get(userprofiles.IMPORTED_VENDOR, "machine", name, user_id)
-            base_data = resolved.data if resolved else {}
-            preset = userprofiles.build_printer_preset(name, inherits or "", base_data, form, current)
-            if not inherits:
-                preset.data.pop("inherits", None)
+            preset = self._edited_preset(
+                user_id,
+                "machine",
+                name,
+                form,
+                existing_raw,
+                userprofiles.PrinterNotFound("That printer no longer exists"),
+                userprofiles.build_printer_preset,
+            )
         else:
-            belt = bool(form.get("belt"))
-            chosen = base_name or userprofiles.generic_printer_base(form.get("gcode_flavor"), belt)
+            chosen = base_name or userprofiles.generic_printer_base(form.get("gcode_flavor"), bool(form.get("belt")))
             base = self.get_by_name("machine", chosen, user_id)
             if base is None:
                 raise userprofiles.PrinterNotFound(f"The printer '{chosen}' was not found")
-            if ("machine", name) in existing_raw or any(k == "machine" and n == name for (_, k, n) in self._by_key):
+            if self._name_taken("machine", name, existing_raw):
                 raise userprofiles.PrinterConflict(f"A printer called '{name}' already exists; pick another name")
             preset = userprofiles.build_printer_preset(name, chosen, base.data, form)
-        userprofiles.store.save(user_id, preset)
-        self._user_cache.pop(user_id, None)
-        return ImportedProfile(kind="machine", name=name, inherits=preset.data.get("inherits") or None)
+        return self._saved(user_id, "machine", name, preset)
 
     def stored_preset(self, user_id: str, kind: str, name: str) -> dict | None:
         """The preset as stored (only what the user set, plus its `inherits` pointer), not resolved."""

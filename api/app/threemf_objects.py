@@ -31,7 +31,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from defusedxml import ElementTree as DET
 
@@ -119,6 +119,19 @@ class _ModelFiles:
                 return obj
         return None
 
+    def _mesh_box(self, obj: ET.Element) -> Box | None:
+        """Box of an object's own vertices, not counting its components."""
+        verts = obj.find(_c("mesh") + "/" + _c("vertices"))
+        if verts is None:
+            return None
+        points = [
+            (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0))) for v in verts.findall(_c("vertex"))
+        ]
+        if not points:
+            return None
+        xs, ys, zs = zip(*points, strict=True)
+        return ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
+
     def local_box(self, path: str, object_id: str, _depth: int = 0) -> Box | None:
         """Box of one object in its own coordinates (components applied)."""
         key = (path.lstrip("/"), object_id)
@@ -127,24 +140,11 @@ class _ModelFiles:
         box: Box | None = None
         obj = self._find_object(path, object_id)
         if obj is not None and _depth < 16:
-            mesh = obj.find(_c("mesh"))
-            if mesh is not None:
-                verts = mesh.find(_c("vertices"))
-                if verts is not None:
-                    xs, ys, zs = [], [], []
-                    for v in verts.findall(_c("vertex")):
-                        xs.append(float(v.get("x", 0)))
-                        ys.append(float(v.get("y", 0)))
-                        zs.append(float(v.get("z", 0)))
-                    if xs:
-                        box = ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
-            comps = obj.find(_c("components"))
-            if comps is not None:
-                for comp in comps.findall(_c("component")):
-                    child_path = comp.get(f"{{{_PROD}}}path") or path
-                    child = self.local_box(child_path, comp.get("objectid", ""), _depth + 1)
-                    if child is not None:
-                        box = _merge(box, _transform_box(_parse_matrix(comp.get("transform")), child))
+            box = self._mesh_box(obj)
+            for child_path, child_id, transform in _components(obj, path):
+                child = self.local_box(child_path, child_id, _depth + 1)
+                if child is not None:
+                    box = _merge(box, _transform_box(transform, child))
         self._boxes[key] = box
         return box
 
@@ -154,19 +154,18 @@ class _ModelFiles:
         if obj is None or _depth >= 16:
             return
         m = matrix or list(_IDENTITY)
-        mesh = obj.find(_c("mesh"))
-        if mesh is not None:
-            verts = mesh.find(_c("vertices"))
-            if verts is not None:
-                for v in verts.findall(_c("vertex")):
-                    yield _apply(m, (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0))))
-        comps = obj.find(_c("components"))
-        if comps is not None:
-            for comp in comps.findall(_c("component")):
-                child_path = comp.get(f"{{{_PROD}}}path") or path
-                yield from self.local_points(
-                    child_path, comp.get("objectid", ""), _compose(m, _parse_matrix(comp.get("transform"))), _depth + 1
-                )
+        for v in obj.findall(_c("mesh") + "/" + _c("vertices") + "/" + _c("vertex")):
+            yield _apply(m, (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0))))
+        for child_path, child_id, transform in _components(obj, path):
+            yield from self.local_points(child_path, child_id, _compose(m, transform), _depth + 1)
+
+
+def _components(obj: ET.Element, path: str) -> list[tuple[str, str, Matrix]]:
+    """(file, object id, transform) of each component of an object; a component without a file is in the same one."""
+    return [
+        (comp.get(f"{{{_PROD}}}path") or path, comp.get("objectid", ""), _parse_matrix(comp.get("transform")))
+        for comp in obj.findall(_c("components") + "/" + _c("component"))
+    ]
 
 
 def _compose(outer: Matrix, inner: Matrix) -> Matrix:
@@ -212,36 +211,49 @@ def _read_items(zf: zipfile.ZipFile) -> list[_Item]:
     return items
 
 
+def _object_names(root: ET.Element) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for obj in root.findall("object"):
+        object_id = obj.get("id")
+        for meta in obj.findall("metadata"):
+            if meta.get("key") == "name" and object_id:
+                names[object_id] = meta.get("value", "")
+                break
+    return names
+
+
+def _plate_number(plate: ET.Element, default: int) -> int:
+    for meta in plate.findall("metadata"):
+        if meta.get("key") == "plater_id":
+            with contextlib.suppress(ValueError):
+                return int(meta.get("value", default))
+    return default
+
+
+def _instance_number(fields: dict[str, str | None], seen: int) -> int:
+    """An instance's number: its own instance_id, else how many of that object came before it on the plate."""
+    try:
+        return int(str(fields["instance_id"])) if "instance_id" in fields else seen
+    except (TypeError, ValueError):
+        return seen
+
+
 def _read_settings(zf: zipfile.ZipFile) -> tuple[dict[str, str], dict[tuple[str, int], int]]:
     """(object_id -> name, (object_id, instance) -> plate index)."""
-    names: dict[str, str] = {}
-    plates: dict[tuple[str, int], int] = {}
     try:
         root = DET.fromstring(zf.read(_MODEL_SETTINGS))
     except (KeyError, ET.ParseError):
-        return names, plates
-    for obj in root.findall("object"):
-        for meta in obj.findall("metadata"):
-            if meta.get("key") == "name" and obj.get("id"):
-                names[obj.get("id", "")] = meta.get("value", "")
-                break
+        return {}, {}
+    plates: dict[tuple[str, int], int] = {}
     for n, plate in enumerate(root.findall("plate"), start=1):
-        index = n
-        for meta in plate.findall("metadata"):
-            if meta.get("key") == "plater_id":
-                with contextlib.suppress(ValueError):
-                    index = int(meta.get("value", n))
+        index = _plate_number(plate, n)
         counts: dict[str, int] = {}
         for inst in plate.findall("model_instance"):
-            fields = {m.get("key"): m.get("value") for m in inst.findall("metadata")}
+            fields = _instance_fields(inst)
             object_id = fields.get("object_id") or ""
-            try:
-                k = int(str(fields["instance_id"])) if "instance_id" in fields else counts.get(object_id, 0)
-            except (TypeError, ValueError):
-                k = counts.get(object_id, 0)
+            plates[(object_id, _instance_number(fields, counts.get(object_id, 0)))] = index
             counts[object_id] = counts.get(object_id, 0) + 1
-            plates[(object_id, k)] = index
-    return names, plates
+    return _object_names(root), plates
 
 
 def list_objects(path: Path) -> list[ObjectInfo]:
@@ -302,6 +314,14 @@ def _row_layout(items: list[_Item], sequence: list[int], gap_mm: float, center_x
     return shifts
 
 
+def _block_shift(block: Box | None, center_x: float, cursor: float) -> tuple[float, float, float]:
+    """(dx, dy, depth) that put a block's centre on center_x and its front edge at cursor."""
+    if block is None:
+        return 0.0, 0.0, 0.0
+    (x0, y0, _), (x1, y1, _) = block
+    return center_x - (x0 + x1) / 2, cursor - y0, y1 - y0
+
+
 def _plate_row(
     items: list[_Item], final: list[int], plate_of: dict[int, int], copies: int, gap_mm: float, center_x: float
 ) -> tuple[list[int], list[tuple[float, float]]]:
@@ -310,10 +330,7 @@ def _plate_row(
     their first object appears in `final`), centred on center_x, with gap_mm between them. Returns the
     object indices in printed order (the whole row repeated per copy) and one (dx, dy) shift for each."""
     by_index = {it.index: it for it in items}
-    plate_order: list[int] = []
-    for idx in final:
-        if plate_of[idx] not in plate_order:
-            plate_order.append(plate_of[idx])
+    plate_order = list(dict.fromkeys(plate_of[idx] for idx in final))
     sequence: list[int] = []
     shifts: list[tuple[float, float]] = []
     cursor = 0.0
@@ -323,14 +340,9 @@ def _plate_row(
             block: Box | None = None
             for idx in members:
                 block = _merge(block, by_index[idx].box)
-            if block is None:
-                dx, dy, depth = 0.0, 0.0, 0.0
-            else:
-                (x0, y0, _), (x1, y1, _) = block
-                dx, dy, depth = center_x - (x0 + x1) / 2, cursor - y0, y1 - y0
-            for idx in members:
-                sequence.append(idx)
-                shifts.append((dx, dy))
+            dx, dy, depth = _block_shift(block, center_x, cursor)
+            sequence.extend(members)
+            shifts.extend([(dx, dy)] * len(members))
             cursor += depth + gap_mm
     return sequence, shifts
 
@@ -371,6 +383,105 @@ def keys_sized_for_fewer_filaments(path: Path, filament_count: int) -> set[str]:
         for k, v in project.items()
         if isinstance(v, list) and (len(v) == saved or k.startswith(("filament_", "flush_volumes_")))
     }
+
+
+def _final_order(items: list[_Item], excluded: set[int], order: list[int] | None) -> list[int]:
+    """Indices of the kept objects in printed order. `order` may be partial or stale."""
+    kept = [it.index for it in items if it.index not in excluded]
+    if not kept:
+        raise ValueError("No objects left to print")
+    if order is None:
+        return kept
+    kept_set = set(kept)
+    wanted = [i for i in order if i in kept_set]
+    wanted_set = set(wanted)
+    return wanted + [i for i in kept if i not in wanted_set]
+
+
+def _group_shifts(
+    items: list[_Item], final: list[int], placement: tuple[float, float], count: int
+) -> list[tuple[float, float]]:
+    """One shift for each of `count` slots that moves the kept objects, as a group, to centre on placement."""
+    group: Box | None = None
+    for it in items:
+        if it.index in set(final):
+            group = _merge(group, it.box)
+    if group is None:
+        return [(0.0, 0.0)] * count
+    dx = placement[0] - (group[0][0] + group[1][0]) / 2
+    dy = placement[1] - (group[0][1] + group[1][1]) / 2
+    return [(dx, dy)] * count
+
+
+def _with_transform(tag: str, matrix: Matrix) -> str:
+    """An <item> tag with its transform attribute set (added when it had none)."""
+    value = _format_matrix(matrix)
+    if _TRANSFORM_RE.search(tag):
+        return _TRANSFORM_RE.sub(f'transform="{value}"', tag, count=1)
+    return tag.replace("<item", f'<item transform="{value}"', 1)
+
+
+def _item_tag(tag: str, item: _Item, shift: tuple[float, float] | None, *, is_copy: bool) -> str:
+    """One <item> of the build, moved by shift, and given a fresh production UUID when it is a copy."""
+    if shift is not None:
+        nm = list(item.transform)
+        nm[9] += shift[0]
+        nm[10] += shift[1]
+        tag = _with_transform(tag, nm)
+    if is_copy:
+        # A copy is its own item, so it needs its own production UUID.
+        tag = _UUID_ATTR.sub(lambda m: f"{m.group(1)}{uuid.uuid4()}{m.group(2)}", tag)
+    return tag
+
+
+def _rewrite_build(
+    model_text: str, items: list[_Item], sequence: list[int], shifts: list[tuple[float, float] | None]
+) -> str:
+    matches = list(_ITEM_RE.finditer(model_text))
+    if len(matches) != len(items):
+        raise ValueError("Unsupported 3MF build layout (items could not be rewritten safely)")
+    by_index = {it.index: it for it in items}
+    tags: list[str] = []
+    seen_copy: dict[int, int] = {}
+    for idx, shift in zip(sequence, shifts, strict=False):
+        k = seen_copy.get(idx, 0)
+        seen_copy[idx] = k + 1
+        tags.append(_item_tag(matches[idx].group(0), by_index[idx], shift, is_copy=k > 0))
+    return model_text[: matches[0].start()] + "".join(tags) + model_text[matches[-1].end() :]
+
+
+def _edited_project_settings(
+    zf: zipfile.ZipFile, bed_area: list[str] | None, bed_height: float | None, drop_keys: set[str] | None
+) -> bytes | None:
+    if not (bed_area or drop_keys):
+        return None
+    try:
+        project = json.loads(zf.read(_PROJECT_SETTINGS)) if _PROJECT_SETTINGS in zf.namelist() else {}
+    except (ValueError, KeyError):
+        project = {}
+    if bed_area:
+        project["printable_area"] = list(bed_area)
+        if bed_height:
+            project["printable_height"] = f"{bed_height:g}"
+    for key in drop_keys or ():
+        project.pop(key, None)
+    return json.dumps(project).encode()
+
+
+def _write_replaced(
+    zf: zipfile.ZipFile, dst: Path, replacements: dict[str, bytes | str | None], *, add_missing: str | None = None
+) -> None:
+    """Copy zf to dst, swapping in the replacement for each named file (None leaves a file as it is)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
+        for info in zf.infolist():
+            replacement = replacements.get(info.filename)
+            if replacement is None:
+                out.writestr(info, zf.read(info.filename))
+            else:
+                out.writestr(info.filename, replacement)
+        if add_missing is not None and replacements.get(add_missing) is not None and add_missing not in zf.namelist():
+            out.writestr(add_missing, replacements[add_missing])  # type: ignore[arg-type]
 
 
 def write_derived_3mf(
@@ -415,101 +526,66 @@ def write_derived_3mf(
     copies = max(1, int(copies))
     with zipfile.ZipFile(src) as zf:
         items = _read_items(zf)
-        kept = [it.index for it in items if it.index not in excluded]
-        if not kept:
-            raise ValueError("No objects left to print")
-        final = kept
-        if order is not None:
-            wanted = [i for i in order if i in set(kept)]
-            final = wanted + [i for i in kept if i not in set(wanted)]
+        final = _final_order(items, excluded, order)
         # One slot per printed object: the whole selection, repeated.
         sequence = [idx for _ in range(copies) for idx in final]
-        plate_of: dict[int, int] = {}
+        shifts: list[tuple[float, float] | None]
         if order is not None:
             _, plates_by_object = _read_settings(zf)
             plate_of = {it.index: plates_by_object.get((it.object_id, it.instance), 1) for it in items}
-        if order is not None and by_plate and len({plate_of[i] for i in final}) > 1:
-            # Several plates: each one goes along the belt as a block, one after the other.
-            sequence, shifts = _plate_row(items, final, plate_of, copies, gap_mm, center_x)
-        elif order is not None:
-            shifts = _row_layout(items, sequence, gap_mm, center_x)
-        elif placement is not None:
-            group: Box | None = None
-            for it in items:
-                if it.index in set(kept):
-                    group = _merge(group, it.box)
-            if group is not None:
-                dx = placement[0] - (group[0][0] + group[1][0]) / 2
-                dy = placement[1] - (group[0][1] + group[1][1]) / 2
-                shifts = [(dx, dy)] * len(sequence)
+            if by_plate and len({plate_of[i] for i in final}) > 1:
+                # Several plates: each one goes along the belt as a block, one after the other.
+                sequence, row_shifts = _plate_row(items, final, plate_of, copies, gap_mm, center_x)
             else:
-                shifts = [(0.0, 0.0)] * len(sequence)
+                row_shifts = _row_layout(items, sequence, gap_mm, center_x)
+            shifts = list(row_shifts)
+        elif placement is not None:
+            shifts = list(_group_shifts(items, final, placement, len(sequence)))
         else:
-            shifts = [None] * len(sequence)  # type: ignore[list-item]
+            shifts = [None] * len(sequence)
 
-        model_text = zf.read(_ROOT_MODEL).decode("utf-8")
-        matches = list(_ITEM_RE.finditer(model_text))
-        if len(matches) != len(items):
-            raise ValueError("Unsupported 3MF build layout (items could not be rewritten safely)")
-        by_index = {it.index: it for it in items}
-        tags: list[str] = []
-        seen_copy: dict[int, int] = {}
-        for idx, shift in zip(sequence, shifts, strict=False):
-            it = by_index[idx]
-            tag = matches[idx].group(0)
-            k = seen_copy.get(idx, 0)
-            seen_copy[idx] = k + 1
-            if shift is not None:
-                nm = list(it.transform)
-                nm[9] += shift[0]
-                nm[10] += shift[1]
-                value = _format_matrix(nm)
-                if _TRANSFORM_RE.search(tag):
-                    tag = _TRANSFORM_RE.sub(f'transform="{value}"', tag, count=1)
-                else:
-                    tag = tag.replace("<item", f'<item transform="{value}"', 1)
-            if k > 0:
-                # A copy is its own item, so it needs its own production UUID.
-                tag = _UUID_ATTR.sub(lambda m: f"{m.group(1)}{uuid.uuid4()}{m.group(2)}", tag)
-            tags.append(tag)
-        new_model = model_text[: matches[0].start()] + "".join(tags) + model_text[matches[-1].end() :]
-
+        new_model = _rewrite_build(zf.read(_ROOT_MODEL).decode("utf-8"), items, sequence, shifts)
         new_settings: bytes | None = None
         if _MODEL_SETTINGS in zf.namelist():
             new_settings = _rewrite_settings(zf.read(_MODEL_SETTINGS), items, sequence, collapse=order is not None)
-
-        project_settings: bytes | None = None
-        if bed_area or drop_project_keys:
-            try:
-                project = json.loads(zf.read(_PROJECT_SETTINGS)) if _PROJECT_SETTINGS in zf.namelist() else {}
-            except (ValueError, KeyError):
-                project = {}
-            if bed_area:
-                project["printable_area"] = list(bed_area)
-                if bed_height:
-                    project["printable_height"] = f"{bed_height:g}"
-            for key in drop_project_keys or ():
-                project.pop(key, None)
-            project_settings = json.dumps(project).encode()
-
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
-            for info in zf.infolist():
-                if info.filename == _ROOT_MODEL:
-                    out.writestr(info.filename, new_model)
-                elif info.filename == _MODEL_SETTINGS and new_settings is not None:
-                    out.writestr(info.filename, new_settings)
-                elif info.filename == _PROJECT_SETTINGS and project_settings is not None:
-                    out.writestr(info.filename, project_settings)
-                else:
-                    out.writestr(info, zf.read(info.filename))
-            if project_settings is not None and _PROJECT_SETTINGS not in zf.namelist():
-                out.writestr(_PROJECT_SETTINGS, project_settings)
+        project_settings = _edited_project_settings(zf, bed_area, bed_height, drop_project_keys)
+        _write_replaced(
+            zf,
+            dst,
+            {_ROOT_MODEL: new_model, _MODEL_SETTINGS: new_settings, _PROJECT_SETTINGS: project_settings},
+            add_missing=_PROJECT_SETTINGS,
+        )
     return final
 
 
 def _instance_fields(inst: ET.Element) -> dict[str, str | None]:
     return {key: m.get("value") for m in inst.findall("metadata") if (key := m.get("key")) is not None}
+
+
+def _detach_instances(
+    plates: list[ET.Element], by_key: dict[tuple[str, int], int]
+) -> dict[int, tuple[ET.Element, ET.Element]]:
+    """Take every model_instance off its plate; returns item index -> (the plate it was on, its element)."""
+    origin: dict[int, tuple[ET.Element, ET.Element]] = {}
+    for plate in plates:
+        counts: dict[str, int] = {}
+        for inst in list(plate.findall("model_instance")):
+            fields = _instance_fields(inst)
+            object_id = fields.get("object_id") or ""
+            k = _instance_number(fields, counts.get(object_id, 0))
+            counts[object_id] = counts.get(object_id, 0) + 1
+            if (object_id, k) in by_key:
+                origin[by_key[(object_id, k)]] = (plate, inst)
+            plate.remove(inst)
+    return origin
+
+
+def _number_instance(clone: ET.Element, n: int) -> None:
+    for meta in clone.findall("metadata"):
+        if meta.get("key") == "instance_id":
+            meta.set("value", str(n))
+            return
+    ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
 
 
 def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, collapse: bool) -> bytes:
@@ -518,23 +594,8 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
     not in it are dropped), numbered by occurrence per object. With collapse,
     every plate is merged into plate 1."""
     root = DET.fromstring(raw)
-    by_key = {(it.object_id, it.instance): it.index for it in items}
     plates = root.findall("plate")
-    # item index -> (the plate it was on, its instance element)
-    origin: dict[int, tuple[ET.Element, ET.Element]] = {}
-    for plate in plates:
-        counts: dict[str, int] = {}
-        for inst in list(plate.findall("model_instance")):
-            fields = _instance_fields(inst)
-            object_id = fields.get("object_id") or ""
-            try:
-                k = int(str(fields["instance_id"])) if "instance_id" in fields else counts.get(object_id, 0)
-            except (TypeError, ValueError):
-                k = counts.get(object_id, 0)
-            counts[object_id] = counts.get(object_id, 0) + 1
-            if (object_id, k) in by_key:
-                origin[by_key[(object_id, k)]] = (plate, inst)
-            plate.remove(inst)
+    origin = _detach_instances(plates, {(it.object_id, it.instance): it.index for it in items})
     if collapse and plates:
         for plate in plates[1:]:
             root.remove(plate)
@@ -551,12 +612,7 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
         object_id = _instance_fields(clone).get("object_id") or ""
         n = numbered.get(object_id, 0)
         numbered[object_id] = n + 1
-        for meta in clone.findall("metadata"):
-            if meta.get("key") == "instance_id":
-                meta.set("value", str(n))
-                break
-        else:
-            ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
+        _number_instance(clone, n)
         cast("ET.Element", target_default if collapse else plate).append(clone)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -585,6 +641,52 @@ class ObjectEdit:
     y: float
 
 
+def _moved_matrix(item: _Item, box: Box, x: float, y: float) -> Matrix:
+    """The item's transform with its footprint centre moved to (x, y); the height is kept."""
+    (x0, y0, _), (x1, y1, _) = box
+    new = list(item.transform)
+    new[9] += x - (x0 + x1) / 2
+    new[10] += y - (y0 + y1) / 2
+    return new
+
+
+def _rotate(rot: list[list[float]], v: Any) -> list[float]:
+    return [sum(rot[i][k] * v[k] for k in range(3)) for i in range(3)]
+
+
+def _extent(points: list[Any]) -> tuple[list[float], list[float]]:
+    """Lowest and highest coordinate on each axis."""
+    return [min(p[a] for p in points) for a in range(3)], [max(p[a] for p in points) for a in range(3)]
+
+
+def _turned_matrix(item: _Item, edit: ObjectEdit, files: _ModelFiles) -> Matrix:
+    """The item's transform after a turn about the centre of its box, dropped onto the plate at (x, y)."""
+    old = item.transform
+    rot = _rotation(*edit.rotation)
+    # Where the object is now (world), then where it would be after the turn about its centre.
+    points = [_apply(old, p) for p in files.local_points(_ROOT_MODEL, item.object_id)]
+    if not points:
+        raise ValueError(f"Object {edit.index} has no geometry")
+    mins, maxs = _extent(points)
+    centre = [(mins[a] + maxs[a]) / 2 for a in range(3)]
+    turned = [_rotate(rot, [p[k] - centre[k] for k in range(3)]) for p in points]
+    t_min, t_max = _extent(turned)
+    shift = (edit.x - (t_min[0] + t_max[0]) / 2, edit.y - (t_min[1] + t_max[1]) / 2, -t_min[2])
+    new: Matrix = []
+    for j in range(3):
+        new += _rotate(rot, old[3 * j : 3 * j + 3])
+    offset = (old[9] - centre[0], old[10] - centre[1], old[11] - centre[2])
+    return new + [r + s for r, s in zip(_rotate(rot, offset), shift, strict=True)]
+
+
+def _edited_matrix(item: _Item, edit: ObjectEdit, files: _ModelFiles) -> Matrix:
+    if item.box is None:
+        raise ValueError(f"Object {edit.index} was not found")
+    if all(abs(a) < 1e-9 for a in edit.rotation):
+        return _moved_matrix(item, item.box, edit.x, edit.y)
+    return _turned_matrix(item, edit, files)
+
+
 def edit_objects_3mf(src: Path, dst: Path, edits: list[ObjectEdit]) -> None:
     """Copy src to dst with some objects turned and moved.
 
@@ -605,54 +707,14 @@ def edit_objects_3mf(src: Path, dst: Path, edits: list[ObjectEdit]) -> None:
         tags: dict[int, str] = {}
         for edit in edits:
             it = by_index.get(edit.index)
-            if it is None or it.box is None:
+            if it is None:
                 raise ValueError(f"Object {edit.index} was not found")
-            old = it.transform
-            if all(abs(a) < 1e-9 for a in edit.rotation):
-                (x0, y0, _), (x1, y1, _) = it.box
-                new = list(old)
-                new[9] += edit.x - (x0 + x1) / 2
-                new[10] += edit.y - (y0 + y1) / 2
-            else:
-                rot = _rotation(*edit.rotation)
-                # Where the object is now (world), then where it would be after the turn about its centre.
-                points = [_apply(old, p) for p in files.local_points(_ROOT_MODEL, it.object_id)]
-                if not points:
-                    raise ValueError(f"Object {edit.index} has no geometry")
-                mins = [min(p[a] for p in points) for a in range(3)]
-                maxs = [max(p[a] for p in points) for a in range(3)]
-                centre = [(mins[a] + maxs[a]) / 2 for a in range(3)]
-                turned = [
-                    tuple(sum(rot[i][k] * (p[k] - centre[k]) for k in range(3)) for i in range(3)) for p in points
-                ]
-                t_min = [min(p[a] for p in turned) for a in range(3)]
-                t_max = [max(p[a] for p in turned) for a in range(3)]
-                shift = (edit.x - (t_min[0] + t_max[0]) / 2, edit.y - (t_min[1] + t_max[1]) / 2, -t_min[2])
-                new = []
-                for j in range(3):
-                    col = (old[3 * j], old[3 * j + 1], old[3 * j + 2])
-                    new += [sum(rot[i][k] * col[k] for k in range(3)) for i in range(3)]
-                offset = (old[9] - centre[0], old[10] - centre[1], old[11] - centre[2])
-                new += [sum(rot[i][k] * offset[k] for k in range(3)) + shift[i] for i in range(3)]
-            tag = matches[edit.index].group(0)
-            value = _format_matrix(new)
-            if _TRANSFORM_RE.search(tag):
-                tag = _TRANSFORM_RE.sub(f'transform="{value}"', tag, count=1)
-            else:
-                tag = tag.replace("<item", f'<item transform="{value}"', 1)
-            tags[edit.index] = tag
-        out_model = []
+            tags[edit.index] = _with_transform(matches[edit.index].group(0), _edited_matrix(it, edit, files))
+        out_model: list[str] = []
         cursor = 0
         for i, match in enumerate(matches):
             out_model.append(model_text[cursor : match.start()])
             out_model.append(tags.get(i, match.group(0)))
             cursor = match.end()
         out_model.append(model_text[cursor:])
-        new_model = "".join(out_model)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
-            for info in zf.infolist():
-                if info.filename == _ROOT_MODEL:
-                    out.writestr(info.filename, new_model)
-                else:
-                    out.writestr(info, zf.read(info.filename))
+        _write_replaced(zf, dst, {_ROOT_MODEL: "".join(out_model)})

@@ -49,49 +49,63 @@ def _read_triangles(path: Path) -> list[tuple[tuple[float, float, float], ...]] 
     return [(coords[i], coords[i + 1], coords[i + 2]) for i in range(0, len(coords), 3)]
 
 
-def analyze_stl(path: Path) -> MeshReport | None:
-    """None when the file cannot be analysed (not a readable STL, too large)."""
-    try:
-        tris = _read_triangles(path)
-    except OSError:
-        return None
-    if not tris:
-        return None
+Vertex = tuple[float, float, float]
+Face = tuple[int, int, int]
 
-    ids: dict[tuple[float, float, float], int] = {}
-    faces: list[tuple[int, int, int]] = []
+
+def _is_degenerate(a: Vertex, b: Vertex, c: Vertex, ia: int, ib: int, ic: int) -> bool:
+    """A triangle with a repeated corner, or whose corners lie on one line."""
+    if ia in (ib, ic) or ib == ic:
+        return True
+    cross_x = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
+    cross_y = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
+    cross_z = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    return cross_x == 0 and cross_y == 0 and cross_z == 0
+
+
+def _tetra_volume(a: Vertex, b: Vertex, c: Vertex) -> float:
+    """Signed volume of the tetrahedron from the origin to a triangle."""
+    return (
+        a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
+    ) / 6.0
+
+
+def _welded_faces(tris) -> tuple[list[Face], int, float, int]:
+    """(faces on shared vertex ids, degenerate triangles dropped, signed volume, vertex count)."""
+    ids: dict[Vertex, int] = {}
+    faces: list[Face] = []
     degenerate = 0
     signed_volume = 0.0
     for a, b, c in tris:
         ia = ids.setdefault(a, len(ids))
         ib = ids.setdefault(b, len(ids))
         ic = ids.setdefault(c, len(ids))
-        cross_x = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
-        cross_y = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
-        cross_z = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-        if ia in (ib, ic) or ib == ic or (cross_x == 0 and cross_y == 0 and cross_z == 0):
+        if _is_degenerate(a, b, c, ia, ib, ic):
             degenerate += 1
             continue
         faces.append((ia, ib, ic))
-        signed_volume += (
-            a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
-        ) / 6.0
+        signed_volume += _tetra_volume(a, b, c)
+    return faces, degenerate, signed_volume, len(ids)
 
-    seen: set[tuple[int, int, int]] = set()
-    unique: list[tuple[int, int, int]] = []
-    duplicate = 0
+
+def _unique_faces(faces: list[Face]) -> tuple[list[Face], int]:
+    """The faces with repeats (the same three corners in any order) dropped, and how many were dropped."""
+    seen: set[Face] = set()
+    unique: list[Face] = []
     for f in faces:
-        key = cast("tuple[int, int, int]", tuple(sorted(f)))
-        if key in seen:
-            duplicate += 1
-        else:
+        key = cast("Face", tuple(sorted(f)))
+        if key not in seen:
             seen.add(key)
             unique.append(f)
+    return unique, len(faces) - len(unique)
 
+
+def _edge_counts(faces: list[Face], vertex_count: int) -> tuple[int, int, int]:
+    """(open edges, edges shared by more than two faces, edges whose two faces disagree on direction)."""
     # edge -> forward uses + 65536 * backward uses (a<b counts as forward)
     edges: dict[int, int] = {}
-    n = len(ids) + 1
-    for a, b, c in unique:
+    n = vertex_count + 1
+    for a, b, c in faces:
         for u, v in ((a, b), (b, c), (c, a)):
             key = (u * n + v) if u < v else (v * n + u)
             edges[key] = edges.get(key, 0) + (1 if u < v else 65536)
@@ -105,14 +119,26 @@ def analyze_stl(path: Path) -> MeshReport | None:
             nonmanifold += 1
         elif forward != backward:
             inconsistent += 1
+    return open_edges, nonmanifold, inconsistent
 
-    inverted = signed_volume < 0 and inconsistent == 0 and open_edges == 0
-    report = MeshReport(
+
+def analyze_stl(path: Path) -> MeshReport | None:
+    """None when the file cannot be analysed (not a readable STL, too large)."""
+    try:
+        tris = _read_triangles(path)
+    except OSError:
+        return None
+    if not tris:
+        return None
+
+    faces, degenerate, signed_volume, vertex_count = _welded_faces(tris)
+    unique, duplicate = _unique_faces(faces)
+    open_edges, nonmanifold, inconsistent = _edge_counts(unique, vertex_count)
+    return MeshReport(
         degenerate_faces=degenerate,
         duplicate_faces=duplicate,
         inconsistent_edges=inconsistent,
-        inverted=inverted,
+        inverted=signed_volume < 0 and inconsistent == 0 and open_edges == 0,
         open_edges=open_edges,
         nonmanifold_edges=nonmanifold,
     )
-    return report

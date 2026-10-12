@@ -167,6 +167,43 @@ _ALIGN_BACKOFF_TRIES = 4
 _ALIGN_BACKOFF_STEP_MM = 1.5
 
 
+def _belt_transform(printer_profile: str, user_id: str | None):
+    """The printer's belt transform, with its bed corner for flipped axes; None for a plain Cartesian printer."""
+    machine = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
+    xs, ys = [], []
+    for point in machine.get("printable_area") or []:
+        px, _, py = str(point).partition("x")
+        xs.append(float(px))
+        ys.append(float(py))
+    return belt_align.parse_belt_transform(machine, (max(xs), max(ys), float(machine.get("printable_height", 0))))
+
+
+def _shift_slope(history: list[tuple[float, float]]) -> float:
+    """How far the start moves per mm of shift. It is not 1: moving the model also changes the support grown
+    under it. Learnt from the last two slices (secant method); the first guess is 1."""
+    if len(history) < 2:
+        return 1.0
+    (s0, y0), (s1, y1) = history[-2], history[-1]
+    if abs(s1 - s0) <= 1e-6:
+        return 1.0
+    return min(5.0, max(0.3, (y1 - y0) / (s1 - s0)))
+
+
+def _slice_with_backoff(slice_args: dict, redo_dir: Path, applied: float, wanted: float):
+    """Slice again with the belt shift `wanted`. The slicer refuses a placement that reaches past the bed's own
+    edge (a model with no support cannot get as close as the support would), so back off a little at a time
+    until one is accepted. Returns (the result or None, the shift it was sliced with)."""
+    for _ in range(_ALIGN_BACKOFF_TRIES):
+        candidate = cli_runner.run_slice(
+            **{**slice_args, "output_dir": redo_dir, "belt_shift_y": wanted, "on_progress": None}
+        )
+        if candidate.succeeded:
+            return candidate, wanted
+        shutil.rmtree(redo_dir, ignore_errors=True)
+        wanted -= math.copysign(min(_ALIGN_BACKOFF_STEP_MM, abs(wanted - applied)), wanted - applied)
+    return None, wanted
+
+
 def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | None, slice_args: dict, result):
     """Belt printers: make the very start of the print (support and brim
     included, not just the model) touch the purge line.
@@ -179,55 +216,26 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
     """
     out_dir = _job_output_dir(job_id)
     try:
-        machine = cli_runner._resolve_profile_detail("machine", request.printer_profile, user_id).data
-        xs, ys = [], []
-        for point in machine.get("printable_area") or []:
-            px, _, py = str(point).partition("x")
-            xs.append(float(px))
-            ys.append(float(py))
-        transform = belt_align.parse_belt_transform(
-            machine, (max(xs), max(ys), float(machine.get("printable_height", 0)))
-        )
+        transform = _belt_transform(request.printer_profile, user_id)
         applied = 0.0  # the belt shift the current gcode was sliced with
         history: list[tuple[float, float]] = []  # (shift, where the print started)
         for attempt in range(_ALIGN_PASSES):
             gcodes = sorted(out_dir.glob("plate_*.gcode"))
-            if transform is None or not gcodes:
-                break
-            measured = belt_align.measure_start(gcodes[0], transform)
+            measured = belt_align.measure_start(gcodes[0], transform) if transform is not None and gcodes else None
             if measured is None:
                 break
             history.append((applied, measured.start_y))
             error = measured.purge_y - measured.start_y
             if abs(error) <= (_ALIGN_TOLERANCE_MM if attempt == 0 else _ALIGN_REFINE_TOLERANCE_MM):
                 break
-            # How far the start moves per mm of shift is not 1: moving the
-            # model also changes the support grown under it. Learn it from the
-            # last two slices (secant method); the first guess is 1.
-            slope = 1.0
-            if len(history) >= 2:
-                (s0, y0), (s1, y1) = history[-2], history[-1]
-                if abs(s1 - s0) > 1e-6:
-                    slope = min(5.0, max(0.3, (y1 - y0) / (s1 - s0)))
-            wanted = applied + error / slope
             store.update_progress(job_id, JobProgress(message="Lining the print up with the purge line…"))
             redo_dir = out_dir / "realigned"
-            redo = None
-            # The slicer refuses a placement that reaches past the bed's own
-            # edge (a model with no support cannot get as close as the support
-            # would); back off a little at a time until one is accepted.
-            for _ in range(_ALIGN_BACKOFF_TRIES):
-                candidate = cli_runner.run_slice(
-                    **{**slice_args, "output_dir": redo_dir, "belt_shift_y": wanted, "on_progress": None}
-                )
-                if candidate.succeeded:
-                    redo = candidate
-                    applied = wanted
-                    break
-                shutil.rmtree(redo_dir, ignore_errors=True)
-                wanted -= math.copysign(min(_ALIGN_BACKOFF_STEP_MM, abs(wanted - applied)), wanted - applied)
+            redo, applied_now = _slice_with_backoff(
+                slice_args, redo_dir, applied, applied + error / _shift_slope(history)
+            )
             if redo is None:
                 break
+            applied = applied_now
             for src in [*redo_dir.glob("plate_*.gcode"), *redo_dir.glob("result.json")]:
                 shutil.move(str(src), out_dir / src.name)
             shutil.rmtree(redo_dir, ignore_errors=True)
@@ -239,74 +247,64 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
         shutil.rmtree(out_dir / "realigned", ignore_errors=True)
 
 
-def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
-    store.set_status(job_id, JobStatus.RUNNING)
-    source_path = model_path
-    try:
-        model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, model_path, request, user_id)
-        slice_args = {
-            "model_path": model_path,
-            "output_dir": _job_output_dir(job_id),
-            "printer_profile": request.printer_profile,
-            "process_profile": request.process_profile,
-            "filament_profiles": request.filament_profiles,
-            "setting_overrides": request.setting_overrides,
-            "plate_index": plate_index,
-            "arrange": arrange,
-            "keep_positions": keep_positions,
-            "user_id": user_id,
-        }
-        result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
-        # The slicer crashed outright (killed by a signal, with no error message of its own) on the copy that had
-        # the per-filament settings sized for fewer filaments removed: a project with painted colours cannot load
-        # without them. Try again with the project's own settings kept; the slicer copes with their count not
-        # matching and, at worst, only fails when it exits, after the G-code is written.
-        if (
-            not result.succeeded
-            and result.return_code < 0
-            and source_path.suffix.lower() == ".3mf"
-            and threemf_objects.keys_sized_for_fewer_filaments(source_path, len(request.filament_profiles))
-        ):
-            model_path, plate_index, arrange, keep_positions = _prepare_model(
-                job_id, source_path, request, user_id, drop_sized=False
-            )
-            slice_args.update(
-                model_path=model_path, plate_index=plate_index, arrange=arrange, keep_positions=keep_positions
-            )
-            shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
-            result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
-        # The file's own layout did not fit this printer's bed: fall back to
-        # having the slicer arrange everything (what every 3mf used to get).
-        if (
-            not result.succeeded
-            and not arrange
-            and not keep_positions
-            and "boundary of the heated bed" in str((result.result_json or {}).get("error_string", ""))
-        ):
-            shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
-            result = cli_runner.run_slice(
-                **{**slice_args, "arrange": True}, on_progress=lambda p: store.update_progress(job_id, p)
-            )
-        # An exact position the user chose is never moved.
-        if result.succeeded and not keep_positions:
-            result = _align_to_purge_line(job_id, request, user_id, slice_args, result)
-    except Exception as exc:
-        store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
-        return
+def _slice_job(job_id: str, source_path: Path, request: JobCreateRequest, user_id: str | None):
+    """Slice the job's model, retrying the ways a slice is known to fail for reasons that can be worked around."""
+    model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, source_path, request, user_id)
+    slice_args = {
+        "model_path": model_path,
+        "output_dir": _job_output_dir(job_id),
+        "printer_profile": request.printer_profile,
+        "process_profile": request.process_profile,
+        "filament_profiles": request.filament_profiles,
+        "setting_overrides": request.setting_overrides,
+        "plate_index": plate_index,
+        "arrange": arrange,
+        "keep_positions": keep_positions,
+        "user_id": user_id,
+    }
 
-    if result.succeeded:
-        if request.preview_image_base64:
-            gcode_thumbnail.embed_preview(_job_output_dir(job_id), request.preview_image_base64)
-        # OrcaSlicer's own result.json never carries this (see
-        # gcode_stats.py) -- folded into the same free-form result blob
-        # rather than a new JobRecord/DB column, same as everything else
-        # here that's "whatever the slice produced."
-        result_json = dict(result.result_json) if result.result_json else {}
-        filament_grams = gcode_stats.total_filament_grams_for_job(_job_output_dir(job_id))
-        if filament_grams is not None:
-            result_json["filament_used_g"] = round(filament_grams, 2)
-        store.finish(job_id, status=JobStatus.SUCCEEDED, result=result_json)
-    else:
+    def progress(p):
+        store.update_progress(job_id, p)
+
+    def slice_again(**changes):
+        shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
+        return cli_runner.run_slice(**{**slice_args, **changes}, on_progress=progress)
+
+    result = cli_runner.run_slice(**slice_args, on_progress=progress)
+    # The slicer crashed outright (killed by a signal, with no error message of its own) on the copy that had
+    # the per-filament settings sized for fewer filaments removed: a project with painted colours cannot load
+    # without them. Try again with the project's own settings kept; the slicer copes with their count not
+    # matching and, at worst, only fails when it exits, after the G-code is written.
+    if (
+        not result.succeeded
+        and result.return_code < 0
+        and source_path.suffix.lower() == ".3mf"
+        and threemf_objects.keys_sized_for_fewer_filaments(source_path, len(request.filament_profiles))
+    ):
+        model_path, plate_index, arrange, keep_positions = _prepare_model(
+            job_id, source_path, request, user_id, drop_sized=False
+        )
+        slice_args.update(
+            model_path=model_path, plate_index=plate_index, arrange=arrange, keep_positions=keep_positions
+        )
+        result = slice_again()
+    # The file's own layout did not fit this printer's bed: fall back to
+    # having the slicer arrange everything (what every 3mf used to get).
+    if (
+        not result.succeeded
+        and not arrange
+        and not keep_positions
+        and "boundary of the heated bed" in str((result.result_json or {}).get("error_string", ""))
+    ):
+        result = slice_again(arrange=True)
+    # An exact position the user chose is never moved.
+    if result.succeeded and not keep_positions:
+        result = _align_to_purge_line(job_id, request, user_id, slice_args, result)
+    return result
+
+
+def _record_outcome(job_id: str, request: JobCreateRequest, result) -> None:
+    if not result.succeeded:
         error = result.result_json.get("error_string") if result.result_json else result.stderr
         store.finish(
             job_id,
@@ -314,6 +312,53 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             result=result.result_json,
             error=error or f"exit code {result.return_code}",
         )
+        return
+    if request.preview_image_base64:
+        gcode_thumbnail.embed_preview(_job_output_dir(job_id), request.preview_image_base64)
+    # OrcaSlicer's own result.json never carries this (see
+    # gcode_stats.py) -- folded into the same free-form result blob
+    # rather than a new JobRecord/DB column, same as everything else
+    # here that's "whatever the slice produced."
+    result_json = dict(result.result_json) if result.result_json else {}
+    filament_grams = gcode_stats.total_filament_grams_for_job(_job_output_dir(job_id))
+    if filament_grams is not None:
+        result_json["filament_used_g"] = round(filament_grams, 2)
+    store.finish(job_id, status=JobStatus.SUCCEEDED, result=result_json)
+
+
+def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
+    store.set_status(job_id, JobStatus.RUNNING)
+    try:
+        result = _slice_job(job_id, model_path, request, user_id)
+    except Exception as exc:
+        store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
+        return
+    _record_outcome(job_id, request, result)
+
+
+def _check_object_selection(request: JobCreateRequest, model_path: Path) -> None:
+    """Refuse a selection of objects that cannot be honoured."""
+    # Any other file type is converted to a .3mf before slicing (see
+    # _prepare_model), so a belt layout or copies work on it; picking objects
+    # does not, because the browser has no object list to pick from.
+    is_3mf = model_path.suffix.lower() == ".3mf"
+    if not (request.excluded_objects or (request.belt_layout and is_3mf)):
+        return
+    if not is_3mf:
+        raise HTTPException(status_code=400, detail="Object selection needs a .3mf")
+    objects = resolve_model_plates(request.model_id).objects
+    excluded = set(request.excluded_objects)
+    if not excluded <= {o.index for o in objects}:
+        raise HTTPException(status_code=400, detail="excluded_objects has an unknown object index")
+    kept = [o for o in objects if o.index not in excluded]
+    if not kept:
+        raise HTTPException(status_code=400, detail="Every object is excluded; nothing to print")
+    if (
+        request.plate_index is not None
+        and not request.belt_layout
+        and not any(o.plate == request.plate_index for o in kept)
+    ):
+        raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
 
 
 @router.post("", response_model=JobRecord)
@@ -337,25 +382,7 @@ def create_job(
 
     if request.placement and request.belt_layout:
         raise HTTPException(status_code=400, detail="placement and belt_layout cannot be combined")
-    # Any other file type is converted to a .3mf before slicing (see
-    # _prepare_model), so a belt layout or copies work on it; picking objects
-    # does not, because the browser has no object list to pick from.
-    if request.excluded_objects or (request.belt_layout and model_path.suffix.lower() == ".3mf"):
-        if model_path.suffix.lower() != ".3mf":
-            raise HTTPException(status_code=400, detail="Object selection needs a .3mf")
-        objects = resolve_model_plates(request.model_id).objects
-        known = {o.index for o in objects}
-        if not set(request.excluded_objects) <= known:
-            raise HTTPException(status_code=400, detail="excluded_objects has an unknown object index")
-        kept = [o for o in objects if o.index not in set(request.excluded_objects)]
-        if not kept:
-            raise HTTPException(status_code=400, detail="Every object is excluded; nothing to print")
-        if (
-            request.plate_index is not None
-            and not request.belt_layout
-            and not any(o.plate == request.plate_index for o in kept)
-        ):
-            raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
+    _check_object_selection(request, model_path)
 
     job = store.create(
         user_id=current.id,

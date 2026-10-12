@@ -76,6 +76,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -137,21 +138,33 @@ def _parse_extruder_indices(root: ET.Element) -> list[int]:
     indices: set[int] = set()
     for object_elem in root.findall("object"):
         try:
-            meta = _metadata_dict(object_elem)
-            raw = meta.get("extruder")
+            raw = _metadata_dict(object_elem).get("extruder")
             if raw is not None:
                 indices.add(int(raw))
         except Exception:
             continue
-        for part_elem in object_elem.findall("part"):
-            try:
-                part_meta = _metadata_dict(part_elem)
-                raw = part_meta.get("extruder")
-                if raw is not None:
-                    indices.add(int(raw))
-            except Exception:
-                continue
+        indices.update(
+            value for part_elem in object_elem.findall("part") if (value := _declared_extruder(part_elem)) is not None
+        )
     return sorted(indices)
+
+
+def _declared_extruder(elem: ET.Element) -> int | None:
+    """The "extruder" metadata of an object or part, or None when it has none or it is not a number."""
+    try:
+        raw = _metadata_dict(elem).get("extruder")
+        return int(raw) if raw is not None else None
+    except Exception:
+        return None
+
+
+def _part_extruder(part_elem: ET.Element, inherited: int | None) -> int | None:
+    """A part's own extruder, else its object's. A part whose own value is unreadable gets none."""
+    try:
+        raw = _metadata_dict(part_elem).get("extruder")
+        return int(raw) if raw is not None else inherited
+    except Exception:
+        return None
 
 
 def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
@@ -174,27 +187,16 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
     result: dict[str, int] = {}
     for object_elem in root.findall("object"):
         obj_id = object_elem.get("id")
-        obj_extruder: int | None = None
-        try:
-            meta = _metadata_dict(object_elem)
-            raw = meta.get("extruder")
-            if raw is not None:
-                obj_extruder = int(raw)
-                if obj_id:
-                    result[obj_id] = obj_extruder
-        except Exception:
-            pass
+        obj_extruder = _declared_extruder(object_elem)
+        if obj_extruder is not None and obj_id:
+            result[obj_id] = obj_extruder
         for part_elem in object_elem.findall("part"):
             part_id = part_elem.get("id")
-            try:
-                part_meta = _metadata_dict(part_elem)
-                raw = part_meta.get("extruder")
-                if part_id and raw is not None:
-                    result[part_id] = int(raw)
-                elif part_id and obj_extruder is not None:
-                    result[part_id] = obj_extruder
-            except Exception:
-                pass
+            if not part_id:
+                continue
+            part_extruder = _part_extruder(part_elem, obj_extruder)
+            if part_extruder is not None:
+                result[part_id] = part_extruder
     return result
 
 
@@ -218,6 +220,57 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
 # bits per node.
 
 
+class _Nibbles:
+    """Reads a paint string four bits at a time, starting from its last character."""
+
+    def __init__(self, hex_str: str):
+        self._bits: list[int] = []
+        for ch in reversed(hex_str):
+            try:
+                value = int(ch, 16)
+            except ValueError:
+                break
+            self._bits.extend((value >> i) & 1 for i in range(4))
+        self._pos = 0
+
+    def next(self) -> int | None:
+        if self._pos + 4 > len(self._bits):
+            return None
+        nibble = 0
+        for i in range(4):
+            nibble |= self._bits[self._pos] << i
+            self._pos += 1
+        return nibble
+
+
+def _leaf_state(code: int, nibbles: _Nibbles) -> int | None:
+    """The state a leaf node holds, reading one or two more nibbles for the larger extruder numbers."""
+    high = code >> 2
+    if high != 0b11:
+        return high
+    nxt = nibbles.next()
+    if nxt is None:
+        return None
+    if nxt != 0b1111:
+        return nxt + 3
+    third = nibbles.next()
+    return None if third is None else third + 18
+
+
+def _decode_node(nibbles: _Nibbles, states: list[int]) -> bool:
+    code = nibbles.next()
+    if code is None:
+        return False
+    num_split_sides = code & 0b11
+    if num_split_sides == 0:
+        state = _leaf_state(code, nibbles)
+        if state is None:
+            return False
+        states.append(state)
+        return True
+    return all(_decode_node(nibbles, states) for _ in range(num_split_sides + 1))
+
+
 def _decode_paint_color_states(hex_str: str) -> list[int]:
     """Every leaf state (0 = NONE/unpainted, 1-32 = Extruder1-32) this
     triangle's paint_color attribute encodes, in whatever order the
@@ -227,54 +280,8 @@ def _decode_paint_color_states(hex_str: str) -> list[int]:
     """
     if not hex_str:
         return []
-    bits: list[int] = []
-    for ch in reversed(hex_str):
-        try:
-            value = int(ch, 16)
-        except ValueError:
-            break
-        bits.extend((value >> i) & 1 for i in range(4))
-
     states: list[int] = []
-    pos = 0
-
-    def next_nibble() -> int | None:
-        nonlocal pos
-        if pos + 4 > len(bits):
-            return None
-        nibble = 0
-        for i in range(4):
-            nibble |= bits[pos] << i
-            pos += 1
-        return nibble
-
-    def decode_node() -> bool:
-        code = next_nibble()
-        if code is None:
-            return False
-        num_split_sides = code & 0b11
-        if num_split_sides == 0:
-            high = code >> 2
-            if high == 0b11:
-                nxt = next_nibble()
-                if nxt is None:
-                    return False
-                if nxt == 0b1111:
-                    third = next_nibble()
-                    if third is None:
-                        return False
-                    states.append(third + 18)
-                else:
-                    states.append(nxt + 3)
-            else:
-                states.append(high)
-        else:
-            for _ in range(num_split_sides + 1):
-                if not decode_node():
-                    return False
-        return True
-
-    decode_node()
+    _decode_node(_Nibbles(hex_str), states)
     return states
 
 
@@ -298,6 +305,29 @@ def _representative_extruder(hex_str: str) -> int | None:
     return max(order, key=lambda s: counts[s])
 
 
+def _model_roots(zf: zipfile.ZipFile) -> Iterator[ET.Element]:
+    """The parsed root of every readable .model file in the archive."""
+    for name in zf.namelist():
+        if not name.lower().endswith(".model"):
+            continue
+        try:
+            yield DET.fromstring(zf.read(name))
+        except (ET.ParseError, KeyError):
+            continue
+
+
+def _painted_triangles(object_elem: ET.Element) -> list[int | None] | None:
+    """One representative extruder per triangle of an object's mesh, or None when no triangle is painted."""
+    triangles_elem = object_elem.find(f"{_tag('mesh')}/{_tag('triangles')}")
+    if triangles_elem is None:
+        return None
+    per_triangle: list[int | None] = []
+    for triangle_elem in triangles_elem.findall(_tag("triangle")):
+        raw = triangle_elem.get("paint_color")
+        per_triangle.append(_representative_extruder(raw) if raw else None)
+    return per_triangle if any(e is not None for e in per_triangle) else None
+
+
 def _parse_triangle_extruders(zf: zipfile.ZipFile) -> dict[str, list[int | None]]:
     """Maps a leaf object's id (same id space as _parse_id_extruders) to
     one representative extruder number per triangle in its <mesh>, in
@@ -310,33 +340,12 @@ def _parse_triangle_extruders(zf: zipfile.ZipFile) -> dict[str, list[int | None]
     as it already does when there's no entry at all.
     """
     result: dict[str, list[int | None]] = {}
-    for name in zf.namelist():
-        if not name.lower().endswith(".model"):
-            continue
-        try:
-            root = DET.fromstring(zf.read(name))
-        except (ET.ParseError, KeyError):
-            continue
+    for root in _model_roots(zf):
         for object_elem in root.iter(_tag("object")):
             obj_id = object_elem.get("id")
-            if not obj_id:
-                continue
-            mesh_elem = object_elem.find(_tag("mesh"))
-            if mesh_elem is None:
-                continue
-            triangles_elem = mesh_elem.find(_tag("triangles"))
-            if triangles_elem is None:
-                continue
-            per_triangle: list[int | None] = []
-            any_painted = False
-            for triangle_elem in triangles_elem.findall(_tag("triangle")):
-                raw = triangle_elem.get("paint_color")
-                extruder = _representative_extruder(raw) if raw else None
-                if extruder is not None:
-                    any_painted = True
-                per_triangle.append(extruder)
-            if any_painted:
-                result[obj_id] = per_triangle
+            painted = _painted_triangles(object_elem) if obj_id else None
+            if obj_id and painted is not None:
+                result[obj_id] = painted
     return result
 
 
@@ -370,33 +379,32 @@ def _parse_object_graph(zf: zipfile.ZipFile) -> tuple[dict[str, list[str] | None
     """
     objects: dict[str, list[str] | None] = {}
     build_item_ids: list[str] = []
-
-    for name in zf.namelist():
-        if not name.lower().endswith(".model"):
-            continue
-        try:
-            root = DET.fromstring(zf.read(name))
-        except (ET.ParseError, KeyError):
-            continue
-
-        for object_elem in root.iter(_tag("object")):
-            obj_id = object_elem.get("id")
-            if not obj_id:
-                continue
-            components_elem = object_elem.find(_tag("components"))
-            if components_elem is not None:
-                child_ids = [c.get("objectid") for c in components_elem.findall(_tag("component")) if c.get("objectid")]
-                objects[obj_id] = child_ids  # type: ignore[assignment]
-            else:
-                objects.setdefault(obj_id, None)
-
-        build_elem = root.find(_tag("build"))
-        if build_elem is not None:
-            item_ids = [item.get("objectid") for item in build_elem.findall(_tag("item")) if item.get("objectid")]
-            if item_ids:
-                build_item_ids = item_ids  # type: ignore[assignment]
-
+    for root in _model_roots(zf):
+        _register_objects(root, objects)
+        build_item_ids = _build_item_ids(root) or build_item_ids
     return objects, build_item_ids
+
+
+def _register_objects(root: ET.Element, objects: dict[str, list[str] | None]) -> None:
+    """Add each object of one .model file: its child ids when it is a composite, None when it is a mesh."""
+    for object_elem in root.iter(_tag("object")):
+        obj_id = object_elem.get("id")
+        if not obj_id:
+            continue
+        components_elem = object_elem.find(_tag("components"))
+        if components_elem is None:
+            objects.setdefault(obj_id, None)
+        else:
+            objects[obj_id] = [
+                child for c in components_elem.findall(_tag("component")) if (child := c.get("objectid"))
+            ]
+
+
+def _build_item_ids(root: ET.Element) -> list[str]:
+    build_elem = root.find(_tag("build"))
+    if build_elem is None:
+        return []
+    return [item_id for item in build_elem.findall(_tag("item")) if (item_id := item.get("objectid"))]
 
 
 _MAX_COMPONENT_DEPTH = 20  # guards against a malformed/cyclic <components> reference chain
