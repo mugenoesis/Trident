@@ -5,6 +5,7 @@ vendor/orcaslicer/src/libslic3r/PrintConfig.cpp. Re-derive that list with
 `grep -n "nocli" src/libslic3r/PrintConfig.cpp` after each upstream merge
 and update both places together.
 """
+
 from __future__ import annotations
 
 PRINTHOST_KEYS = frozenset(
@@ -62,9 +63,7 @@ PRESET_IDENTITY_KEYS = frozenset(
 )
 
 # NOT blocked despite appearing in PrintConfig.cpp as commented-out nocli markers.
-EXPLICITLY_ALLOWED = frozenset(
-    {"filament_settings_id", "print_settings_id", "printer_settings_id"}
-)
+EXPLICITLY_ALLOWED = frozenset({"filament_settings_id", "print_settings_id", "printer_settings_id"})
 
 BLOCKED_SETTINGS = (PRINTHOST_KEYS | PRESET_IDENTITY_KEYS) - EXPLICITLY_ALLOWED
 

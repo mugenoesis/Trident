@@ -12,16 +12,19 @@ them in as the vendor IMPORTED_VENDOR). Nothing here trusts the upload: names
 are checked, sizes capped, and the print-host credential keys are dropped
 (this app keeps its own printer connection settings).
 """
+
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import math
 import re
 import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeGuard
 
 from .blocked_settings import PRINTHOST_KEYS
 from .config import settings
@@ -56,7 +59,7 @@ class ImportIssue:
     reason: str
 
 
-def valid_name(name: object) -> bool:
+def valid_name(name: object) -> TypeGuard[str]:
     """A preset name is shown in the UI and used in file names elsewhere, so
     it must be plain text: no path separators, no control characters."""
     return (
@@ -138,10 +141,14 @@ class UserProfileStore:
 
     @staticmethod
     def _user_dir_name(user_id: str) -> str:
-        return user_id if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", user_id) else hashlib.sha1(user_id.encode()).hexdigest()
+        return (
+            user_id
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", user_id)
+            else hashlib.sha1(user_id.encode(), usedforsecurity=False).hexdigest()
+        )
 
     def _path(self, user_id: str, kind: str, name: str) -> Path:
-        digest = hashlib.sha1(name.encode()).hexdigest()
+        digest = hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest()
         return self._root() / self._user_dir_name(user_id) / kind / f"{digest}.json"
 
     def save(self, user_id: str, preset: ParsedPreset) -> None:
@@ -181,14 +188,34 @@ store = UserProfileStore()
 # inherited from the base and the material behaves exactly like it.
 
 MATERIAL_TYPES = (
-    "PLA", "PLA-CF", "PETG", "PETG-CF", "ABS", "ASA", "PC", "PA", "PA-CF", "PET", "PET-CF",
-    "TPU", "PVA", "HIPS", "PP", "PPS", "PEEK", "Other",
+    "PLA",
+    "PLA-CF",
+    "PETG",
+    "PETG-CF",
+    "ABS",
+    "ASA",
+    "PC",
+    "PA",
+    "PA-CF",
+    "PET",
+    "PET-CF",
+    "TPU",
+    "PVA",
+    "HIPS",
+    "PP",
+    "PPS",
+    "PEEK",
+    "Other",
 )
 
 # Bed temperature keys, one per build plate type (the first-layer twin is kept equal).
 PLATE_TEMP_KEYS = (
-    "cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp",
-    "textured_cool_plate_temp", "supertack_plate_temp",
+    "cool_plate_temp",
+    "eng_plate_temp",
+    "hot_plate_temp",
+    "textured_plate_temp",
+    "textured_cool_plate_temp",
+    "supertack_plate_temp",
 )
 
 # key -> (lowest, highest, whole number?). Every one is a per-extruder list in the preset.
@@ -203,19 +230,33 @@ _MATERIAL_NUMBERS: dict[str, tuple[float, float, bool]] = {
     "filament_diameter": (0.5, 5, False),
     "fan_min_speed": (0, 100, True),
     "fan_max_speed": (0, 100, True),
-    **{k: (0, 200, True) for k in PLATE_TEMP_KEYS},
+    **dict.fromkeys(PLATE_TEMP_KEYS, (0, 200, True)),
 }
 
 
 # Keys the material form sets itself; every other filament key a preset holds is an "advanced" override.
 FILAMENT_MANAGED_KEYS = frozenset(
     {
-        "filament_type", "filament_vendor", "nozzle_temperature", "nozzle_temperature_initial_layer",
-        "nozzle_temperature_range_low", "nozzle_temperature_range_high", "filament_flow_ratio",
-        "filament_max_volumetric_speed", "filament_density", "filament_diameter", "fan_min_speed", "fan_max_speed",
-        "compatible_printers", "compatible_printers_condition",
+        "filament_type",
+        "filament_vendor",
+        "nozzle_temperature",
+        "nozzle_temperature_initial_layer",
+        "nozzle_temperature_range_low",
+        "nozzle_temperature_range_high",
+        "filament_flow_ratio",
+        "filament_max_volumetric_speed",
+        "filament_density",
+        "filament_diameter",
+        "fan_min_speed",
+        "fan_max_speed",
+        "compatible_printers",
+        "compatible_printers_condition",
     }
-    | {k for key in ("cool", "eng", "hot", "textured", "textured_cool", "supertack") for k in (f"{key}_plate_temp", f"{key}_plate_temp_initial_layer")}
+    | {
+        k
+        for key in ("cool", "eng", "hot", "textured", "textured_cool", "supertack")
+        for k in (f"{key}_plate_temp", f"{key}_plate_temp_initial_layer")
+    }
 )
 
 
@@ -224,7 +265,7 @@ class MaterialError(ValueError):
 
 
 def _fmt(value: float, whole: bool) -> str:
-    return str(int(round(value))) if whole else format(value, "g")
+    return str(round(value)) if whole else format(value, "g")
 
 
 def _list_like(base: dict, key: str, text: str) -> list[str]:
@@ -250,14 +291,19 @@ def build_material_overrides(base: dict, form: dict) -> dict:
     out["filament_vendor"] = _list_like(base, "filament_vendor", vendor or "Generic")
 
     labels = {
-        "nozzle_temperature": "Nozzle temperature", "nozzle_temperature_initial_layer": "First layer temperature",
-        "nozzle_temperature_range_low": "Lowest nozzle temperature", "nozzle_temperature_range_high": "Highest nozzle temperature",
-        "filament_flow_ratio": "Flow ratio", "filament_max_volumetric_speed": "Max volumetric speed",
-        "filament_density": "Density", "filament_diameter": "Diameter", "fan_min_speed": "Minimum fan speed",
+        "nozzle_temperature": "Nozzle temperature",
+        "nozzle_temperature_initial_layer": "First layer temperature",
+        "nozzle_temperature_range_low": "Lowest nozzle temperature",
+        "nozzle_temperature_range_high": "Highest nozzle temperature",
+        "filament_flow_ratio": "Flow ratio",
+        "filament_max_volumetric_speed": "Max volumetric speed",
+        "filament_density": "Density",
+        "filament_diameter": "Diameter",
+        "fan_min_speed": "Minimum fan speed",
         "fan_max_speed": "Maximum fan speed",
     }
     values: dict[str, float] = {}
-    for key, (lo, hi, whole) in _MATERIAL_NUMBERS.items():
+    for key, (lo, hi, _whole) in _MATERIAL_NUMBERS.items():
         if key not in form or form[key] is None:
             if key in PLATE_TEMP_KEYS:
                 continue  # plate types the form did not offer keep the base value
@@ -266,7 +312,7 @@ def build_material_overrides(base: dict, form: dict) -> dict:
             number = float(form[key])
         except (TypeError, ValueError):
             raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be a number") from None
-        if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
+        if not math.isfinite(number) or not lo <= number <= hi:
             raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be between {lo:g} and {hi:g}")
         values[key] = number
     if values["nozzle_temperature_range_low"] > values["nozzle_temperature_range_high"]:
@@ -290,7 +336,9 @@ def compatible_printer_names(data: dict) -> list[str]:
     return [str(v) for v in value or [] if str(v).strip()]
 
 
-def build_material_preset(name: str, inherits: str, base: dict, form: dict, existing: dict | None = None) -> ParsedPreset:
+def build_material_preset(
+    name: str, inherits: str, base: dict, form: dict, existing: dict | None = None
+) -> ParsedPreset:
     """The preset to store: the form's overrides over `existing` (when editing,
     so other keys the preset already had are kept) pointing at `inherits`."""
     if not valid_name(name):
@@ -360,11 +408,28 @@ ENDLESS_BELT_LENGTH_MM = 2000.0
 # Keys the form sets itself; every other printer key a preset holds is an "advanced" override.
 PRINTER_MANAGED_KEYS = frozenset(
     {
-        "printable_area", "printable_height", "belt_printer", "belt_printer_infinite_y", "belt_slice_rotation_angle",
-        "nozzle_diameter", "nozzle_type", "gcode_flavor", "machine_start_gcode", "machine_end_gcode",
-        "machine_max_speed_x", "machine_max_speed_y", "machine_max_acceleration_x", "machine_max_acceleration_y",
-        "machine_max_acceleration_extruding", "machine_max_acceleration_travel", "retraction_length",
-        "retraction_speed", "deretraction_speed", "z_hop", "auxiliary_fan", "default_print_profile",
+        "printable_area",
+        "printable_height",
+        "belt_printer",
+        "belt_printer_infinite_y",
+        "belt_slice_rotation_angle",
+        "nozzle_diameter",
+        "nozzle_type",
+        "gcode_flavor",
+        "machine_start_gcode",
+        "machine_end_gcode",
+        "machine_max_speed_x",
+        "machine_max_speed_y",
+        "machine_max_acceleration_x",
+        "machine_max_acceleration_y",
+        "machine_max_acceleration_extruding",
+        "machine_max_acceleration_travel",
+        "retraction_length",
+        "retraction_speed",
+        "deretraction_speed",
+        "z_hop",
+        "auxiliary_fan",
+        "default_print_profile",
         "default_filament_profile",
     }
 )
@@ -404,7 +469,7 @@ def _allowed_values(key: str) -> list[str] | None:
                 if item.get("key") == key:
                     values = item.get("enum_values")
                     break
-        except Exception:  # noqa: BLE001 - validation is best effort
+        except Exception:
             values = None
         _enum_cache[key] = values
     return _enum_cache[key]
@@ -418,7 +483,7 @@ def _number(form: dict, key: str, label: str, lo: float, hi: float) -> float | N
         number = float(value)
     except (TypeError, ValueError):
         raise PrinterError(f"{label} must be a number") from None
-    if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
+    if not math.isfinite(number) or not lo <= number <= hi:
         raise PrinterError(f"{label} must be between {lo:g} and {hi:g}")
     return number
 
@@ -444,7 +509,12 @@ def _area_points(shape: str, x0: float, y0: float, width: float, depth: float) -
             for i in range(48)
         ]
     x1, y1 = x0 + width, y0 + depth
-    return [f"{_fmt(x0, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y1, False)}", f"{_fmt(x0, False)}x{_fmt(y1, False)}"]
+    return [
+        f"{_fmt(x0, False)}x{_fmt(y0, False)}",
+        f"{_fmt(x1, False)}x{_fmt(y0, False)}",
+        f"{_fmt(x1, False)}x{_fmt(y1, False)}",
+        f"{_fmt(x0, False)}x{_fmt(y1, False)}",
+    ]
 
 
 def _encode_extra(base_value: object, text: str) -> object:
@@ -526,7 +596,12 @@ def build_printer_overrides(base: dict, form: dict) -> dict:
             out[key] = _list_like(base, key, _fmt(speed, False))
     accel = _number(form, "max_acceleration", "The maximum acceleration", 1, 200000)
     if accel is not None:
-        for key in ("machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_extruding", "machine_max_acceleration_travel"):
+        for key in (
+            "machine_max_acceleration_x",
+            "machine_max_acceleration_y",
+            "machine_max_acceleration_extruding",
+            "machine_max_acceleration_travel",
+        ):
             out[key] = _list_like(base, key, _fmt(accel, False))
     retract = _number(form, "retraction_length", "The retraction length", 0, 100)
     if retract is not None:

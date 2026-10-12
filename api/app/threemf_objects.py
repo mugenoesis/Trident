@@ -18,17 +18,21 @@ The root model is edited as text, not through ElementTree, because ET rewrites
 namespace prefixes (p: becomes ns0:) and OrcaSlicer's own loader is picky about
 the Production Extension attributes.
 """
+
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
 import re
 import uuid
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from defusedxml import ElementTree as DET
 
 from .schemas import ObjectInfo
 
@@ -102,7 +106,7 @@ class _ModelFiles:
     def root(self, path: str) -> ET.Element:
         path = path.lstrip("/")
         if path not in self._roots:
-            self._roots[path] = ET.fromstring(self._zf.read(path))
+            self._roots[path] = DET.fromstring(self._zf.read(path))
         return self._roots[path]
 
     def _find_object(self, path: str, object_id: str) -> ET.Element | None:
@@ -212,7 +216,7 @@ def _read_settings(zf: zipfile.ZipFile) -> tuple[dict[str, str], dict[tuple[str,
     names: dict[str, str] = {}
     plates: dict[tuple[str, int], int] = {}
     try:
-        root = ET.fromstring(zf.read(_MODEL_SETTINGS))
+        root = DET.fromstring(zf.read(_MODEL_SETTINGS))
     except (KeyError, ET.ParseError):
         return names, plates
     for obj in root.findall("object"):
@@ -224,16 +228,14 @@ def _read_settings(zf: zipfile.ZipFile) -> tuple[dict[str, str], dict[tuple[str,
         index = n
         for meta in plate.findall("metadata"):
             if meta.get("key") == "plater_id":
-                try:
+                with contextlib.suppress(ValueError):
                     index = int(meta.get("value", n))
-                except ValueError:
-                    pass
         counts: dict[str, int] = {}
         for inst in plate.findall("model_instance"):
             fields = {m.get("key"): m.get("value") for m in inst.findall("metadata")}
             object_id = fields.get("object_id") or ""
             try:
-                k = int(fields["instance_id"]) if "instance_id" in fields else counts.get(object_id, 0)
+                k = int(str(fields["instance_id"])) if "instance_id" in fields else counts.get(object_id, 0)
             except (TypeError, ValueError):
                 k = counts.get(object_id, 0)
             counts[object_id] = counts.get(object_id, 0) + 1
@@ -251,12 +253,8 @@ def list_objects(path: Path) -> list[ObjectInfo]:
         return []
     out: list[ObjectInfo] = []
     for it in items:
-        size = (
-            [round(it.box[1][a] - it.box[0][a], 2) for a in range(3)] if it.box else [0.0, 0.0, 0.0]
-        )
-        centre = (
-            [round((it.box[0][a] + it.box[1][a]) / 2, 3) for a in range(2)] if it.box else [0.0, 0.0]
-        )
+        size = [round(it.box[1][a] - it.box[0][a], 2) for a in range(3)] if it.box else [0.0, 0.0, 0.0]
+        centre = [round((it.box[0][a] + it.box[1][a]) / 2, 3) for a in range(2)] if it.box else [0.0, 0.0]
         out.append(
             ObjectInfo(
                 index=it.index,
@@ -285,9 +283,7 @@ def _format_matrix(m: Matrix) -> str:
     return " ".join(parts)
 
 
-def _row_layout(
-    items: list[_Item], sequence: list[int], gap_mm: float, center_x: float
-) -> list[tuple[float, float]]:
+def _row_layout(items: list[_Item], sequence: list[int], gap_mm: float, center_x: float) -> list[tuple[float, float]]:
     """One (dx, dy) per entry of `sequence` (item indices, repeats allowed):
     the objects centred on center_x in X and stacked along Y starting at 0 with
     gap_mm between neighbours."""
@@ -457,7 +453,7 @@ def write_derived_3mf(
         by_index = {it.index: it for it in items}
         tags: list[str] = []
         seen_copy: dict[int, int] = {}
-        for idx, shift in zip(sequence, shifts):
+        for idx, shift in zip(sequence, shifts, strict=False):
             it = by_index[idx]
             tag = matches[idx].group(0)
             k = seen_copy.get(idx, 0)
@@ -512,7 +508,7 @@ def write_derived_3mf(
 
 
 def _instance_fields(inst: ET.Element) -> dict[str, str | None]:
-    return {m.get("key"): m.get("value") for m in inst.findall("metadata")}
+    return {key: m.get("value") for m in inst.findall("metadata") if (key := m.get("key")) is not None}
 
 
 def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, collapse: bool) -> bytes:
@@ -520,7 +516,7 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
     instance per entry of `sequence` (item indices, repeats allowed; objects
     not in it are dropped), numbered by occurrence per object. With collapse,
     every plate is merged into plate 1."""
-    root = ET.fromstring(raw)
+    root = DET.fromstring(raw)
     by_key = {(it.object_id, it.instance): it.index for it in items}
     plates = root.findall("plate")
     # item index -> (the plate it was on, its instance element)
@@ -531,7 +527,7 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
             fields = _instance_fields(inst)
             object_id = fields.get("object_id") or ""
             try:
-                k = int(fields["instance_id"]) if "instance_id" in fields else counts.get(object_id, 0)
+                k = int(str(fields["instance_id"])) if "instance_id" in fields else counts.get(object_id, 0)
             except (TypeError, ValueError):
                 k = counts.get(object_id, 0)
             counts[object_id] = counts.get(object_id, 0) + 1
@@ -560,7 +556,9 @@ def _rewrite_settings(raw: bytes, items: list[_Item], sequence: list[int], *, co
                 break
         else:
             ET.SubElement(clone, "metadata", {"key": "instance_id", "value": str(n)})
-        (target_default if collapse else plate).append(clone)
+        container = target_default if collapse else plate
+        if container is not None:
+            container.append(clone)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -568,11 +566,11 @@ def _rotation(rx: float, ry: float, rz: float) -> list[list[float]]:
     """The 3x3 matrix for turning about X, then Y, then Z (degrees), each about the plate's own axes."""
     ax, ay, az = (math.radians(v) for v in (rx, ry, rz))
     cx, sx, cy, sy, cz, sz = math.cos(ax), math.sin(ax), math.cos(ay), math.sin(ay), math.cos(az), math.sin(az)
-    rot_x = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
-    rot_y = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
-    rot_z = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]]
+    rot_x: list[list[float]] = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
+    rot_y: list[list[float]] = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
+    rot_z: list[list[float]] = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]]
 
-    def mul(a, b):
+    def mul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
         return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
 
     return mul(rot_z, mul(rot_y, rot_x))

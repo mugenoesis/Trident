@@ -192,9 +192,7 @@ def test_paint_on_color_scenario_regression(tmp_path: Path):
       </plate>
     </config>
     """
-    project_settings = json.dumps(
-        {"filament_colour": ["#000000", "#FFFF00"], "default_filament_colour": ["", ""]}
-    )
+    project_settings = json.dumps({"filament_colour": ["#000000", "#FFFF00"], "default_filament_colour": ["", ""]})
     path = _write_3mf(tmp_path, "bee.3mf", model_settings=model_settings, project_settings=project_settings)
     result = inspect_3mf(path)
     assert result.extruder_indices == [1]
@@ -246,9 +244,7 @@ def test_read_project_scalar_settings_missing_file_gives_empty_dict(tmp_path: Pa
 
 
 def test_read_project_scalar_settings_malformed_json_gives_empty_dict(tmp_path: Path):
-    path = _write_3mf(
-        tmp_path, "malformed.3mf", model_settings=None, project_settings="{not valid json"
-    )
+    path = _write_3mf(tmp_path, "malformed.3mf", model_settings=None, project_settings="{not valid json")
     assert read_project_scalar_settings(path) == {}
 
 
@@ -332,9 +328,7 @@ def test_color_tree_for_composite_object_matches_real_orca_badge_shape(tmp_path:
       <plate><metadata key="plater_id" value="1"/></plate>
     </config>
     """
-    project_settings = json.dumps(
-        {"filament_colour": ["#000000", "#111111", "#0000FF", "#FFFF00"]}
-    )
+    project_settings = json.dumps({"filament_colour": ["#000000", "#111111", "#0000FF", "#FFFF00"]})
     path = _write_3mf_with_parts(
         tmp_path,
         "badge.3mf",
@@ -454,9 +448,7 @@ def test_color_tree_empty_without_embedded_filament_colors(tmp_path: Path):
       <plate><metadata key="plater_id" value="1"/></plate>
     </config>
     """
-    path = _write_3mf_with_parts(
-        tmp_path, "no_colors.3mf", root_model=root_model, model_settings=model_settings
-    )
+    path = _write_3mf_with_parts(tmp_path, "no_colors.3mf", root_model=root_model, model_settings=model_settings)
     result = inspect_3mf(path)
     assert result.color_tree == []
 
@@ -481,8 +473,39 @@ _ORCA_TEST_VECTORS = [
 # itself writes for a whole, unsplit object assigned to extruder k, for
 # every k from 1 to 32.
 _CONST_FILAMENTS = [
-    "", "4", "8", "0C", "1C", "2C", "3C", "4C", "5C", "6C", "7C", "8C", "9C", "AC", "BC", "CC", "DC",
-    "EC", "0FC", "1FC", "2FC", "3FC", "4FC", "5FC", "6FC", "7FC", "8FC", "9FC", "AFC", "BFC", "CFC", "DFC", "EFC",
+    "",
+    "4",
+    "8",
+    "0C",
+    "1C",
+    "2C",
+    "3C",
+    "4C",
+    "5C",
+    "6C",
+    "7C",
+    "8C",
+    "9C",
+    "AC",
+    "BC",
+    "CC",
+    "DC",
+    "EC",
+    "0FC",
+    "1FC",
+    "2FC",
+    "3FC",
+    "4FC",
+    "5FC",
+    "6FC",
+    "7FC",
+    "8FC",
+    "9FC",
+    "AFC",
+    "BFC",
+    "CFC",
+    "DFC",
+    "EFC",
 ]
 
 
@@ -649,7 +672,7 @@ def test_color_tree_empty_when_build_section_missing(tmp_path: Path):
     path = _write_3mf_with_parts(
         tmp_path,
         "no_build.3mf",
-        root_model="<resources><object id=\"1\" type=\"model\"><mesh/></object></resources>",
+        root_model='<resources><object id="1" type="model"><mesh/></object></resources>',
         model_settings=model_settings,
         project_settings=project_settings,
     )

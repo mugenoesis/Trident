@@ -6,16 +6,18 @@ printhost_password) are stored as given -- they need to be replayed to the
 printer's own API (send-to-printer), so there's nothing to hash -- but
 never leave via PrinterRecord; callers only ever see has_credentials.
 """
+
 from __future__ import annotations
 
 import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .config import settings
 from .schemas import MaterialProfileRecord, PrinterRecord, SettingsProfileRecord
@@ -24,7 +26,7 @@ _DUPLICATE_SUFFIX_RE = re.compile(r" \(\d+\)$")
 
 
 def _next_duplicate_name(base_name: str, existing_names: set[str]) -> str:
-    """"PLA" -> "PLA (2)", or "PLA (3)" if "(2)" is already taken, etc. --
+    """ "PLA" -> "PLA (2)", or "PLA (3)" if "(2)" is already taken, etc. --
     strips any existing "(N)" suffix first so duplicating a duplicate
     doesn't chain into "PLA (2) (2)"."""
     stripped = _DUPLICATE_SUFFIX_RE.sub("", base_name)
@@ -34,6 +36,7 @@ def _next_duplicate_name(base_name: str, existing_names: set[str]) -> str:
         if candidate not in existing_names:
             return candidate
         n += 1
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS printers (
@@ -91,7 +94,7 @@ CREATE TABLE IF NOT EXISTS settings_profiles (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class PrinterStore:
@@ -115,9 +118,7 @@ class PrinterStore:
                     (json.dumps([row["filament_profile"]]), json.dumps(["#ffffff"]), row["id"]),
                 )
 
-        material_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(material_profiles)")
-        }
+        material_columns = {row["name"] for row in conn.execute("PRAGMA table_info(material_profiles)")}
         if "filament_profiles" not in material_columns:
             conn.execute("ALTER TABLE material_profiles ADD COLUMN filament_profiles TEXT")
             conn.execute("ALTER TABLE material_profiles ADD COLUMN filament_colors TEXT")
@@ -184,9 +185,7 @@ class PrinterStore:
 
     def list_printers(self, user_id: str) -> list[PrinterRecord]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM printers WHERE user_id = ? ORDER BY created_at", (user_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM printers WHERE user_id = ? ORDER BY created_at", (user_id,)).fetchall()
         return [self._row_to_printer(r) for r in rows]
 
     def get_printer(self, printer_id: str) -> PrinterRecord | None:
@@ -264,9 +263,7 @@ class PrinterStore:
             bed_height=row["bed_height"],
             host_type=row["host_type"],
             print_host=row["print_host"],
-            has_credentials=bool(
-                row["printhost_apikey"] or row["printhost_user"] or row["printhost_password"]
-            ),
+            has_credentials=bool(row["printhost_apikey"] or row["printhost_user"] or row["printhost_password"]),
             created_at=row["created_at"],
         )
 
@@ -320,9 +317,7 @@ class PrinterStore:
 
     def get_material(self, material_id: str) -> MaterialProfileRecord | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM material_profiles WHERE id = ?", (material_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM material_profiles WHERE id = ?", (material_id,)).fetchone()
         return self._row_to_material(row) if row else None
 
     def delete_material(self, material_id: str) -> None:
@@ -420,18 +415,14 @@ class PrinterStore:
 
     def get_settings_profile(self, profile_id: str) -> SettingsProfileRecord | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM settings_profiles WHERE id = ?", (profile_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM settings_profiles WHERE id = ?", (profile_id,)).fetchone()
         return self._row_to_settings_profile(row) if row else None
 
     def delete_settings_profile(self, profile_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM settings_profiles WHERE id = ?", (profile_id,))
 
-    _SETTINGS_PROFILE_UPDATABLE_COLUMNS = frozenset(
-        {"name", "quick_settings", "advanced_overrides", "process_profile"}
-    )
+    _SETTINGS_PROFILE_UPDATABLE_COLUMNS = frozenset({"name", "quick_settings", "advanced_overrides", "process_profile"})
 
     def update_settings_profile(self, profile_id: str, **fields: Any) -> SettingsProfileRecord | None:
         updates = {k: v for k, v in fields.items() if k in self._SETTINGS_PROFILE_UPDATABLE_COLUMNS}
@@ -448,9 +439,7 @@ class PrinterStore:
                 )
         return self.get_settings_profile(profile_id)
 
-    def duplicate_settings_profile(
-        self, profile_id: str, *, user_id: str
-    ) -> SettingsProfileRecord | None:
+    def duplicate_settings_profile(self, profile_id: str, *, user_id: str) -> SettingsProfileRecord | None:
         original = self.get_settings_profile(profile_id)
         if original is None:
             return None

@@ -48,8 +48,9 @@ def _machine_bed_area(printer_profile: str, user_id: str | None = None) -> tuple
     must declare them (see threemf_objects.write_derived_3mf)."""
     data = cli_runner._resolve_profile_detail("machine", printer_profile, user_id).data
     area = data.get("printable_area")
+    raw_height = data.get("printable_height")
     try:
-        height = float(data.get("printable_height"))
+        height = float(raw_height) if raw_height is not None else None
     except (TypeError, ValueError):
         height = None
     return ([str(p) for p in area] if isinstance(area, list) and area else None), height
@@ -91,7 +92,9 @@ def _prepare_model(
     copies = request.copies
     try:
         is_belt, center_x = _machine_bed(request.printer_profile, user_id)
-        drop = _leaked_printer_keys(model_path, request.printer_profile, user_id, len(request.filament_profiles), drop_sized)
+        drop = _leaked_printer_keys(
+            model_path, request.printer_profile, user_id, len(request.filament_profiles), drop_sized
+        )
     except ValueError:
         # Unknown profile: run_slice reports it; nothing to decide here.
         is_belt, center_x, drop = False, 0.0, set()
@@ -127,7 +130,13 @@ def _prepare_model(
     if copies > 1:
         # Copies start stacked; the slicer's own arrange spreads them out.
         threemf_objects.write_derived_3mf(
-            source, derived, excluded=excluded, copies=copies, bed_area=bed_area, bed_height=bed_height, drop_project_keys=drop
+            source,
+            derived,
+            excluded=excluded,
+            copies=copies,
+            bed_area=bed_area,
+            bed_height=bed_height,
+            drop_project_keys=drop,
         )
         return derived, request.plate_index, True, False
     if request.placement:
@@ -208,7 +217,9 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
             # edge (a model with no support cannot get as close as the support
             # would); back off a little at a time until one is accepted.
             for _ in range(_ALIGN_BACKOFF_TRIES):
-                candidate = cli_runner.run_slice(**{**slice_args, "output_dir": redo_dir, "belt_shift_y": wanted, "on_progress": None})
+                candidate = cli_runner.run_slice(
+                    **{**slice_args, "output_dir": redo_dir, "belt_shift_y": wanted, "on_progress": None}
+                )
                 if candidate.succeeded:
                     redo = candidate
                     applied = wanted
@@ -222,7 +233,7 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
             shutil.rmtree(redo_dir, ignore_errors=True)
             result = redo
         return result
-    except Exception:  # noqa: BLE001 - alignment is an improvement, never a reason to fail the slice
+    except Exception:
         return result
     finally:
         shutil.rmtree(out_dir / "realigned", ignore_errors=True)
@@ -233,18 +244,18 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
     source_path = model_path
     try:
         model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, model_path, request, user_id)
-        slice_args = dict(
-            model_path=model_path,
-            output_dir=_job_output_dir(job_id),
-            printer_profile=request.printer_profile,
-            process_profile=request.process_profile,
-            filament_profiles=request.filament_profiles,
-            setting_overrides=request.setting_overrides,
-            plate_index=plate_index,
-            arrange=arrange,
-            keep_positions=keep_positions,
-            user_id=user_id,
-        )
+        slice_args = {
+            "model_path": model_path,
+            "output_dir": _job_output_dir(job_id),
+            "printer_profile": request.printer_profile,
+            "process_profile": request.process_profile,
+            "filament_profiles": request.filament_profiles,
+            "setting_overrides": request.setting_overrides,
+            "plate_index": plate_index,
+            "arrange": arrange,
+            "keep_positions": keep_positions,
+            "user_id": user_id,
+        }
         result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
         # The slicer crashed outright (killed by a signal, with no error message of its own) on the copy that had
         # the per-filament settings sized for fewer filaments removed: a project with painted colours cannot load
@@ -259,7 +270,9 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             model_path, plate_index, arrange, keep_positions = _prepare_model(
                 job_id, source_path, request, user_id, drop_sized=False
             )
-            slice_args.update(model_path=model_path, plate_index=plate_index, arrange=arrange, keep_positions=keep_positions)
+            slice_args.update(
+                model_path=model_path, plate_index=plate_index, arrange=arrange, keep_positions=keep_positions
+            )
             shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
             result = cli_runner.run_slice(**slice_args, on_progress=lambda p: store.update_progress(job_id, p))
         # The file's own layout did not fit this printer's bed: fall back to
@@ -271,11 +284,13 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
             and "boundary of the heated bed" in str((result.result_json or {}).get("error_string", ""))
         ):
             shutil.rmtree(_job_output_dir(job_id) / "realigned", ignore_errors=True)
-            result = cli_runner.run_slice(**{**slice_args, "arrange": True}, on_progress=lambda p: store.update_progress(job_id, p))
+            result = cli_runner.run_slice(
+                **{**slice_args, "arrange": True}, on_progress=lambda p: store.update_progress(job_id, p)
+            )
         # An exact position the user chose is never moved.
         if result.succeeded and not keep_positions:
             result = _align_to_purge_line(job_id, request, user_id, slice_args, result)
-    except Exception as exc:  # noqa: BLE001 - report to job record, don't crash the worker
+    except Exception as exc:
         store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
         return
 
@@ -335,9 +350,12 @@ def create_job(
         kept = [o for o in objects if o.index not in set(request.excluded_objects)]
         if not kept:
             raise HTTPException(status_code=400, detail="Every object is excluded; nothing to print")
-        if request.plate_index is not None and not request.belt_layout:
-            if not any(o.plate == request.plate_index for o in kept):
-                raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
+        if (
+            request.plate_index is not None
+            and not request.belt_layout
+            and not any(o.plate == request.plate_index for o in kept)
+        ):
+            raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
 
     job = store.create(
         user_id=current.id,
@@ -410,14 +428,12 @@ def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileRes
     # the Content-Type they were given, appending .txt over the intended
     # .gcode. application/octet-stream is the standard fix -- it doesn't map
     # to any particular extension, so the filename's own .gcode is left alone.
-    return FileResponse(
-        gcode_path, media_type="application/octet-stream", filename=download_name
-    )
+    return FileResponse(gcode_path, media_type="application/octet-stream", filename=download_name)
 
 
 @router.delete("/{job_id}")
 def delete_job(job_id: str, current: User = Depends(require_user)) -> dict[str, bool]:
-    """"I'm finished with this" -- deletes the job's output (gcode/thumbnail)
+    """ "I'm finished with this" -- deletes the job's output (gcode/thumbnail)
     immediately, and the uploaded model too if no other job still points at
     it. Complements the automatic retention sweep (cleanup.py) for anyone
     who wants files gone right away instead of waiting out the retention

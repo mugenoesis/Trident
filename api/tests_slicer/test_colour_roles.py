@@ -1,4 +1,5 @@
 """The app finds the right number of colours in each kind of project, since that is how many filaments it sends."""
+
 from __future__ import annotations
 
 import pytest

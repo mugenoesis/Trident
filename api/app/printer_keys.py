@@ -3,6 +3,7 @@ per-extruder options of PrintConfig.cpp).
 
 Generated from the fork's source; the Advanced tab of the New printer form offers these and no others, so a printer
 cannot be given a print or filament setting by mistake."""
+
 from __future__ import annotations
 
 PRINTER_KEYS: frozenset[str] = frozenset(

@@ -11,6 +11,7 @@ Cached in memory at process startup per docs/ARCHITECTURE.md; call
 `load_catalog()` again (e.g. from a debug/admin route) to pick up changes
 without restarting, if that's ever needed.
 """
+
 from __future__ import annotations
 
 import json
@@ -211,9 +212,9 @@ class ProfileCatalog:
                 kind=d.kind,
                 name=d.name,
                 path=d.path,
-                compatible_printers=userprofiles.compatible_printer_names(d.data)
-                if d.vendor == userprofiles.IMPORTED_VENDOR
-                else [],
+                compatible_printers=(
+                    userprofiles.compatible_printer_names(d.data) if d.vendor == userprofiles.IMPORTED_VENDOR else []
+                ),
             )
             for d in details
         ]
@@ -227,7 +228,11 @@ class ProfileCatalog:
         return list(self._user_details(user_id).values())
 
     def import_for_user(
-        self, user_id: str, presets: list[userprofiles.ParsedPreset], issues: list[userprofiles.ImportIssue], overwrite: bool
+        self,
+        user_id: str,
+        presets: list[userprofiles.ParsedPreset],
+        issues: list[userprofiles.ImportIssue],
+        overwrite: bool,
     ) -> ImportResult:
         """Save parsed presets for a user. A name that a built-in preset
         already uses is refused (as OrcaSlicer does); one the user already
@@ -244,16 +249,23 @@ class ProfileCatalog:
             ref = ImportedProfile(kind=pr.kind, name=pr.name, inherits=pr.data.get("inherits") or None)
             if (pr.kind, pr.name) in builtin_names:
                 result.skipped.append(
-                    ImportIssue(file=pr.name, name=pr.name, reason="A built-in profile already uses this name; rename it and import again")
+                    ImportIssue(
+                        file=pr.name,
+                        name=pr.name,
+                        reason="A built-in profile already uses this name; rename it and import again",
+                    )
                 )
                 continue
             if (pr.kind, pr.name) in existing and not overwrite:
                 result.conflicts.append(ref)
                 continue
             parent = ref.inherits
-            if parent and not any(
-                k == pr.kind and n == parent for (_, k, n) in self._raw_by_key
-            ) and (pr.kind, parent) not in existing and (pr.kind, parent) not in batch_names:
+            if (
+                parent
+                and not any(k == pr.kind and n == parent for (_, k, n) in self._raw_by_key)
+                and (pr.kind, parent) not in existing
+                and (pr.kind, parent) not in batch_names
+            ):
                 ref.warning = f"Based on '{parent}', which was not found, so it is imported on its own and may be missing settings"
             userprofiles.store.save(user_id, pr)
             result.imported.append(ref)

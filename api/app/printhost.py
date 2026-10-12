@@ -8,10 +8,13 @@ credentials never round-trip back through the browser -- OrcaSlicer's CLI
 mode was never involved in uploading to a print host, so this has nothing
 to do with the nocli/blocked_settings machinery.
 """
+
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import httpx
 
@@ -20,14 +23,14 @@ SUPPORTED_HOST_TYPES = frozenset({"moonraker", "octoprint"})
 # printer is a Mapping (sqlite3.Row for a saved printer's stored credentials,
 # or a plain dict from a request body for validating an in-progress edit
 # before it's even saved) -- both support the [] access used here.
-Printer = Mapping[str, Any]
+Printer = Mapping[str, Any] | sqlite3.Row
 
 
 class PrintHostError(Exception):
     """Message is safe to show the user directly."""
 
 
-def _auth_kwargs(printer: Printer) -> dict[str, tuple[str, str]]:
+def _auth_kwargs(printer: Printer) -> dict[str, Any]:
     if printer["printhost_user"] and printer["printhost_password"]:
         return {"auth": (printer["printhost_user"], printer["printhost_password"])}
     return {}
@@ -89,9 +92,7 @@ async def send_gcode(
             await client.aclose()
 
     if response.status_code >= 400:
-        raise PrintHostError(
-            f"Printer host returned {response.status_code}: {response.text[:200]}"
-        )
+        raise PrintHostError(f"Printer host returned {response.status_code}: {response.text[:200]}")
 
 
 async def test_connection(printer: Printer, *, client: httpx.AsyncClient | None = None) -> str:
@@ -113,9 +114,7 @@ async def test_connection(printer: Printer, *, client: httpx.AsyncClient | None 
             await client.aclose()
 
     if response.status_code >= 400:
-        raise PrintHostError(
-            f"Printer host returned {response.status_code}: {response.text[:200]}"
-        )
+        raise PrintHostError(f"Printer host returned {response.status_code}: {response.text[:200]}")
 
     try:
         data = response.json()

@@ -21,7 +21,8 @@ from ..schemas import (
     SwitchToMultiRequest,
     UserCreateRequest,
 )
-from ..userstore import LOCAL_USER_ID, User, store as user_store
+from ..userstore import LOCAL_USER_ID, User
+from ..userstore import store as user_store
 from .models import reassign_all_models_to_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -103,7 +104,8 @@ def switch_to_multi(body: SwitchToMultiRequest, response: Response) -> AuthStatu
     user_store.set_auth_mode("multi")
     _set_session(response, local.id)
     updated = user_store.get_user(local.id)
-    assert updated is not None
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Could not read the saved user back")
     return _status("multi", updated)
 
 
@@ -159,7 +161,8 @@ def update_last_selection(body: LastSelectionRequest, current: User = Depends(re
         settings_profile_id=body.settings_profile_id,
     )
     updated = user_store.get_user(current.id)
-    assert updated is not None
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Could not read the saved user back")
     return _status(user_store.get_auth_mode(), updated)
 
 

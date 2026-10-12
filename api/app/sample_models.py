@@ -27,6 +27,7 @@ badge with a project_settings.config added (real colors, same composite
 structure) -- stored under sample_assets/ (this repo, not the vendored
 OrcaSlicer resources) since it's our own asset, not upstream's.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

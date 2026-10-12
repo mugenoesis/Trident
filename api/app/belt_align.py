@@ -11,8 +11,10 @@ The gcode of a belt printer is not plain Cartesian; the profile's remap and
 shear are undone first (a port of web/src/beltTransform.ts, itself a port of
 OrcaSlicer's own BeltBackTransform).
 """
+
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,9 +25,15 @@ from typing import Any
 _NOT_PRINT_TYPES = {"Custom", "Prime tower", "Wipe tower"}
 
 _REMAP_BY_STRING = {
-    "pos_x": 0, "pos_y": 1, "pos_z": 2,
-    "neg_x": 3, "neg_y": 4, "neg_z": 5,
-    "rev_x": 6, "rev_y": 7, "rev_z": 8,
+    "pos_x": 0,
+    "pos_y": 1,
+    "pos_z": 2,
+    "neg_x": 3,
+    "neg_y": 4,
+    "neg_z": 5,
+    "rev_x": 6,
+    "rev_y": 7,
+    "rev_z": 8,
 }
 
 
@@ -87,10 +95,8 @@ def _args(parts: list[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for p in parts[1:]:
         if p and p[0].isalpha():
-            try:
+            with contextlib.suppress(ValueError):
                 out[p[0].upper()] = float(p[1:])
-            except ValueError:
-                pass
     return out
 
 

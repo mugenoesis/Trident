@@ -11,6 +11,7 @@ Race condition: `cli_callback_mgr_t::start()` opens the FIFO
 has opened it for reading yet. So we must: create the FIFO, start a
 reader thread blocked on open-for-read, *then* spawn the subprocess.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,7 +50,7 @@ def _option_bounds() -> dict[str, tuple[float | None, float | None, str]]:
     cached for the process lifetime -- the binary's option schema can't
     change without a restart.
     """
-    global _option_bounds_cache
+    global _option_bounds_cache  # noqa: PLW0603 - process-lifetime cache, see the docstring
     if _option_bounds_cache is not None:
         return _option_bounds_cache
     bounds: dict[str, tuple[float | None, float | None, str]] = {}
@@ -189,9 +190,9 @@ class SliceResult:
 def _pipe_reader(fifo_path: Path, on_progress: ProgressCallback | None) -> None:
     """Block opening the FIFO for reading, then forward parsed JSON lines."""
     try:
-        with open(fifo_path, "r") as fifo:
-            for line in fifo:
-                line = line.strip()
+        with fifo_path.open() as fifo:
+            for raw_line in fifo:
+                line = raw_line.strip()
                 if not line:
                     continue
                 try:
@@ -327,9 +328,7 @@ def run_slice(
         fifo_path.unlink()
     os.mkfifo(fifo_path)
 
-    reader_thread = threading.Thread(
-        target=_pipe_reader, args=(fifo_path, on_progress), daemon=True
-    )
+    reader_thread = threading.Thread(target=_pipe_reader, args=(fifo_path, on_progress), daemon=True)
     reader_thread.start()
 
     # Written fresh per slice (not cached alongside the catalog) since
@@ -442,8 +441,8 @@ def run_slice(
         stdout, stderr = proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
         return_code = -1
-        stdout = exc.stdout or ""
-        stderr = (exc.stderr or "") + "\n[cli_runner] timed out and was killed"
+        stdout = _as_text(exc.stdout)
+        stderr = _as_text(exc.stderr) + "\n[cli_runner] timed out and was killed"
     finally:
         reader_thread.join(timeout=2.0)
         fifo_path.unlink(missing_ok=True)
@@ -490,3 +489,10 @@ def fetch_help_json() -> list[dict[str, Any]] | None:
     except json.JSONDecodeError:
         logger.warning("--help-json produced non-JSON output")
         return None
+
+
+def _as_text(value: str | bytes | None) -> str:
+    """Output captured before a timeout: subprocess hands it back as bytes even in text mode."""
+    if value is None:
+        return ""
+    return value.decode(errors="replace") if isinstance(value, bytes) else value

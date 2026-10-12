@@ -34,7 +34,9 @@ class MeshReport(BaseModel):
         if self.duplicate_faces:
             out.append(f"{self.duplicate_faces} duplicate {'face' if self.duplicate_faces == 1 else 'faces'} removed")
         if self.degenerate_faces:
-            out.append(f"{self.degenerate_faces} degenerate {'face' if self.degenerate_faces == 1 else 'faces'} removed")
+            out.append(
+                f"{self.degenerate_faces} degenerate {'face' if self.degenerate_faces == 1 else 'faces'} removed"
+            )
         if self.inconsistent_edges:
             out.append("flipped faces corrected")
         if self.inverted:
@@ -257,7 +259,7 @@ class ColorNode(BaseModel):
     # whichever color the user actually assigned that role to, once they've
     # picked a nozzle for it, without needing a second round-trip.
     extruder: int | None = None
-    children: list["ColorNode"] = Field(default_factory=list)
+    children: list[ColorNode] = Field(default_factory=list)
     # One entry per triangle in this leaf's own mesh, same order as its
     # <triangle> elements (and so the loaded 3D geometry's face order) --
     # only present (non-None) on a leaf with real per-triangle paint
@@ -530,13 +532,18 @@ class TransformStep(BaseModel):
     normal: list[float] | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "TransformStep":
+    def _check(self) -> TransformStep:
         if self.op.startswith("rotate_"):
             if self.degrees is None or not math.isfinite(self.degrees) or abs(self.degrees) > 360:
                 raise ValueError("A rotation needs an angle between -360 and 360 degrees")
         elif self.op == "face_normal":
             n = self.normal
-            if n is None or len(n) != 3 or not all(math.isfinite(v) for v in n) or math.sqrt(sum(v * v for v in n)) < 1e-6:
+            if (
+                n is None
+                or len(n) != 3
+                or not all(math.isfinite(v) for v in n)
+                or math.sqrt(sum(v * v for v in n)) < 1e-6
+            ):
                 raise ValueError("face_normal needs a direction of three numbers")
         return self
 

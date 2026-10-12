@@ -6,17 +6,17 @@ from app import printhost
 
 
 def _printer_body(**overrides):
-    body = dict(
-        name="Living room A1",
-        vendor="BBL",
-        machine_profile="Bambu Lab A1 0.4 nozzle",
-        process_profile="0.20mm Standard @BBL A1",
-        filament_profiles=["Bambu PLA Basic @BBL A1"],
-        filament_colors=["#ffffff"],
-        bed_width=256.0,
-        bed_depth=256.0,
-        bed_height=256.0,
-    )
+    body = {
+        "name": "Living room A1",
+        "vendor": "BBL",
+        "machine_profile": "Bambu Lab A1 0.4 nozzle",
+        "process_profile": "0.20mm Standard @BBL A1",
+        "filament_profiles": ["Bambu PLA Basic @BBL A1"],
+        "filament_colors": ["#ffffff"],
+        "bed_width": 256.0,
+        "bed_depth": 256.0,
+        "bed_height": 256.0,
+    }
     body.update(overrides)
     return body
 
@@ -81,7 +81,7 @@ def test_material_profile_crud(client):
 
 
 def _material_body(**overrides):
-    body = dict(name="PLA", filament_profiles=["Generic PLA"], filament_colors=["#ffffff"])
+    body = {"name": "PLA", "filament_profiles": ["Generic PLA"], "filament_colors": ["#ffffff"]}
     body.update(overrides)
     return body
 
@@ -140,7 +140,7 @@ def test_material_actions_404_for_another_users_printer(client):
 
 
 def _settings_profile_body(**overrides):
-    body = dict(name="Standard", quick_settings={"layer_height": "0.2"}, advanced_overrides={})
+    body = {"name": "Standard", "quick_settings": {"layer_height": "0.2"}, "advanced_overrides": {}}
     body.update(overrides)
     return body
 
@@ -162,9 +162,7 @@ def test_settings_profile_crud(client):
 
 def test_rename_settings_profile(client):
     printer_id = client.post("/printers", json=_printer_body()).json()["id"]
-    profile_id = client.post(
-        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
-    ).json()["id"]
+    profile_id = client.post(f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()).json()["id"]
 
     resp = client.put(f"/printers/{printer_id}/settings-profiles/{profile_id}", json={"name": "Standard v2"})
     assert resp.status_code == 200
@@ -175,9 +173,7 @@ def test_rename_settings_profile(client):
 
 def test_update_mode_overwrites_settings_profile(client):
     printer_id = client.post("/printers", json=_printer_body()).json()["id"]
-    profile_id = client.post(
-        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
-    ).json()["id"]
+    profile_id = client.post(f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()).json()["id"]
 
     resp = client.put(
         f"/printers/{printer_id}/settings-profiles/{profile_id}",
@@ -192,9 +188,7 @@ def test_update_mode_overwrites_settings_profile(client):
 
 def test_duplicate_settings_profile(client):
     printer_id = client.post("/printers", json=_printer_body()).json()["id"]
-    profile_id = client.post(
-        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
-    ).json()["id"]
+    profile_id = client.post(f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()).json()["id"]
 
     resp = client.post(f"/printers/{printer_id}/settings-profiles/{profile_id}/duplicate")
     assert resp.status_code == 200
@@ -210,21 +204,14 @@ def test_duplicate_settings_profile(client):
 def test_settings_profile_actions_404_for_another_users_printer(client):
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
     printer_id = client.post("/printers", json=_printer_body()).json()["id"]
-    profile_id = client.post(
-        f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()
-    ).json()["id"]
+    profile_id = client.post(f"/printers/{printer_id}/settings-profiles", json=_settings_profile_body()).json()["id"]
 
     client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
     client.post("/auth/logout")
     client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
 
-    assert (
-        client.put(f"/printers/{printer_id}/settings-profiles/{profile_id}", json={"name": "x"}).status_code
-        == 404
-    )
-    assert (
-        client.post(f"/printers/{printer_id}/settings-profiles/{profile_id}/duplicate").status_code == 404
-    )
+    assert client.put(f"/printers/{printer_id}/settings-profiles/{profile_id}", json={"name": "x"}).status_code == 404
+    assert client.post(f"/printers/{printer_id}/settings-profiles/{profile_id}/duplicate").status_code == 404
     assert client.get(f"/printers/{printer_id}/settings-profiles").status_code == 404
 
 
@@ -360,17 +347,11 @@ def _sliced_job(client, monkeypatch) -> str:
         output_dir = kwargs["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "plate_1.gcode").write_text("; fake\n")
-        return SliceResult(
-            return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True
-        )
+        return SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
 
     monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
-    model_id = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake"), "model/stl")}
-    ).json()["model_id"]
-    job_resp = client.post(
-        "/jobs", json={"model_id": model_id, "printer_profile": "p", "process_profile": "q"}
-    )
+    model_id = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake"), "model/stl")}).json()["model_id"]
+    job_resp = client.post("/jobs", json={"model_id": model_id, "printer_profile": "p", "process_profile": "q"})
     return job_resp.json()["id"]
 
 

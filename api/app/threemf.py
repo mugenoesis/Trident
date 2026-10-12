@@ -71,12 +71,15 @@ regardless of what the preview shows (see cli_runner.py/OrcaSlicer's own
 --remap-filament-extruder patch, which operates on the real engine-side
 paint data, not this approximation).
 """
+
 from __future__ import annotations
 
 import json
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+from defusedxml import ElementTree as DET
 
 from .schemas import ColorNode, PlateInfo, ThreeMfInspection
 
@@ -125,7 +128,7 @@ def _parse_plates(root: ET.Element) -> list[PlateInfo]:
                     thumbnail=meta.get("thumbnail_file") or None,
                 )
             )
-        except Exception:  # noqa: BLE001 - one malformed <plate> shouldn't blank out the rest
+        except Exception:
             continue
     return plates
 
@@ -138,7 +141,7 @@ def _parse_extruder_indices(root: ET.Element) -> list[int]:
             raw = meta.get("extruder")
             if raw is not None:
                 indices.add(int(raw))
-        except Exception:  # noqa: BLE001 - skip this object's metadata, keep going
+        except Exception:
             continue
         for part_elem in object_elem.findall("part"):
             try:
@@ -146,7 +149,7 @@ def _parse_extruder_indices(root: ET.Element) -> list[int]:
                 raw = part_meta.get("extruder")
                 if raw is not None:
                     indices.add(int(raw))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
     return sorted(indices)
 
@@ -179,7 +182,7 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
                 obj_extruder = int(raw)
                 if obj_id:
                     result[obj_id] = obj_extruder
-        except Exception:  # noqa: BLE001 - skip this object's metadata, keep going
+        except Exception:
             pass
         for part_elem in object_elem.findall("part"):
             part_id = part_elem.get("id")
@@ -190,7 +193,7 @@ def _parse_id_extruders(root: ET.Element) -> dict[str, int]:
                     result[part_id] = int(raw)
                 elif part_id and obj_extruder is not None:
                     result[part_id] = obj_extruder
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
     return result
 
@@ -311,7 +314,7 @@ def _parse_triangle_extruders(zf: zipfile.ZipFile) -> dict[str, list[int | None]
         if not name.lower().endswith(".model"):
             continue
         try:
-            root = ET.fromstring(zf.read(name))
+            root = DET.fromstring(zf.read(name))
         except (ET.ParseError, KeyError):
             continue
         for object_elem in root.iter(_tag("object")):
@@ -343,7 +346,7 @@ def _parse_model_settings(zf: zipfile.ZipFile) -> tuple[list[PlateInfo], list[in
     except KeyError:
         return [], [], {}
     try:
-        root = ET.fromstring(raw)
+        root = DET.fromstring(raw)
     except ET.ParseError:
         return [], [], {}
     return _parse_plates(root), _parse_extruder_indices(root), _parse_id_extruders(root)
@@ -372,7 +375,7 @@ def _parse_object_graph(zf: zipfile.ZipFile) -> tuple[dict[str, list[str] | None
         if not name.lower().endswith(".model"):
             continue
         try:
-            root = ET.fromstring(zf.read(name))
+            root = DET.fromstring(zf.read(name))
         except (ET.ParseError, KeyError):
             continue
 
@@ -382,11 +385,7 @@ def _parse_object_graph(zf: zipfile.ZipFile) -> tuple[dict[str, list[str] | None
                 continue
             components_elem = object_elem.find(_tag("components"))
             if components_elem is not None:
-                child_ids = [
-                    c.get("objectid")
-                    for c in components_elem.findall(_tag("component"))
-                    if c.get("objectid")
-                ]
+                child_ids = [c.get("objectid") for c in components_elem.findall(_tag("component")) if c.get("objectid")]
                 objects[obj_id] = child_ids  # type: ignore[assignment]
             else:
                 objects.setdefault(obj_id, None)
@@ -424,9 +423,7 @@ def _build_color_node(
     if children_ids:
         return ColorNode(
             children=[
-                _build_color_node(
-                    child_id, objects, id_extruders, filament_colors, triangle_extruders_by_id, depth + 1
-                )
+                _build_color_node(child_id, objects, id_extruders, filament_colors, triangle_extruders_by_id, depth + 1)
                 for child_id in children_ids
             ]
         )
@@ -547,11 +544,11 @@ def inspect_3mf(path: Path) -> ThreeMfInspection:
             embedded_filament_colors, embedded_filament_names = _parse_embedded_filament_info(zf)
             try:
                 triangle_extruders_by_id = _parse_triangle_extruders(zf)
-            except Exception:  # noqa: BLE001 - never let a malformed paint attribute break the rest of the inspection
+            except Exception:
                 triangle_extruders_by_id = {}
             try:
                 color_tree = _parse_color_tree(zf, id_extruders, embedded_filament_colors, triangle_extruders_by_id)
-            except Exception:  # noqa: BLE001 - the object-graph walk is the riskiest part of this module; never let it break the rest of the inspection
+            except Exception:
                 color_tree = []
     except (OSError, zipfile.BadZipFile):
         return _SINGLE_IMPLICIT_PLATE

@@ -43,9 +43,7 @@ def create_printer(body: PrinterCreateRequest, current: User = Depends(require_u
 
 
 @router.post("/test-connection")
-async def test_connection_ad_hoc(
-    body: TestConnectionRequest, current: User = Depends(require_user)  # noqa: ARG001 - auth gate only
-) -> dict[str, str]:
+async def test_connection_ad_hoc(body: TestConnectionRequest, current: User = Depends(require_user)) -> dict[str, str]:
     """Validates connection fields before a printer is even saved (the
     create-printer form's Test connection button) -- for an already-saved
     printer, POST /printers/{id}/test-connection uses its stored
@@ -58,9 +56,7 @@ async def test_connection_ad_hoc(
 
 
 @router.put("/{printer_id}", response_model=PrinterRecord)
-def update_printer(
-    printer_id: str, body: PrinterUpdateRequest, current: User = Depends(require_user)
-) -> PrinterRecord:
+def update_printer(printer_id: str, body: PrinterUpdateRequest, current: User = Depends(require_user)) -> PrinterRecord:
     _get_owned_printer(printer_id, current)
     # exclude_unset, not exclude_none: an empty string ("clear this field")
     # is a real, intentional value here, distinct from the field being left
@@ -126,18 +122,14 @@ def duplicate_material(
 
 
 @router.delete("/{printer_id}/materials/{material_id}")
-def delete_material(
-    printer_id: str, material_id: str, current: User = Depends(require_user)
-) -> dict[str, bool]:
+def delete_material(printer_id: str, material_id: str, current: User = Depends(require_user)) -> dict[str, bool]:
     _get_owned_material(printer_id, material_id, current)
     store.delete_material(material_id)
     return {"ok": True}
 
 
 @router.get("/{printer_id}/settings-profiles", response_model=list[SettingsProfileRecord])
-def list_settings_profiles(
-    printer_id: str, current: User = Depends(require_user)
-) -> list[SettingsProfileRecord]:
+def list_settings_profiles(printer_id: str, current: User = Depends(require_user)) -> list[SettingsProfileRecord]:
     _get_owned_printer(printer_id, current)
     return store.list_settings_profiles(printer_id)
 
@@ -185,18 +177,14 @@ def duplicate_settings_profile(
 
 
 @router.delete("/{printer_id}/settings-profiles/{profile_id}")
-def delete_settings_profile(
-    printer_id: str, profile_id: str, current: User = Depends(require_user)
-) -> dict[str, bool]:
+def delete_settings_profile(printer_id: str, profile_id: str, current: User = Depends(require_user)) -> dict[str, bool]:
     _get_owned_settings_profile(printer_id, profile_id, current)
     store.delete_settings_profile(profile_id)
     return {"ok": True}
 
 
 @router.post("/{printer_id}/test-connection")
-async def test_printer_connection(
-    printer_id: str, current: User = Depends(require_user)
-) -> dict[str, str]:
+async def test_printer_connection(printer_id: str, current: User = Depends(require_user)) -> dict[str, str]:
     """Cheap read-only ping against the printer's *stored* connection
     details -- edit-and-save first if you want to test a credential you
     just typed in."""

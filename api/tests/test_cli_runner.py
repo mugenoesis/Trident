@@ -363,7 +363,16 @@ def test_every_filament_may_print_on_every_extruder():
     assert cli_runner._filament_map_overrides(four, 3, {})["filament_printable"] == "15,15,15"
     assert cli_runner._filament_map_overrides(two, 2, {}) == {"filament_printable": "3,3"}
     # the job's own nozzle list counts, a caller-supplied value wins, and one extruder or one filament needs none
-    assert cli_runner._filament_map_overrides({}, 2, {"nozzle_diameter": "0.4,0.4,0.4"}) == {"filament_printable": "7,7"}
+    assert cli_runner._filament_map_overrides({}, 2, {"nozzle_diameter": "0.4,0.4,0.4"}) == {
+        "filament_printable": "7,7"
+    }
     assert "filament_printable" not in cli_runner._filament_map_overrides(four, 3, {"filament_printable": "1,1,1"})
     assert "filament_printable" not in cli_runner._filament_map_overrides({"nozzle_diameter": ["0.4"]}, 3, {})
     assert "filament_printable" not in cli_runner._filament_map_overrides(four, 1, {})
+
+
+def test_as_text_decodes_output_captured_before_a_timeout():
+    # subprocess reports partial output as bytes on a timeout even when text mode was asked for.
+    assert cli_runner._as_text(b"partial \xff output") == "partial � output"
+    assert cli_runner._as_text("already text") == "already text"
+    assert cli_runner._as_text(None) == ""

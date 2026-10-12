@@ -86,12 +86,20 @@ def test_get_missing_returns_none(tmp_path: Path):
 def test_list_orders_newest_first(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     first = db.create(
-        user_id="local", model_id="a", printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id="a",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     second = db.create(
-        user_id="local", model_id="b", printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id="b",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     ids = [j.id for j in db.list("local")]
     assert ids[0] == second.id or ids[0] == first.id  # timestamps may tie; both present
@@ -101,12 +109,20 @@ def test_list_orders_newest_first(tmp_path: Path):
 def test_list_scoped_to_user(tmp_path: Path):
     db = JobStore(tmp_path / "jobs.sqlite3")
     mine = db.create(
-        user_id="alice", model_id="a", printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="alice",
+        model_id="a",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     db.create(
-        user_id="bob", model_id="b", printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="bob",
+        model_id="b",
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     ids = [j.id for j in db.list("alice")]
     assert ids == [mine.id]

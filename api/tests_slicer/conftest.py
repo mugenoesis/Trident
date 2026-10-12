@@ -7,6 +7,7 @@ missing. Run them in the container image:
         'cp -r /src /work && cd /work && /opt/api/.venv/bin/python -m pip install -q pytest && \
          /opt/api/.venv/bin/python -m pytest tests_slicer -v'
 """
+
 from __future__ import annotations
 
 import os
@@ -57,24 +58,24 @@ def projects(client):
 
     style is "painted" (triangles painted in every colour) or "objects" (one object per colour, each on its own extruder).
     """
-    from app.config import settings
-
     from project_fixtures import make_project
+
+    from app.config import settings
 
     made: dict[tuple, Path] = {}
     folder = Path(tempfile.mkdtemp(prefix="slicer-projects-"))
 
     authors = {
-        "x1c": dict(
-            authoring_printer="Bambu Lab X1 Carbon 0.4 nozzle",
-            authoring_process="0.20mm Standard @BBL X1C",
-            authoring_filament="Bambu PLA Basic @BBL X1C",
-        ),
-        "u1": dict(
-            authoring_printer="Snapmaker U1 (0.4 nozzle)",
-            authoring_process="0.20 Standard @Snapmaker U1 (0.4 nozzle)",
-            authoring_filament="Snapmaker PLA Basic @U1",
-        ),
+        "x1c": {
+            "authoring_printer": "Bambu Lab X1 Carbon 0.4 nozzle",
+            "authoring_process": "0.20mm Standard @BBL X1C",
+            "authoring_filament": "Bambu PLA Basic @BBL X1C",
+        },
+        "u1": {
+            "authoring_printer": "Snapmaker U1 (0.4 nozzle)",
+            "authoring_process": "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+            "authoring_filament": "Snapmaker PLA Basic @U1",
+        },
     }
 
     def make(colours: int, authored_on: str = "x1c", style: str = "painted") -> Path:
@@ -98,12 +99,24 @@ def projects(client):
 def slice_project(client):
     """slice_project(path, printer, ...) -> (job status, error, G-code written): the job runs the way the app starts it."""
     from app import profiles
-    from app.config import settings
 
-    def run(path: Path, *, printer: str, process: str | None, material: str, profiles_count: int, nozzles: int, remap: str = "", colours: int = 1):
+    def run(
+        path: Path,
+        *,
+        printer: str,
+        process: str | None,
+        material: str,
+        profiles_count: int,
+        nozzles: int,
+        remap: str = "",
+        colours: int = 1,
+    ):
         if process is None:
             process = profiles.catalog.get_by_name("machine", printer, None).data.get("default_print_profile")
-        overrides = {"nozzle_diameter": ",".join(["0.4"] * nozzles), "nozzle_type": ",".join(["hardened_steel"] * nozzles)}
+        overrides = {
+            "nozzle_diameter": ",".join(["0.4"] * nozzles),
+            "nozzle_type": ",".join(["hardened_steel"] * nozzles),
+        }
         if colours > 1:
             overrides["enable_prime_tower"] = "1"  # the app turns it on once there is more than one filament
         if remap:

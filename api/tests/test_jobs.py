@@ -8,9 +8,7 @@ from app.config import settings
 
 
 def _upload_model(client) -> str:
-    resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    )
+    resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")})
     assert resp.status_code == 200
     return resp.json()["model_id"]
 
@@ -273,8 +271,9 @@ def test_exclusion_rejected_for_non_3mf(client):
 
 
 def test_belt_layout_and_copies_are_accepted_for_non_3mf(client, monkeypatch, tmp_path):
-    from app.routers import jobs as jobs_router
     from test_threemf_objects import _write_project
+
+    from app.routers import jobs as jobs_router
 
     model_id = _upload_model(client)
     captured = _capture_slice(monkeypatch)
@@ -287,7 +286,9 @@ def test_belt_layout_and_copies_are_accepted_for_non_3mf(client, monkeypatch, tm
 
     monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0)
+    )
     resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [], "gap_mm": 10}, copies=2))
     assert resp.status_code == 200 and captured["plate_index"] == 1
 
@@ -318,7 +319,9 @@ def test_exclusion_slices_a_derived_copy_keeping_the_file_layout(client, tmp_pat
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0)
+    )
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1], plate_index=1))
     assert resp.status_code == 200
@@ -335,7 +338,9 @@ def test_belt_layout_slices_one_plate_without_rearranging(client, tmp_path, monk
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0)
+    )
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
     resp = client.post(
         "/jobs",
@@ -355,7 +360,9 @@ def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
     captured = _capture_slice(monkeypatch)
     from app.routers import jobs as jobs_router
 
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0)
+    )
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
     resp = client.post("/jobs", json=_job(model_id, belt_layout={"order": [0, 1, 2, 3]}, plate_index=2))
     assert resp.status_code == 200
@@ -364,9 +371,10 @@ def test_belt_layout_ignored_on_non_belt_printer(client, tmp_path, monkeypatch):
 
 
 def test_placement_converts_an_stl_and_keeps_positions(client, tmp_path, monkeypatch):
+    from test_threemf_objects import _write_project
+
     from app.routers import jobs as jobs_router
     from app.threemf_objects import list_objects
-    from test_threemf_objects import _write_project
 
     model_id = _upload_model(client)  # a plain "stl"
     captured = _capture_slice(monkeypatch)
@@ -379,7 +387,9 @@ def test_placement_converts_an_stl_and_keeps_positions(client, tmp_path, monkeyp
 
     monkeypatch.setattr(cli_runner, "convert_model", fake_convert)
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0)
+    )
     resp = client.post("/jobs", json=_job(model_id, placement={"x": 60, "y": 70}))
     assert resp.status_code == 200
     assert captured["arrange"] is False and captured["keep_positions"] is True and captured["plate_index"] == 1
@@ -477,7 +487,9 @@ def test_copies_on_a_belt_printer_become_a_row(client, tmp_path, monkeypatch):
     model_id = _upload_project(client, tmp_path)
     captured = _capture_slice(monkeypatch)
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (True, 125.0))
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x2000", "0x2000"], 250.0)
+    )
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1, 2, 3], copies=4))
     assert resp.status_code == 200
     assert captured["plate_index"] == 1 and captured["arrange"] is False
@@ -491,7 +503,9 @@ def test_copies_on_a_normal_printer_are_arranged_by_the_slicer(client, tmp_path,
     model_id = _upload_project(client, tmp_path)
     captured = _capture_slice(monkeypatch)
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (False, 125.0))
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0)
+    )
     resp = client.post("/jobs", json=_job(model_id, excluded_objects=[1, 2, 3], copies=3))
     assert resp.status_code == 200
     assert captured["arrange"] is True and captured["keep_positions"] is False
@@ -504,12 +518,13 @@ def test_copies_limits(client, tmp_path):
     assert client.post("/jobs", json=_job(model_id, copies=51)).status_code == 422
 
 
-
 def _belt_flag(monkeypatch, is_belt):
     from app.routers import jobs as jobs_router
 
     monkeypatch.setattr(jobs_router, "_machine_bed", lambda name, user_id=None: (is_belt, 125.0))
-    monkeypatch.setattr(jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0))
+    monkeypatch.setattr(
+        jobs_router, "_machine_bed_area", lambda name, user_id=None: (["0x0", "250x0", "250x250", "0x250"], 250.0)
+    )
 
 
 def test_a_plain_3mf_keeps_its_layout_on_a_normal_printer_and_is_arranged_on_a_belt(client, tmp_path, monkeypatch):
@@ -531,7 +546,10 @@ def test_a_layout_that_does_not_fit_falls_back_to_arranging(client, tmp_path, mo
         if not kwargs["arrange"]:
             return SliceResult(
                 return_code=1,
-                result_json={"return_code": 204, "error_string": "Some objects are located over the boundary of the heated bed."},
+                result_json={
+                    "return_code": 204,
+                    "error_string": "Some objects are located over the boundary of the heated bed.",
+                },
                 stdout="",
                 stderr="",
                 used_result_json=True,
@@ -552,7 +570,13 @@ def test_other_failures_are_not_retried(client, tmp_path, monkeypatch):
 
     def fake_run_slice(**kwargs):
         calls.append(kwargs["arrange"])
-        return SliceResult(return_code=1, result_json={"return_code": 154, "error_string": "something else"}, stdout="", stderr="", used_result_json=True)
+        return SliceResult(
+            return_code=1,
+            result_json={"return_code": 154, "error_string": "something else"},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
 
     monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
     client.post("/jobs", json=_job(model_id, plate_index=1))
@@ -563,7 +587,6 @@ def test_printer_specific_keys_from_the_file_are_dropped_when_the_printer_lacks_
     import json as _json
     import zipfile as _zip
 
-    from app.routers import jobs as jobs_router
     from app.schemas import ProfileDetail
 
     project = tmp_path / "multi.3mf"
@@ -571,13 +594,18 @@ def test_printer_specific_keys_from_the_file_are_dropped_when_the_printer_lacks_
     with _zip.ZipFile(src) as zi, _zip.ZipFile(project, "w") as zo:
         for info in zi.infolist():
             zo.writestr(info, zi.read(info.filename))
-        zo.writestr("Metadata/project_settings.config", _json.dumps({"extruder_printable_area": ["0x0,256x0,256x256,0x256"], "layer_height": "0.2"}))
+        zo.writestr(
+            "Metadata/project_settings.config",
+            _json.dumps({"extruder_printable_area": ["0x0,256x0,256x256,0x256"], "layer_height": "0.2"}),
+        )
     model_id = client.post("/models", files={"file": ("m.3mf", project.read_bytes(), "model/3mf")}).json()["model_id"]
     _belt_flag(monkeypatch, False)
     captured = _capture_slice(monkeypatch)
     machine = {"printable_area": ["0x0", "250x0", "250x250", "0x250"]}  # no extruder_printable_area
     monkeypatch.setattr(
-        cli_runner, "_resolve_profile_detail", lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data=machine)
+        cli_runner,
+        "_resolve_profile_detail",
+        lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data=machine),
     )
     assert client.post("/jobs", json=_job(model_id, plate_index=1)).status_code == 200
     assert captured["model_path"].name == "input.3mf"
@@ -591,11 +619,12 @@ def test_printer_specific_keys_from_the_file_are_dropped_when_the_printer_lacks_
     assert captured["model_path"].name != "input.3mf"
 
 
-def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_than_the_file_has(client, tmp_path, monkeypatch):
+def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_than_the_file_has(
+    client, tmp_path, monkeypatch
+):
     import json as _json
     import zipfile as _zip
 
-    from app.routers import jobs as jobs_router
     from app.schemas import ProfileDetail
 
     project = tmp_path / "two_filaments.3mf"
@@ -614,7 +643,9 @@ def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_tha
     _belt_flag(monkeypatch, False)
     captured = _capture_slice(monkeypatch)
     monkeypatch.setattr(
-        cli_runner, "_resolve_profile_detail", lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data={})
+        cli_runner,
+        "_resolve_profile_detail",
+        lambda kind, name, user_id=None: ProfileDetail(vendor="V", kind=kind, name=name, path="x", data={}),
     )
     four = ["PLA"] * 4
     assert client.post("/jobs", json=_job(model_id, plate_index=1, filament_profiles=four)).status_code == 200
@@ -622,7 +653,10 @@ def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_tha
     with _zip.ZipFile(captured["model_path"]) as zf:
         settings_json = _json.loads(zf.read("Metadata/project_settings.config"))
     assert "filament_settings_id" not in settings_json and "nozzle_diameter" not in settings_json
-    assert settings_json["default_acceleration"] == saved["default_acceleration"] and settings_json["layer_height"] == "0.2"
+    assert (
+        settings_json["default_acceleration"] == saved["default_acceleration"]
+        and settings_json["layer_height"] == "0.2"
+    )
     # as many filaments as the file has (or fewer) leaves the file as it is
     for same in (["PLA"] * 2, ["PLA"]):
         captured.clear()
@@ -631,8 +665,8 @@ def test_per_filament_settings_are_dropped_when_more_filaments_are_requested_tha
 
 
 def test_transform_objects_moves_and_turns_single_objects(client, tmp_path):
+
     from app.threemf_objects import list_objects
-    from test_threemf_objects import _write_project
 
     model_id = _upload_project(client, tmp_path)
     resp = client.post(
@@ -647,12 +681,22 @@ def test_transform_objects_moves_and_turns_single_objects(client, tmp_path):
     bad = client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 99, "x": 0, "y": 0}]})
     assert bad.status_code == 422
     assert client.post(f"/models/{model_id}/transform-objects", json={"objects": []}).status_code == 422
-    assert client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x_deg": 999, "x": 0, "y": 0}]}).status_code == 422
+    assert (
+        client.post(
+            f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x_deg": 999, "x": 0, "y": 0}]}
+        ).status_code
+        == 422
+    )
 
 
 def test_transform_objects_needs_a_3mf(client):
     model_id = _upload_model(client)
-    assert client.post(f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x": 0, "y": 0}]}).status_code == 422
+    assert (
+        client.post(
+            f"/models/{model_id}/transform-objects", json={"objects": [{"index": 0, "x": 0, "y": 0}]}
+        ).status_code
+        == 422
+    )
 
 
 def test_a_slicer_crash_on_the_trimmed_copy_is_retried_with_the_projects_own_settings(client, tmp_path, monkeypatch):
@@ -698,7 +742,13 @@ def test_an_ordinary_failure_is_not_retried(client, tmp_path, monkeypatch):
 
     def fake_run_slice(**kwargs):
         calls.append(kwargs)
-        return SliceResult(return_code=1, result_json={"return_code": 1, "error_string": "bad"}, stdout="", stderr="", used_result_json=True)
+        return SliceResult(
+            return_code=1,
+            result_json={"return_code": 1, "error_string": "bad"},
+            stdout="",
+            stderr="",
+            used_result_json=True,
+        )
 
     monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
     resp = client.post("/jobs", json=_job(model_id, filament_profiles=["A", "B", "C", "D"]))

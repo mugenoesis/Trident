@@ -1,4 +1,5 @@
 """Builds multi-colour 3MF projects the way a slicer would save them, using the real slicer, for the slicer tests."""
+
 from __future__ import annotations
 
 import re
@@ -24,12 +25,12 @@ def _subdivided_cube_stl(path: Path, size: float = 30.0, grid: int = 8) -> None:
     for i in range(grid):
         for j in range(grid):
             x, y = i * step, j * step
-            tris += quad((x, y, 0), (0, step, 0), (step, 0, 0))            # bottom (facing -z)
-            tris += quad((x, y, size), (step, 0, 0), (0, step, 0))         # top
-            tris += quad((x, 0, y), (step, 0, 0), (0, 0, step))            # front (-y)
-            tris += quad((x, size, y), (0, 0, step), (step, 0, 0))         # back
-            tris += quad((0, x, y), (0, 0, step), (0, step, 0))            # left
-            tris += quad((size, x, y), (0, step, 0), (0, 0, step))         # right
+            tris += quad((x, y, 0), (0, step, 0), (step, 0, 0))  # bottom (facing -z)
+            tris += quad((x, y, size), (step, 0, 0), (0, step, 0))  # top
+            tris += quad((x, 0, y), (step, 0, 0), (0, 0, step))  # front (-y)
+            tris += quad((x, size, y), (0, 0, step), (step, 0, 0))  # back
+            tris += quad((0, x, y), (0, 0, step), (0, step, 0))  # left
+            tris += quad((size, x, y), (0, step, 0), (0, 0, step))  # right
     with path.open("wb") as fh:
         fh.write(b"\0" * 80 + struct.pack("<I", len(tris)))
         for a, b, c in tris:
@@ -72,18 +73,39 @@ def make_project(
         stl = work / f"part{i + 1}.stl"
         _subdivided_cube_stl(stl, size=30.0 if style == "painted" else 18.0, grid=8 if style == "painted" else 1)
         stls.append(str(stl))
-    printer = cli_runner._write_resolved_profile(cli_runner._resolve_profile_detail("machine", authoring_printer), resolved_dir, "printer")
-    process = cli_runner._write_resolved_profile(cli_runner._resolve_profile_detail("process", authoring_process), resolved_dir, "process")
+    printer = cli_runner._write_resolved_profile(
+        cli_runner._resolve_profile_detail("machine", authoring_printer), resolved_dir, "printer"
+    )
+    process = cli_runner._write_resolved_profile(
+        cli_runner._resolve_profile_detail("process", authoring_process), resolved_dir, "process"
+    )
     filaments = [
-        cli_runner._write_resolved_profile(cli_runner._resolve_profile_detail("filament", authoring_filament), resolved_dir, f"filament_{i}")
+        cli_runner._write_resolved_profile(
+            cli_runner._resolve_profile_detail("filament", authoring_filament), resolved_dir, f"filament_{i}"
+        )
         for i in range(colours)
     ]
     raw = work / "raw.3mf"
-    cmd = [bin_path, "--datadir", datadir, "--outputdir", str(work), "--arrange=1", "--load-settings", f"{printer};{process}",
-           "--load-filaments", ";".join(filaments), "--export-3mf", raw.name, *stls]
+    cmd = [
+        bin_path,
+        "--datadir",
+        datadir,
+        "--outputdir",
+        str(work),
+        "--arrange=1",
+        "--load-settings",
+        f"{printer};{process}",
+        "--load-filaments",
+        ";".join(filaments),
+        "--export-3mf",
+        raw.name,
+        *stls,
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if not raw.is_file():
-        raise RuntimeError(f"could not export the project (exit {proc.returncode}): {proc.stdout[-400:]} {proc.stderr[-400:]}")
+        raise RuntimeError(
+            f"could not export the project (exit {proc.returncode}): {proc.stdout[-400:]} {proc.stderr[-400:]}"
+        )
     zin = zipfile.ZipFile(raw)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
         for info in zin.infolist():
@@ -95,7 +117,11 @@ def make_project(
                 def repaint(match):
                     state = counter[0] % colours + 1
                     counter[0] += 1
-                    return f'<triangle {match.group(1)} paint_color="{paint_code(state)}"/>' if state > 1 else match.group(0)
+                    return (
+                        f'<triangle {match.group(1)} paint_color="{paint_code(state)}"/>'
+                        if state > 1
+                        else match.group(0)
+                    )
 
                 text = re.sub(r"<triangle ([^>/]*?)/>", repaint, text)
                 data = text.encode()
@@ -105,7 +131,7 @@ def make_project(
 
                 def assign(match):
                     number[0] += 1
-                    block = re.sub(r'(key="extruder" value=")\d+(")', rf'\g<1>{number[0]}\g<2>', match.group(0))
+                    block = re.sub(r'(key="extruder" value=")\d+(")', rf"\g<1>{number[0]}\g<2>", match.group(0))
                     return block
 
                 text = re.sub(r'<object id="\d+">.*?</object>', assign, text, flags=re.S)
@@ -116,10 +142,29 @@ def make_project(
                 import json
 
                 proj = json.loads(data)
-                palette = ["#F2754E", "#3F8E43", "#2A6FDB", "#E8C547", "#8A4FBF", "#D94F8C", "#4FC0C0", "#222222", "#FFFFFF", "#7A7A7A", "#A0522D", "#00FF7F", "#FF8C00", "#1E90FF", "#C71585", "#556B2F"]
+                palette = [
+                    "#F2754E",
+                    "#3F8E43",
+                    "#2A6FDB",
+                    "#E8C547",
+                    "#8A4FBF",
+                    "#D94F8C",
+                    "#4FC0C0",
+                    "#222222",
+                    "#FFFFFF",
+                    "#7A7A7A",
+                    "#A0522D",
+                    "#00FF7F",
+                    "#FF8C00",
+                    "#1E90FF",
+                    "#C71585",
+                    "#556B2F",
+                ]
                 proj["filament_colour"] = palette[:colours]
                 # A saved project sizes the purge matrix to its filament count (the exported default is always 4 x 4).
-                proj["flush_volumes_matrix"] = [("0" if i == j else "280") for i in range(colours) for j in range(colours)]
+                proj["flush_volumes_matrix"] = [
+                    ("0" if i == j else "280") for i in range(colours) for j in range(colours)
+                ]
                 proj["flush_volumes_vector"] = ["140", "140"] * colours
                 data = json.dumps(proj).encode()
             zout.writestr(info.filename, data)

@@ -11,11 +11,13 @@ degenerate and duplicate triangles, inconsistent triangle orientation, and a
 mesh that is inside-out. Not fixed: open edges (holes) and edges shared by
 more than two triangles.
 """
+
 from __future__ import annotations
 
 import re
 import struct
 from pathlib import Path
+from typing import cast
 
 from .schemas import MeshReport
 
@@ -67,17 +69,19 @@ def analyze_stl(path: Path) -> MeshReport | None:
         cross_x = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
         cross_y = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
         cross_z = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-        if ia == ib or ib == ic or ia == ic or (cross_x == 0 and cross_y == 0 and cross_z == 0):
+        if ia in (ib, ic) or ib == ic or (cross_x == 0 and cross_y == 0 and cross_z == 0):
             degenerate += 1
             continue
         faces.append((ia, ib, ic))
-        signed_volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0
+        signed_volume += (
+            a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
+        ) / 6.0
 
     seen: set[tuple[int, int, int]] = set()
     unique: list[tuple[int, int, int]] = []
     duplicate = 0
     for f in faces:
-        key = tuple(sorted(f))
+        key = cast("tuple[int, int, int]", tuple(sorted(f)))
         if key in seen:
             duplicate += 1
         else:
