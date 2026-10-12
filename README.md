@@ -140,6 +140,21 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 Without a real `orca-slicer` binary the slicing endpoints degrade gracefully, which is handy for working on the API.
 The web app lives in [`web/`](web/README.md). The design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+### Code quality checks
+
+One gate runs everything CI runs: `scripts/check.sh` (or `scripts/check.sh web` / `api`). A host with no Python can run the
+Python tools through `scripts/py.sh`, a throwaway container, for example `scripts/py.sh ruff check app`.
+
+| Area | Tools |
+|---|---|
+| Web | [Biome](https://biomejs.dev) (format, lint, cognitive complexity), [knip](https://knip.dev) (unused code and dependencies), `tsc` |
+| API | [black](https://black.readthedocs.io) (format), [ruff](https://docs.astral.sh/ruff) (lint, security, imports), [pyright](https://github.com/microsoft/pyright) (types), [complexipy](https://github.com/rohaquinlop/complexipy) (cognitive complexity), [vulture](https://github.com/jendrikseipp/vulture) (dead code), pytest with a coverage floor |
+| Both | `scripts/audit.sh` (known vulnerabilities in what ships), `scripts/docker-lint.sh` (hadolint and trivy on the Dockerfile), Dependabot |
+
+Format with `npm run format` in `web/` and `black app tests tests_slicer` in `api/`. Functions over a cognitive complexity of 15 are
+existing debt: Biome records them per file in `biome.json`, complexipy in `api/complexipy-snapshot.json`. New code is held to 15, and
+the numbers only go down. Run `git config blame.ignoreRevsFile .git-blame-ignore-revs` so `git blame` skips the reformat commits.
+
 ```
 Trident/
 ├── vendor/orcaslicer/   # git submodule: the patched OrcaSlicer fork
@@ -147,7 +162,7 @@ Trident/
 ├── api/                 # FastAPI service
 ├── web/                 # React/Vite web app
 ├── docs/                # architecture and AGPL notes
-└── scripts/             # smoke tests and helpers
+└── scripts/             # the check gate, audits, smoke tests and helpers
 ```
 
 ## Support the project

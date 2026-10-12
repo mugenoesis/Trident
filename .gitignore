@@ -14,3 +14,9 @@ data/
 # Local scratch
 *.sqlite3
 *.log
+
+# Tooling
+.ruff_cache/
+.coverage
+coverage.xml
+.pyright/

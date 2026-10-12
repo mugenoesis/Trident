@@ -1,0 +1,5 @@
+# Commits that only reformat code, so `git blame` can skip them.
+# GitHub reads this file by itself; locally run: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Replace oxlint with Biome and format the web app (tabs, 140 columns, sorted imports)
+fa2c79207f325c4d98a55207a1676c550e578b4e

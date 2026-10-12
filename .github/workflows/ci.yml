@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Biome (format, lint, cognitive complexity)
+        run: npm run lint
+      - name: Unused code and dependencies (knip)
+        run: npm run knip
+      - name: Typecheck and build
+        run: npm run build
+
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: api/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: black --check app tests tests_slicer
+      - run: ruff check app tests tests_slicer
+      - run: pyright
+      - name: Cognitive complexity (existing debt is recorded in complexipy-snapshot.json)
+        run: complexipy
+      - run: vulture
+      - name: Tests with a coverage floor
+        run: pytest -q --cov --cov-report=xml --cov-fail-under=80
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: api/coverage.xml
+          if-no-files-found: ignore
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: (cd web && npm ci)
+      - run: pip install pip-audit
+      # Fails if anything that ships has a known vulnerability; build tools are reported only.
+      - run: scripts/audit.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # hadolint and trivy read the Dockerfile; the image is not built here (it compiles OrcaSlicer).
+      - run: scripts/docker-lint.sh
