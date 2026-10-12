@@ -44,9 +44,7 @@ def test_userstore_migrates_db_missing_last_selection_columns(tmp_path):
         "password_hash TEXT, created_at TEXT NOT NULL)"
     )
     conn.execute("CREATE TABLE app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.execute(
-        "INSERT INTO users (id, username, password_hash, created_at) VALUES ('local', NULL, NULL, 'now')"
-    )
+    conn.execute("INSERT INTO users (id, username, password_hash, created_at) VALUES ('local', NULL, NULL, 'now')")
     conn.commit()
     conn.close()
 
@@ -66,9 +64,7 @@ def test_default_mode_behaves_like_single_user(client):
     assert status["mode"] == "unset"
     assert status["logged_in"] is True
 
-    resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")}
-    )
+    resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")})
     assert resp.status_code == 200
 
 
@@ -90,9 +86,7 @@ def test_setup_single_mode(client):
 
 
 def test_setup_multi_mode_and_login_roundtrip(client):
-    resp = client.post(
-        "/auth/setup", json={"mode": "multi", "username": "alice", "password": "hunter2"}
-    )
+    resp = client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "hunter2"})
     assert resp.status_code == 200
     body = resp.json()
     assert body == {
@@ -121,22 +115,16 @@ def test_multi_mode_requires_login_for_owned_endpoints(client):
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
     client.post("/auth/logout")
 
-    resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")}
-    )
+    resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")})
     assert resp.status_code == 401
 
 
 def test_switch_to_multi_keeps_existing_data_owned_by_local_user(client):
     client.post("/auth/setup", json={"mode": "single"})
-    upload = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")}
-    )
+    upload = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")})
     assert upload.status_code == 200
 
-    switched = client.post(
-        "/auth/switch-to-multi", json={"username": "alice", "password": "hunter2"}
-    )
+    switched = client.post("/auth/switch-to-multi", json={"username": "alice", "password": "hunter2"})
     assert switched.status_code == 200
     assert switched.json()["username"] == "alice"
 
@@ -170,9 +158,7 @@ def test_second_user_cannot_see_or_slice_first_users_model(client, monkeypatch):
     )
 
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
-    model_resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")}
-    )
+    model_resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl"), "model/stl")})
     model_id = model_resp.json()["model_id"]
     job_resp = client.post(
         "/jobs",
@@ -206,9 +192,9 @@ def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, mon
     )
 
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
-    alice_model = client.post(
-        "/models", files={"file": ("alice.stl", io.BytesIO(b"fake"), "model/stl")}
-    ).json()["model_id"]
+    alice_model = client.post("/models", files={"file": ("alice.stl", io.BytesIO(b"fake"), "model/stl")}).json()[
+        "model_id"
+    ]
     alice_job = client.post(
         "/jobs",
         json={"model_id": alice_model, "printer_profile": "Generic Printer", "process_profile": "0.20mm Standard"},
@@ -217,9 +203,7 @@ def test_switch_to_single_merges_everyones_data_and_removes_accounts(client, mon
     client.post("/auth/users", json={"username": "bob", "password": "pw12345"})
     client.post("/auth/logout")
     client.post("/auth/login", json={"username": "bob", "password": "pw12345"})
-    bob_model = client.post(
-        "/models", files={"file": ("bob.stl", io.BytesIO(b"fake"), "model/stl")}
-    ).json()["model_id"]
+    bob_model = client.post("/models", files={"file": ("bob.stl", io.BytesIO(b"fake"), "model/stl")}).json()["model_id"]
     bob_job = client.post(
         "/jobs",
         json={"model_id": bob_model, "printer_profile": "Generic Printer", "process_profile": "0.20mm Standard"},

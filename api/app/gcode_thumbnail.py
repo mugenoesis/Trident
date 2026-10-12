@@ -20,6 +20,7 @@ the model with the exact colors/nozzle assignment the user configured, so
 this reuses a snapshot of that instead -- see web/src/components/Viewer.tsx's
 capturePreview and App.tsx's handleSlice.
 """
+
 from __future__ import annotations
 
 import base64
@@ -58,7 +59,7 @@ def _square_thumbnail(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     left = (width - side) // 2
     top = (height - side) // 2
     cropped = image.crop((left, top, left + side, top + side))
-    return cropped.resize(size, Image.LANCZOS)
+    return cropped.resize(size, Image.Resampling.LANCZOS)
 
 
 def _thumbnail_block(image: Image.Image) -> str:

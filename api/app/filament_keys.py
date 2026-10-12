@@ -2,6 +2,7 @@
 
 Generated from the fork's source; the Advanced tab of the material form offers these and no others, so a
 material cannot be given a print or printer setting by mistake."""
+
 from __future__ import annotations
 
 FILAMENT_KEYS: frozenset[str] = frozenset(

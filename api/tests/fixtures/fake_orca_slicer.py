@@ -5,6 +5,7 @@ Mimics just enough of the --pipe / result.json protocol
 (docs/ARCHITECTURE.md) to exercise cli_runner.run_slice's FIFO handling
 without needing a real, built binary.
 """
+
 import argparse
 import json
 import pathlib
@@ -17,10 +18,14 @@ if "--help-json" in sys.argv:
     # included so _option_bounds() has something to work with. Handled
     # before the --outputdir/--pipe-requiring parser below since a real
     # `--help-json` invocation never passes those.
-    print(json.dumps([
-        {"key": "raft_first_layer_expansion", "type": "float", "min": 0, "default": "2"},
-        {"key": "tree_support_wall_count", "type": "int", "min": 0, "max": 2, "default": "0"},
-    ]))
+    print(
+        json.dumps(
+            [
+                {"key": "raft_first_layer_expansion", "type": "float", "min": 0, "default": "2"},
+                {"key": "tree_support_wall_count", "type": "int", "min": 0, "max": 2, "default": "0"},
+            ]
+        )
+    )
     sys.exit(0)
 
 parser = argparse.ArgumentParser()
@@ -38,15 +43,19 @@ parser.add_argument("--tree-support-wall-count")
 parser.add_argument("model", nargs="?")
 args, _unknown = parser.parse_known_args()
 
-with open(args.pipe, "w") as f:
-    f.write(json.dumps(
-        {"plate_index": 1, "plate_count": 1, "plate_percent": 50.0,
-         "total_percent": 50.0, "message": "slicing"}
-    ) + "\n")
-    f.write(json.dumps(
-        {"plate_index": 1, "plate_count": 1, "plate_percent": 100.0,
-         "total_percent": 100.0, "message": "done"}
-    ) + "\n")
+with pathlib.Path(args.pipe).open("w") as f:
+    f.write(
+        json.dumps(
+            {"plate_index": 1, "plate_count": 1, "plate_percent": 50.0, "total_percent": 50.0, "message": "slicing"}
+        )
+        + "\n"
+    )
+    f.write(
+        json.dumps(
+            {"plate_index": 1, "plate_count": 1, "plate_percent": 100.0, "total_percent": 100.0, "message": "done"}
+        )
+        + "\n"
+    )
 
 outputdir = pathlib.Path(args.outputdir)
 outputdir.mkdir(parents=True, exist_ok=True)

@@ -5,16 +5,12 @@ from app.routers.models import resolve_model_original_name
 
 
 def test_upload_rejects_unknown_extension(client):
-    resp = client.post(
-        "/models", files={"file": ("model.txt", io.BytesIO(b"not a model"), "text/plain")}
-    )
+    resp = client.post("/models", files={"file": ("model.txt", io.BytesIO(b"not a model"), "text/plain")})
     assert resp.status_code == 400
 
 
 def test_upload_accepts_stl(client, data_dirs):
-    resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    )
+    resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")})
     assert resp.status_code == 200
     body = resp.json()
     assert body["filename"] == "cube.stl"
@@ -28,9 +24,9 @@ def test_resolve_model_original_name_missing_returns_none():
 
 
 def test_get_model_file_returns_original_bytes(client):
-    model_id = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    ).json()["model_id"]
+    model_id = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}).json()[
+        "model_id"
+    ]
 
     resp = client.get(f"/models/{model_id}/file")
     assert resp.status_code == 200
@@ -43,9 +39,9 @@ def test_get_model_file_404s_for_unknown_model(client):
 
 
 def test_plates_endpoint_synthetic_single_plate_for_non_3mf(client):
-    model_id = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    ).json()["model_id"]
+    model_id = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}).json()[
+        "model_id"
+    ]
 
     resp = client.get(f"/models/{model_id}/plates")
     assert resp.status_code == 200

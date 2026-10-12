@@ -13,6 +13,7 @@ line -- but that second line is skipped for Bambu printers specifically
 (`if (!is_bbl_printers)`), so summing the per-extruder line ourselves is
 the one approach that works for every printer this app supports.
 """
+
 from __future__ import annotations
 
 import re

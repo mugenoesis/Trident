@@ -5,15 +5,17 @@ just FastAPI BackgroundTasks + this store, so job state survives API
 restarts. One connection per call, WAL mode for concurrent readers
 while a background task is writing progress.
 """
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .config import settings
 from .schemas import JobProgress, JobRecord, JobStatus
@@ -41,7 +43,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class JobStore:
@@ -114,9 +116,7 @@ class JobStore:
 
     def list(self, user_id: str) -> list[JobRecord]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
         return [self._row_to_record(r) for r in rows]
 
     def list_all(self) -> list[JobRecord]:

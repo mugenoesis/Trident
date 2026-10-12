@@ -10,6 +10,7 @@ require_user() is the FastAPI dependency every user-owned endpoint uses:
     cookie involved -- there's nothing to log into.
   - "multi" mode: reads a signed session cookie, 401s if missing/invalid.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +20,8 @@ import time
 
 from fastapi import HTTPException, Request
 
-from .userstore import User, store as user_store
+from .userstore import User
+from .userstore import store as user_store
 
 SESSION_COOKIE_NAME = "orca_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
@@ -29,9 +31,7 @@ _PBKDF2_ITERATIONS = 310_000
 
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), bytes.fromhex(salt), _PBKDF2_ITERATIONS
-    ).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), _PBKDF2_ITERATIONS).hex()
     return f"{_PBKDF2_ITERATIONS}${salt}${digest}"
 
 

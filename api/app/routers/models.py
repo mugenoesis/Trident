@@ -5,8 +5,9 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -21,8 +22,8 @@ from ..schemas import (
     ModelOpRequest,
     ModelUploadResponse,
     ObjectInfo,
-    PlateInfo,
     ObjectsTransformRequest,
+    PlateInfo,
     ThreeMfInspection,
     TransformRequest,
 )
@@ -56,6 +57,31 @@ def _read_meta(model_id: str) -> dict | None:
         return None
 
 
+def _inspection_meta(dest: Path) -> dict[str, Any]:
+    """What a .3mf's plates, objects and colours add to the sidecar meta; nothing if it cannot be read."""
+    try:
+        inspection = threemf.inspect_3mf(dest)
+        return {
+            "plates": [p.model_dump() for p in inspection.plates],
+            "objects": [o.model_dump() for o in inspection.objects],
+            "extruder_indices": inspection.extruder_indices,
+            "embedded_filament_colors": inspection.embedded_filament_colors,
+            "embedded_filament_names": inspection.embedded_filament_names,
+            "color_tree": [c.model_dump() for c in inspection.color_tree],
+        }
+    except Exception:
+        return {}
+
+
+def _mesh_report(dest: Path) -> MeshReport | None:
+    """The STL's mesh report when it found something to fix or warn about."""
+    try:
+        report = meshcheck.analyze_stl(dest)
+    except Exception:
+        return None
+    return report if report is not None and (report.fixed or report.warnings) else None
+
+
 def finalize_new_model(
     model_id: str, suffix: str, dest: Path, original_name: str, owner_user_id: str
 ) -> ModelUploadResponse:
@@ -66,31 +92,16 @@ def finalize_new_model(
     place instead of streaming an upload."""
     meta_dir = settings.models_dir / _META_DIRNAME
     meta_dir.mkdir(parents=True, exist_ok=True)
-    meta = {
+    meta: dict[str, Any] = {
         "filename": original_name,
         "owner_user_id": owner_user_id,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "uploaded_at": datetime.now(UTC).isoformat(),
     }
     if suffix == ".3mf":
-        try:
-            inspection = threemf.inspect_3mf(dest)
-            meta["plates"] = [p.model_dump() for p in inspection.plates]
-            meta["objects"] = [o.model_dump() for o in inspection.objects]
-            meta["extruder_indices"] = inspection.extruder_indices
-            meta["embedded_filament_colors"] = inspection.embedded_filament_colors
-            meta["embedded_filament_names"] = inspection.embedded_filament_names
-            meta["color_tree"] = [c.model_dump() for c in inspection.color_tree]
-        except Exception:  # noqa: BLE001 - a parse bug must never fail this itself
-            pass
-    mesh_report: MeshReport | None = None
-    if suffix == ".stl":
-        try:
-            report = meshcheck.analyze_stl(dest)
-            if report is not None and (report.fixed or report.warnings):
-                mesh_report = report
-                meta["mesh_report"] = report.model_dump()
-        except Exception:  # noqa: BLE001 - a check bug must never fail an upload
-            pass
+        meta.update(_inspection_meta(dest))
+    mesh_report = _mesh_report(dest) if suffix == ".stl" else None
+    if mesh_report is not None:
+        meta["mesh_report"] = mesh_report.model_dump()
     _meta_path(model_id).write_text(json.dumps(meta))
 
     return ModelUploadResponse(model_id=model_id, filename=original_name, mesh_report=mesh_report)
@@ -124,7 +135,9 @@ async def upload_model(file: UploadFile, current: User = Depends(require_user)) 
     return await run_in_threadpool(finalize_new_model, model_id, suffix, dest, original_name, current.id)
 
 
-def _converted_copy(model_id: str, body: ModelOpRequest, current: User, *, orient: bool, arrange: bool) -> ModelUploadResponse:
+def _converted_copy(
+    model_id: str, body: ModelOpRequest, current: User, *, orient: bool, arrange: bool
+) -> ModelUploadResponse:
     """Run the slicer's own auto-orient / arrange over a model and store the
     result as a new .3mf model (the original is left alone)."""
     path = resolve_model_path(model_id)
@@ -158,7 +171,9 @@ def orient_model(model_id: str, body: ModelOpRequest, current: User = Depends(re
 
 
 @router.post("/{model_id}/transform", response_model=ModelUploadResponse)
-def transform_model(model_id: str, body: TransformRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+def transform_model(
+    model_id: str, body: TransformRequest, current: User = Depends(require_user)
+) -> ModelUploadResponse:
     """Rotate the model or stand it on a face, using the slicer's own transforms, and
     store the result as a new .3mf model (the original is left alone). The steps run
     one after another, each on the result of the one before."""
@@ -186,7 +201,9 @@ def transform_model(model_id: str, body: TransformRequest, current: User = Depen
 
 
 @router.post("/{model_id}/transform-objects", response_model=ModelUploadResponse)
-def transform_objects(model_id: str, body: ObjectsTransformRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
+def transform_objects(
+    model_id: str, body: ObjectsTransformRequest, current: User = Depends(require_user)
+) -> ModelUploadResponse:
     """Turn and place objects of a multi-object .3mf one by one, writing the result as a new .3mf model
     (the original is left alone). The slicer's own rotation turns every object at once, so this edits the
     file's object transforms directly."""
@@ -199,7 +216,8 @@ def transform_objects(model_id: str, body: ObjectsTransformRequest, current: Use
     new_id = uuid.uuid4().hex
     dest = settings.models_dir / f"{new_id}.3mf"
     edits = [
-        threemf_objects.ObjectEdit(index=o.index, rotation=(o.x_deg, o.y_deg, o.z_deg), x=o.x, y=o.y) for o in body.objects
+        threemf_objects.ObjectEdit(index=o.index, rotation=(o.x_deg, o.y_deg, o.z_deg), x=o.x, y=o.y)
+        for o in body.objects
     ]
     try:
         threemf_objects.edit_objects_3mf(path, dest, edits)

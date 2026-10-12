@@ -4,12 +4,13 @@ The explicit `DELETE /jobs/{id}` route (routers/jobs.py) covers "I'm
 finished with this, remove it now"; this covers everything else, so
 uploads/gcode don't accumulate on disk forever if nobody clicks that.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .config import settings
 from .jobstore import store
@@ -22,7 +23,7 @@ _TERMINAL = {JobStatus.SUCCEEDED, JobStatus.FAILED}
 
 
 def run_cleanup_once() -> None:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.retention_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=settings.retention_hours)
 
     # A model stays if *any* job (active, or terminal but not yet expired)
     # still references it -- only computed once all jobs have been visited,
@@ -45,7 +46,7 @@ def run_cleanup_once() -> None:
         if model_id in surviving_model_ids:
             continue
         uploaded_at = resolve_model_uploaded_at(model_id)
-        if uploaded_at is None or uploaded_at.astimezone(timezone.utc) < cutoff:
+        if uploaded_at is None or uploaded_at.astimezone(UTC) < cutoff:
             delete_model(model_id)
 
 
@@ -53,6 +54,6 @@ async def run_cleanup_loop() -> None:
     while True:
         try:
             run_cleanup_once()
-        except Exception:  # noqa: BLE001 - a bad sweep shouldn't kill the loop
+        except Exception:
             logger.exception("Cleanup sweep failed")
         await asyncio.sleep(settings.cleanup_interval_minutes * 60)

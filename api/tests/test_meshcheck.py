@@ -5,7 +5,20 @@ from pathlib import Path
 from app.meshcheck import analyze_stl
 
 _V = [(0, 0, 0), (20, 0, 0), (20, 20, 0), (0, 20, 0), (0, 0, 20), (20, 0, 20), (20, 20, 20), (0, 20, 20)]
-_T = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+_T = [
+    (0, 2, 1),
+    (0, 3, 2),
+    (4, 5, 6),
+    (4, 6, 7),
+    (0, 1, 5),
+    (0, 5, 4),
+    (1, 2, 6),
+    (1, 6, 5),
+    (2, 3, 7),
+    (2, 7, 6),
+    (3, 0, 4),
+    (3, 4, 7),
+]
 
 
 def _binary(tmp_path: Path, name: str, tris) -> Path:
@@ -22,7 +35,11 @@ def _binary(tmp_path: Path, name: str, tris) -> Path:
 def _ascii(tmp_path: Path, name: str, tris) -> Path:
     lines = ["solid x"]
     for tri in tris:
-        lines += ["facet normal 0 0 0", "outer loop"] + [f"vertex {_V[i][0]} {_V[i][1]} {_V[i][2]}" for i in tri] + ["endloop", "endfacet"]
+        lines += (
+            ["facet normal 0 0 0", "outer loop"]
+            + [f"vertex {_V[i][0]} {_V[i][1]} {_V[i][2]}" for i in tri]
+            + ["endloop", "endfacet"]
+        )
     lines.append("endsolid x")
     path = tmp_path / name
     path.write_text("\n".join(lines))

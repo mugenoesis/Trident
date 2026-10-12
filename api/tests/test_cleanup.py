@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app import cleanup
 from app.config import settings
@@ -11,9 +11,7 @@ from app.schemas import JobStatus
 
 
 def _upload_model(client) -> str:
-    resp = client.post(
-        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    )
+    resp = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")})
     assert resp.status_code == 200
     return resp.json()["model_id"]
 
@@ -21,15 +19,15 @@ def _upload_model(client) -> str:
 def _age_model(model_id: str, hours: float) -> None:
     meta_file = settings.models_dir / ".meta" / f"{model_id}.json"
     data = json.loads(meta_file.read_text())
-    data["uploaded_at"] = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    data["uploaded_at"] = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
     meta_file.write_text(json.dumps(data))
 
 
 def _age_job(job_id: str, hours: float) -> None:
-    with store._connect() as conn:  # noqa: SLF001 - test-only reach into the store
+    with store._connect() as conn:
         conn.execute(
             "UPDATE jobs SET created_at = ? WHERE id = ?",
-            ((datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(), job_id),
+            ((datetime.now(UTC) - timedelta(hours=hours)).isoformat(), job_id),
         )
 
 
@@ -82,15 +80,23 @@ def test_active_job_survives_regardless_of_age(client):
 def test_model_with_a_surviving_job_is_not_deleted(client):
     model_id = _upload_model(client)
     old_job = store.create(
-        user_id="local", model_id=model_id, printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id=model_id,
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     store.finish(old_job.id, status=JobStatus.SUCCEEDED, result={})
     _age_job(old_job.id, hours=100)
 
     recent_job = store.create(
-        user_id="local", model_id=model_id, printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id=model_id,
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     store.finish(recent_job.id, status=JobStatus.SUCCEEDED, result={})
     # recent_job is fresh (not aged), so the model still has a live reference.
@@ -106,8 +112,12 @@ def test_model_with_a_surviving_job_is_not_deleted(client):
 def test_fresh_terminal_job_is_not_purged(client):
     model_id = _upload_model(client)
     job = store.create(
-        user_id="local", model_id=model_id, printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id=model_id,
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     store.finish(job.id, status=JobStatus.SUCCEEDED, result={})
 
@@ -124,9 +134,7 @@ def test_delete_job_endpoint_removes_output_and_orphaned_model(client, monkeypat
         output_dir = kwargs["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "plate_1.gcode").write_text("; fake\n")
-        return SliceResult(
-            return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True
-        )
+        return SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
 
     monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
 
@@ -149,8 +157,12 @@ def test_delete_job_of_another_user_404s(client):
     client.post("/auth/setup", json={"mode": "multi", "username": "alice", "password": "pw12345"})
     model_id = _upload_model(client)
     job = store.create(
-        user_id="local", model_id=model_id, printer_profile="p", process_profile="q",
-        filament_profiles=[], setting_overrides={},
+        user_id="local",
+        model_id=model_id,
+        printer_profile="p",
+        process_profile="q",
+        filament_profiles=[],
+        setting_overrides={},
     )
     resp = client.delete(f"/jobs/{job.id}")
     assert resp.status_code == 404

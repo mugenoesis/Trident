@@ -11,10 +11,13 @@ The gcode of a belt printer is not plain Cartesian; the profile's remap and
 shear are undone first (a port of web/src/beltTransform.ts, itself a port of
 OrcaSlicer's own BeltBackTransform).
 """
+
 from __future__ import annotations
 
+import contextlib
 import math
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +26,15 @@ from typing import Any
 _NOT_PRINT_TYPES = {"Custom", "Prime tower", "Wipe tower"}
 
 _REMAP_BY_STRING = {
-    "pos_x": 0, "pos_y": 1, "pos_z": 2,
-    "neg_x": 3, "neg_y": 4, "neg_z": 5,
-    "rev_x": 6, "rev_y": 7, "rev_z": 8,
+    "pos_x": 0,
+    "pos_y": 1,
+    "pos_z": 2,
+    "neg_x": 3,
+    "neg_y": 4,
+    "neg_z": 5,
+    "rev_x": 6,
+    "rev_y": 7,
+    "rev_z": 8,
 }
 
 
@@ -87,65 +96,79 @@ def _args(parts: list[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for p in parts[1:]:
         if p and p[0].isalpha():
-            try:
+            with contextlib.suppress(ValueError):
                 out[p[0].upper()] = float(p[1:])
-            except ValueError:
-                pass
     return out
+
+
+@dataclass
+class _Head:
+    """Where the print head is, as the file's own coordinates and the offset G92 has added to them."""
+
+    pos: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    offset: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    e: float = 0.0
+    relative_e: bool = False
+
+    def reset(self, a: dict[str, float]) -> None:
+        """G92: the head stays put but is now called something else."""
+        if "E" in a:
+            self.e = a["E"]
+        for i, axis in enumerate("XYZ"):
+            if axis in a:
+                self.offset[i] += self.pos[i] - a[axis]
+                self.pos[i] = a[axis]
+
+    def move(self, a: dict[str, float]) -> tuple[bool, tuple[float, float, float]]:
+        """G0/G1: (whether it extruded while moving, where it went in the machine's own coordinates)."""
+        target = [a.get(axis, self.pos[i]) for i, axis in enumerate("XYZ")]
+        delta = 0.0
+        if "E" in a:
+            delta = a["E"] if self.relative_e else a["E"] - self.e
+            self.e = self.e + delta if self.relative_e else a["E"]
+        extruded = delta > 0 and target != self.pos
+        self.pos = target
+        x, y, z = (target[i] + self.offset[i] for i in range(3))
+        return extruded, (x, y, z)
+
+
+def _commands(fh: Iterable[str]) -> Iterator[tuple[str, list[str]]]:
+    """(the current ;TYPE: of the file, the words of each command line); comments and blank lines are skipped."""
+    kind = ""
+    for raw in fh:
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] == ";":
+            if line.startswith(";TYPE:"):
+                kind = line[6:].strip()
+            continue
+        parts = line.split(";", 1)[0].split()
+        if parts:
+            yield kind, parts
 
 
 def measure_start(gcode: Path, t: BeltTransform) -> StartMeasure | None:
     """None if the file has no purge line or no printed material to compare."""
-    x = y = z = e = 0.0
-    xo = yo = zo = 0.0
-    relative_e = False
-    kind = ""
+    head = _Head()
     purge: list[float] = []
     start = math.inf
     with gcode.open("r", errors="replace") as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line:
-                continue
-            if line[0] == ";":
-                if line.startswith(";TYPE:"):
-                    kind = line[6:].strip()
-                continue
-            line = line.split(";", 1)[0].strip()
-            parts = line.split()
-            cmd = parts[0].upper() if parts else ""
-            if cmd == "M83":
-                relative_e = True
-            elif cmd == "M82":
-                relative_e = False
+        for kind, parts in _commands(fh):
+            cmd = parts[0].upper()
+            if cmd in ("M83", "M82"):
+                head.relative_e = cmd == "M83"
             elif cmd == "G92":
-                a = _args(parts)
-                if "E" in a:
-                    e = a["E"]
-                if "X" in a:
-                    xo += x - a["X"]
-                    x = a["X"]
-                if "Y" in a:
-                    yo += y - a["Y"]
-                    y = a["Y"]
-                if "Z" in a:
-                    zo += z - a["Z"]
-                    z = a["Z"]
+                head.reset(_args(parts))
             elif cmd in ("G0", "G1"):
-                a = _args(parts)
-                nx, ny, nz = a.get("X", x), a.get("Y", y), a.get("Z", z)
-                if "E" in a:
-                    delta = a["E"] if relative_e else a["E"] - e
-                    e = e + delta if relative_e else a["E"]
-                else:
-                    delta = 0.0
-                if delta > 0 and (nx, ny, nz) != (x, y, z):
-                    belt_y = back_transform(t, nx + xo, ny + yo, nz + zo)[1]
-                    if kind == "Custom":
-                        purge.append(belt_y)
-                    elif kind not in _NOT_PRINT_TYPES:
-                        start = min(start, belt_y)
-                x, y, z = nx, ny, nz
+                extruded, (x, y, z) = head.move(_args(parts))
+                if not extruded:
+                    continue
+                belt_y = back_transform(t, x, y, z)[1]
+                if kind == "Custom":
+                    purge.append(belt_y)
+                elif kind not in _NOT_PRINT_TYPES:
+                    start = min(start, belt_y)
     if not purge or start is math.inf:
         return None
     return StartMeasure(purge_y=sum(purge) / len(purge), start_y=start)

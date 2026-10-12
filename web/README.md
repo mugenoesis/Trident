@@ -20,6 +20,15 @@ npm run dev        # Vite dev server on :5173, talking to the API on :8000
 The API needs to be running separately (e.g. the deployed `headless-orca`
 Docker container, or `cd ../api && uvicorn app.main:app --reload`).
 
+## How the main screen is put together
+
+The screen is `src/App.tsx` (the login gates) around `components/MainView.tsx`, which is made of a few panels
+(`MainViewerPanel`, `MainSettingsPanel`, `MainDialogs`, ...). All of its state lives in `hooks/useAppState.ts`; each hook next to it
+(`usePrinterChoice`, `useSlice`, `useProfileLists`, ...) holds the logic for one job and is called, in order, by
+`hooks/useAppController.ts`. The panels get the controller's result as `c` and read what they need from it. Plain logic that does not
+need React (building the slicer's settings, naming a default profile) is in `appHelpers.ts` and `sliceRequest.ts`.
+Biome holds every function to a cognitive complexity of 15, so a new feature goes in its own small hook or component.
+
 ## Known limitation: G-code preview's "Solid" mode is GPU-heavy
 
 The G-code preview (`src/components/GcodeViewer.tsx`) has two render modes.

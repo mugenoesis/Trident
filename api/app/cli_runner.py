@@ -11,6 +11,7 @@ Race condition: `cli_callback_mgr_t::start()` opens the FIFO
 has opened it for reading yet. So we must: create the FIFO, start a
 reader thread blocked on open-for-read, *then* spawn the subprocess.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,7 +50,7 @@ def _option_bounds() -> dict[str, tuple[float | None, float | None, str]]:
     cached for the process lifetime -- the binary's option schema can't
     change without a restart.
     """
-    global _option_bounds_cache
+    global _option_bounds_cache  # noqa: PLW0603 - process-lifetime cache, see the docstring
     if _option_bounds_cache is not None:
         return _option_bounds_cache
     bounds: dict[str, tuple[float | None, float | None, str]] = {}
@@ -189,9 +190,9 @@ class SliceResult:
 def _pipe_reader(fifo_path: Path, on_progress: ProgressCallback | None) -> None:
     """Block opening the FIFO for reading, then forward parsed JSON lines."""
     try:
-        with open(fifo_path, "r") as fifo:
-            for line in fifo:
-                line = line.strip()
+        with fifo_path.open() as fifo:
+            for raw_line in fifo:
+                line = raw_line.strip()
                 if not line:
                     continue
                 try:
@@ -299,51 +300,31 @@ def convert_model(
     return dest
 
 
-def run_slice(
+def _read_result_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        logger.error("result.json at %s is not valid JSON", path)
+        return None
+
+
+def _slice_command(
     *,
     model_path: Path,
     output_dir: Path,
-    printer_profile: str,
-    process_profile: str,
-    filament_profiles: list[str],
+    fifo_path: Path,
+    printer_detail: ProfileDetail,
+    profile_paths: tuple[str, str, list[str]],
     setting_overrides: dict[str, Any],
-    plate_index: int | None = None,
-    arrange: bool = True,
-    keep_positions: bool = False,
-    belt_shift_y: float = 0.0,
-    user_id: str | None = None,
-    on_progress: ProgressCallback | None = None,
-    timeout_s: float | None = None,
-) -> SliceResult:
-    # Resolved before the FIFO/reader thread exist so an unknown profile name
-    # fails fast without leaking a thread blocked forever on open()-for-read.
-    printer_detail = _resolve_profile_detail("machine", printer_profile, user_id)
-    process_detail = _resolve_profile_detail("process", process_profile, user_id)
-    filament_details = [_resolve_profile_detail("filament", f, user_id) for f in filament_profiles]
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    fifo_path = output_dir / "progress.pipe"
-    if fifo_path.exists():
-        fifo_path.unlink()
-    os.mkfifo(fifo_path)
-
-    reader_thread = threading.Thread(
-        target=_pipe_reader, args=(fifo_path, on_progress), daemon=True
-    )
-    reader_thread.start()
-
-    # Written fresh per slice (not cached alongside the catalog) since
-    # setting_overrides below apply as separate CLI flags on top, not into
-    # these files -- these just need to carry each profile's own resolved
-    # `inherits` chain, see _write_resolved_profile.
-    resolved_profiles_dir = tempfile.mkdtemp(prefix="headless-orca-resolved-")
-    printer_path = _write_resolved_profile(printer_detail, Path(resolved_profiles_dir), "printer")
-    process_path = _write_resolved_profile(process_detail, Path(resolved_profiles_dir), "process")
-    filament_paths = [
-        _write_resolved_profile(detail, Path(resolved_profiles_dir), f"filament_{i}")
-        for i, detail in enumerate(filament_details)
-    ]
-
+    plate_index: int | None,
+    arrange: bool,
+    keep_positions: bool,
+    belt_shift_y: float,
+) -> list[str]:
+    """The slicer's command line for one run."""
+    printer_path, process_path, filament_paths = profile_paths
     cmd = [
         settings.orcaslicer_bin,
         "--slice",
@@ -430,6 +411,64 @@ def run_slice(
         # "Textured PEI Plate") for every option, not just bools.
         cmd.append(f"--{key.replace('_', '-')}={value}")
     cmd.append(str(model_path))
+    return cmd
+
+
+def run_slice(
+    *,
+    model_path: Path,
+    output_dir: Path,
+    printer_profile: str,
+    process_profile: str,
+    filament_profiles: list[str],
+    setting_overrides: dict[str, Any],
+    plate_index: int | None = None,
+    arrange: bool = True,
+    keep_positions: bool = False,
+    belt_shift_y: float = 0.0,
+    user_id: str | None = None,
+    on_progress: ProgressCallback | None = None,
+    timeout_s: float | None = None,
+) -> SliceResult:
+    # Resolved before the FIFO/reader thread exist so an unknown profile name
+    # fails fast without leaking a thread blocked forever on open()-for-read.
+    printer_detail = _resolve_profile_detail("machine", printer_profile, user_id)
+    process_detail = _resolve_profile_detail("process", process_profile, user_id)
+    filament_details = [_resolve_profile_detail("filament", f, user_id) for f in filament_profiles]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fifo_path = output_dir / "progress.pipe"
+    if fifo_path.exists():
+        fifo_path.unlink()
+    os.mkfifo(fifo_path)
+
+    reader_thread = threading.Thread(target=_pipe_reader, args=(fifo_path, on_progress), daemon=True)
+    reader_thread.start()
+
+    # Written fresh per slice (not cached alongside the catalog) since
+    # setting_overrides below apply as separate CLI flags on top, not into
+    # these files -- these just need to carry each profile's own resolved
+    # `inherits` chain, see _write_resolved_profile.
+    resolved_profiles_dir = tempfile.mkdtemp(prefix="headless-orca-resolved-")
+    printer_path = _write_resolved_profile(printer_detail, Path(resolved_profiles_dir), "printer")
+    process_path = _write_resolved_profile(process_detail, Path(resolved_profiles_dir), "process")
+    filament_paths = [
+        _write_resolved_profile(detail, Path(resolved_profiles_dir), f"filament_{i}")
+        for i, detail in enumerate(filament_details)
+    ]
+
+    cmd = _slice_command(
+        model_path=model_path,
+        output_dir=output_dir,
+        fifo_path=fifo_path,
+        printer_detail=printer_detail,
+        profile_paths=(printer_path, process_path, filament_paths),
+        setting_overrides=setting_overrides,
+        plate_index=plate_index,
+        arrange=arrange,
+        keep_positions=keep_positions,
+        belt_shift_y=belt_shift_y,
+    )
 
     try:
         proc = subprocess.run(
@@ -442,21 +481,14 @@ def run_slice(
         stdout, stderr = proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
         return_code = -1
-        stdout = exc.stdout or ""
-        stderr = (exc.stderr or "") + "\n[cli_runner] timed out and was killed"
+        stdout = _as_text(exc.stdout)
+        stderr = _as_text(exc.stderr) + "\n[cli_runner] timed out and was killed"
     finally:
         reader_thread.join(timeout=2.0)
         fifo_path.unlink(missing_ok=True)
         shutil.rmtree(resolved_profiles_dir, ignore_errors=True)
 
-    result_json_path = output_dir / "result.json"
-    result_json: dict[str, Any] | None = None
-    if result_json_path.exists():
-        try:
-            result_json = json.loads(result_json_path.read_text())
-        except json.JSONDecodeError:
-            logger.error("result.json at %s is not valid JSON", result_json_path)
-
+    result_json = _read_result_json(output_dir / "result.json")
     return SliceResult(
         return_code=return_code,
         result_json=result_json,
@@ -490,3 +522,10 @@ def fetch_help_json() -> list[dict[str, Any]] | None:
     except json.JSONDecodeError:
         logger.warning("--help-json produced non-JSON output")
         return None
+
+
+def _as_text(value: str | bytes | None) -> str:
+    """Output captured before a timeout: subprocess hands it back as bytes even in text mode."""
+    if value is None:
+        return ""
+    return value.decode(errors="replace") if isinstance(value, bytes) else value

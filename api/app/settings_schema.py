@@ -10,6 +10,7 @@ output once vendor/orcaslicer is built (M1) — OrcaSlicer's help text
 format isn't nailed down without a live binary. Treat parse failures as
 "skip that line", not fatal.
 """
+
 from __future__ import annotations
 
 import re
@@ -48,9 +49,7 @@ def _parse_help_text(text: str) -> list[SettingDef]:
 
 
 def _fetch_help_text(flag: str) -> str:
-    proc = subprocess.run(
-        [settings.orcaslicer_bin, flag], capture_output=True, text=True, timeout=10
-    )
+    proc = subprocess.run([settings.orcaslicer_bin, flag], capture_output=True, text=True, timeout=10)
     return proc.stdout
 
 

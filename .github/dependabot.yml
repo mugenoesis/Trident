@@ -1,0 +1,35 @@
+# Weekly update pull requests. They run through the same CI as any other change.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Everything that only runs during development, as one PR instead of many.
+      dev-tools:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # biome.json names the Biome version in its $schema URL; update both together (npx biome migrate).
+      - dependency-name: '@biomejs/biome'
+
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tools:
+        patterns: [black, ruff, pyright, complexipy, vulture, pip-audit, pytest*]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly

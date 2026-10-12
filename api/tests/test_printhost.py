@@ -49,9 +49,7 @@ def test_octoprint_upload_hits_expected_url(tmp_path):
         seen["url"] = str(request.url)
         return httpx.Response(201, json={"done": True})
 
-    asyncio.run(
-        send_gcode(_printer(host_type="octoprint"), gcode, False, client=_client_for(handler))
-    )
+    asyncio.run(send_gcode(_printer(host_type="octoprint"), gcode, False, client=_client_for(handler)))
     assert seen["url"] == "http://printer.local:7125/api/files/local"
 
 
@@ -64,9 +62,7 @@ def test_apikey_sent_as_header(tmp_path):
         seen["apikey"] = request.headers.get("x-api-key")
         return httpx.Response(200)
 
-    asyncio.run(
-        send_gcode(_printer(printhost_apikey="secret123"), gcode, False, client=_client_for(handler))
-    )
+    asyncio.run(send_gcode(_printer(printhost_apikey="secret123"), gcode, False, client=_client_for(handler)))
     assert seen["apikey"] == "secret123"
 
 
@@ -128,9 +124,7 @@ def test_test_connection_octoprint_reports_server_text():
         assert str(request.url) == "http://printer.local:7125/api/version"
         return httpx.Response(200, json={"text": "OctoPrint 1.10.0"})
 
-    message = asyncio.run(
-        ping_printer(_printer(host_type="octoprint"), client=_client_for(handler))
-    )
+    message = asyncio.run(ping_printer(_printer(host_type="octoprint"), client=_client_for(handler)))
     assert message == "OctoPrint 1.10.0"
 
 
@@ -141,9 +135,7 @@ def test_test_connection_sends_apikey():
         seen["apikey"] = request.headers.get("x-api-key")
         return httpx.Response(200, json={})
 
-    asyncio.run(
-        ping_printer(_printer(printhost_apikey="secret123"), client=_client_for(handler))
-    )
+    asyncio.run(ping_printer(_printer(printhost_apikey="secret123"), client=_client_for(handler)))
     assert seen["apikey"] == "secret123"
 
 

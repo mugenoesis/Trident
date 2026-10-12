@@ -12,16 +12,19 @@ them in as the vendor IMPORTED_VENDOR). Nothing here trusts the upload: names
 are checked, sizes capped, and the print-host credential keys are dropped
 (this app keeps its own printer connection settings).
 """
+
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import math
 import re
 import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeGuard
 
 from .blocked_settings import PRINTHOST_KEYS
 from .config import settings
@@ -56,7 +59,7 @@ class ImportIssue:
     reason: str
 
 
-def valid_name(name: object) -> bool:
+def valid_name(name: object) -> TypeGuard[str]:
     """A preset name is shown in the UI and used in file names elsewhere, so
     it must be plain text: no path separators, no control characters."""
     return (
@@ -95,36 +98,43 @@ def _parse_one(filename: str, raw: bytes) -> tuple[ParsedPreset | None, ImportIs
     return ParsedPreset(kind, name, cleaned), None
 
 
+def _bundle_profile_files(zf: zipfile.ZipFile) -> list[tuple[str, zipfile.ZipInfo]]:
+    """(file name without its folders, entry) for each profile file in a bundle."""
+    files = []
+    for info in zf.infolist():
+        base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
+        if not info.is_dir() and base != _BUNDLE_METADATA and base.lower().endswith(".json"):
+            files.append((base, info))
+    return files
+
+
+def _parse_bundle(filename: str, zf: zipfile.ZipFile) -> tuple[list[ParsedPreset], list[ImportIssue]]:
+    if sum(i.file_size for i in zf.infolist() if not i.is_dir()) > _MAX_ZIP_UNCOMPRESSED:
+        return [], [ImportIssue(filename, None, "Bundle is too large")]
+    presets: list[ParsedPreset] = []
+    issues: list[ImportIssue] = []
+    for base, info in _bundle_profile_files(zf):
+        if len(presets) >= _MAX_PRESETS_PER_UPLOAD:
+            issues.append(ImportIssue(filename, None, f"Only the first {_MAX_PRESETS_PER_UPLOAD} profiles were read"))
+            break
+        preset, issue = _parse_one(f"{filename}/{base}", zf.read(info))
+        presets.extend([preset] if preset else [])
+        issues.extend([issue] if issue else [])
+    if not presets and not issues:
+        issues.append(ImportIssue(filename, None, "No profiles found in this bundle"))
+    return presets, issues
+
+
 def parse_upload(filename: str, raw: bytes) -> tuple[list[ParsedPreset], list[ImportIssue]]:
     """Presets found in one uploaded file, plus what could not be read."""
-    lower = filename.lower()
-    if not lower.endswith(_BUNDLE_SUFFIXES):
+    if not filename.lower().endswith(_BUNDLE_SUFFIXES):
         preset, issue = _parse_one(filename, raw)
         return ([preset] if preset else []), ([issue] if issue else [])
     try:
         zf = zipfile.ZipFile(io.BytesIO(raw))
     except zipfile.BadZipFile:
         return [], [ImportIssue(filename, None, "Not a valid bundle (zip) file")]
-    presets: list[ParsedPreset] = []
-    issues: list[ImportIssue] = []
-    infos = [i for i in zf.infolist() if not i.is_dir()]
-    if sum(i.file_size for i in infos) > _MAX_ZIP_UNCOMPRESSED:
-        return [], [ImportIssue(filename, None, "Bundle is too large")]
-    for info in infos:
-        base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
-        if base == _BUNDLE_METADATA or not base.lower().endswith(".json"):
-            continue
-        if len(presets) >= _MAX_PRESETS_PER_UPLOAD:
-            issues.append(ImportIssue(filename, None, f"Only the first {_MAX_PRESETS_PER_UPLOAD} profiles were read"))
-            break
-        preset, issue = _parse_one(f"{filename}/{base}", zf.read(info))
-        if preset:
-            presets.append(preset)
-        if issue:
-            issues.append(issue)
-    if not presets and not issues:
-        issues.append(ImportIssue(filename, None, "No profiles found in this bundle"))
-    return presets, issues
+    return _parse_bundle(filename, zf)
 
 
 class UserProfileStore:
@@ -138,10 +148,14 @@ class UserProfileStore:
 
     @staticmethod
     def _user_dir_name(user_id: str) -> str:
-        return user_id if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", user_id) else hashlib.sha1(user_id.encode()).hexdigest()
+        return (
+            user_id
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", user_id)
+            else hashlib.sha1(user_id.encode(), usedforsecurity=False).hexdigest()
+        )
 
     def _path(self, user_id: str, kind: str, name: str) -> Path:
-        digest = hashlib.sha1(name.encode()).hexdigest()
+        digest = hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest()
         return self._root() / self._user_dir_name(user_id) / kind / f"{digest}.json"
 
     def save(self, user_id: str, preset: ParsedPreset) -> None:
@@ -181,14 +195,34 @@ store = UserProfileStore()
 # inherited from the base and the material behaves exactly like it.
 
 MATERIAL_TYPES = (
-    "PLA", "PLA-CF", "PETG", "PETG-CF", "ABS", "ASA", "PC", "PA", "PA-CF", "PET", "PET-CF",
-    "TPU", "PVA", "HIPS", "PP", "PPS", "PEEK", "Other",
+    "PLA",
+    "PLA-CF",
+    "PETG",
+    "PETG-CF",
+    "ABS",
+    "ASA",
+    "PC",
+    "PA",
+    "PA-CF",
+    "PET",
+    "PET-CF",
+    "TPU",
+    "PVA",
+    "HIPS",
+    "PP",
+    "PPS",
+    "PEEK",
+    "Other",
 )
 
 # Bed temperature keys, one per build plate type (the first-layer twin is kept equal).
 PLATE_TEMP_KEYS = (
-    "cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp",
-    "textured_cool_plate_temp", "supertack_plate_temp",
+    "cool_plate_temp",
+    "eng_plate_temp",
+    "hot_plate_temp",
+    "textured_plate_temp",
+    "textured_cool_plate_temp",
+    "supertack_plate_temp",
 )
 
 # key -> (lowest, highest, whole number?). Every one is a per-extruder list in the preset.
@@ -203,19 +237,33 @@ _MATERIAL_NUMBERS: dict[str, tuple[float, float, bool]] = {
     "filament_diameter": (0.5, 5, False),
     "fan_min_speed": (0, 100, True),
     "fan_max_speed": (0, 100, True),
-    **{k: (0, 200, True) for k in PLATE_TEMP_KEYS},
+    **dict.fromkeys(PLATE_TEMP_KEYS, (0, 200, True)),
 }
 
 
 # Keys the material form sets itself; every other filament key a preset holds is an "advanced" override.
 FILAMENT_MANAGED_KEYS = frozenset(
     {
-        "filament_type", "filament_vendor", "nozzle_temperature", "nozzle_temperature_initial_layer",
-        "nozzle_temperature_range_low", "nozzle_temperature_range_high", "filament_flow_ratio",
-        "filament_max_volumetric_speed", "filament_density", "filament_diameter", "fan_min_speed", "fan_max_speed",
-        "compatible_printers", "compatible_printers_condition",
+        "filament_type",
+        "filament_vendor",
+        "nozzle_temperature",
+        "nozzle_temperature_initial_layer",
+        "nozzle_temperature_range_low",
+        "nozzle_temperature_range_high",
+        "filament_flow_ratio",
+        "filament_max_volumetric_speed",
+        "filament_density",
+        "filament_diameter",
+        "fan_min_speed",
+        "fan_max_speed",
+        "compatible_printers",
+        "compatible_printers_condition",
     }
-    | {k for key in ("cool", "eng", "hot", "textured", "textured_cool", "supertack") for k in (f"{key}_plate_temp", f"{key}_plate_temp_initial_layer")}
+    | {
+        k
+        for key in ("cool", "eng", "hot", "textured", "textured_cool", "supertack")
+        for k in (f"{key}_plate_temp", f"{key}_plate_temp_initial_layer")
+    }
 )
 
 
@@ -224,7 +272,7 @@ class MaterialError(ValueError):
 
 
 def _fmt(value: float, whole: bool) -> str:
-    return str(int(round(value))) if whole else format(value, "g")
+    return str(round(value)) if whole else format(value, "g")
 
 
 def _list_like(base: dict, key: str, text: str) -> list[str]:
@@ -232,6 +280,37 @@ def _list_like(base: dict, key: str, text: str) -> list[str]:
     current = base.get(key)
     count = len(current) if isinstance(current, list) and current else 1
     return [text] * count
+
+
+_MATERIAL_LABELS = {
+    "nozzle_temperature": "Nozzle temperature",
+    "nozzle_temperature_initial_layer": "First layer temperature",
+    "nozzle_temperature_range_low": "Lowest nozzle temperature",
+    "nozzle_temperature_range_high": "Highest nozzle temperature",
+    "filament_flow_ratio": "Flow ratio",
+    "filament_max_volumetric_speed": "Max volumetric speed",
+    "filament_density": "Density",
+    "filament_diameter": "Diameter",
+    "fan_min_speed": "Minimum fan speed",
+    "fan_max_speed": "Maximum fan speed",
+}
+
+
+def _material_number(form: dict, key: str) -> float | None:
+    """One number of the material form, checked against its range; None for a plate temperature left out."""
+    label = _MATERIAL_LABELS.get(key, key.replace("_", " "))
+    lo, hi, _whole = _MATERIAL_NUMBERS[key]
+    if form.get(key) is None:
+        if key in PLATE_TEMP_KEYS:
+            return None  # plate types the form did not offer keep the base value
+        raise MaterialError(f"{_MATERIAL_LABELS.get(key, key)} is missing")
+    try:
+        number = float(form[key])
+    except (TypeError, ValueError):
+        raise MaterialError(f"{label} must be a number") from None
+    if not math.isfinite(number) or not lo <= number <= hi:
+        raise MaterialError(f"{label} must be between {lo:g} and {hi:g}")
+    return number
 
 
 def build_material_overrides(base: dict, form: dict) -> dict:
@@ -249,33 +328,17 @@ def build_material_overrides(base: dict, form: dict) -> dict:
         raise MaterialError("The brand is not valid")
     out["filament_vendor"] = _list_like(base, "filament_vendor", vendor or "Generic")
 
-    labels = {
-        "nozzle_temperature": "Nozzle temperature", "nozzle_temperature_initial_layer": "First layer temperature",
-        "nozzle_temperature_range_low": "Lowest nozzle temperature", "nozzle_temperature_range_high": "Highest nozzle temperature",
-        "filament_flow_ratio": "Flow ratio", "filament_max_volumetric_speed": "Max volumetric speed",
-        "filament_density": "Density", "filament_diameter": "Diameter", "fan_min_speed": "Minimum fan speed",
-        "fan_max_speed": "Maximum fan speed",
-    }
     values: dict[str, float] = {}
-    for key, (lo, hi, whole) in _MATERIAL_NUMBERS.items():
-        if key not in form or form[key] is None:
-            if key in PLATE_TEMP_KEYS:
-                continue  # plate types the form did not offer keep the base value
-            raise MaterialError(f"{labels.get(key, key)} is missing")
-        try:
-            number = float(form[key])
-        except (TypeError, ValueError):
-            raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be a number") from None
-        if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
-            raise MaterialError(f"{labels.get(key, key.replace('_', ' '))} must be between {lo:g} and {hi:g}")
-        values[key] = number
+    for key in _MATERIAL_NUMBERS:
+        number = _material_number(form, key)
+        if number is not None:
+            values[key] = number
     if values["nozzle_temperature_range_low"] > values["nozzle_temperature_range_high"]:
         raise MaterialError("The lowest nozzle temperature is above the highest")
     if values["fan_min_speed"] > values["fan_max_speed"]:
         raise MaterialError("The minimum fan speed is above the maximum")
     for key, number in values.items():
-        whole = _MATERIAL_NUMBERS[key][2]
-        text = _fmt(number, whole)
+        text = _fmt(number, _MATERIAL_NUMBERS[key][2])
         out[key] = _list_like(base, key, text)
         if key in PLATE_TEMP_KEYS:
             out[key + "_initial_layer"] = _list_like(base, key + "_initial_layer", text)
@@ -290,7 +353,21 @@ def compatible_printer_names(data: dict) -> list[str]:
     return [str(v) for v in value or [] if str(v).strip()]
 
 
-def build_material_preset(name: str, inherits: str, base: dict, form: dict, existing: dict | None = None) -> ParsedPreset:
+def _check_advanced(advanced: object, extra_allowed: frozenset[str] | set[str]) -> None:
+    if advanced is None:
+        return
+    if not isinstance(advanced, dict) or len(advanced) > 400:
+        raise MaterialError("The advanced settings are not valid")
+    for key, value in advanced.items():
+        if key not in extra_allowed:
+            raise MaterialError(f"'{key}' is not a material setting that can be added here")
+        if not isinstance(value, str) or len(value) > 50000 or "\x00" in value:
+            raise MaterialError(f"The value of '{key}' is not valid")
+
+
+def build_material_preset(
+    name: str, inherits: str, base: dict, form: dict, existing: dict | None = None
+) -> ParsedPreset:
     """The preset to store: the form's overrides over `existing` (when editing,
     so other keys the preset already had are kept) pointing at `inherits`."""
     if not valid_name(name):
@@ -299,14 +376,7 @@ def build_material_preset(name: str, inherits: str, base: dict, form: dict, exis
 
     extra_allowed = FILAMENT_KEYS - FILAMENT_MANAGED_KEYS - _PRINTER_META_KEYS
     advanced = form.get("advanced")
-    if advanced is not None:
-        if not isinstance(advanced, dict) or len(advanced) > 400:
-            raise MaterialError("The advanced settings are not valid")
-        for key, value in advanced.items():
-            if key not in extra_allowed:
-                raise MaterialError(f"'{key}' is not a material setting that can be added here")
-            if not isinstance(value, str) or len(value) > 50000 or "\x00" in value:
-                raise MaterialError(f"The value of '{key}' is not valid")
+    _check_advanced(advanced, extra_allowed)
     # With no advanced list given, a material keeps the extra settings it already has; with one, it holds
     # exactly those.
     data = {k: v for k, v in (existing or {}).items() if advanced is None or k not in extra_allowed}
@@ -360,11 +430,28 @@ ENDLESS_BELT_LENGTH_MM = 2000.0
 # Keys the form sets itself; every other printer key a preset holds is an "advanced" override.
 PRINTER_MANAGED_KEYS = frozenset(
     {
-        "printable_area", "printable_height", "belt_printer", "belt_printer_infinite_y", "belt_slice_rotation_angle",
-        "nozzle_diameter", "nozzle_type", "gcode_flavor", "machine_start_gcode", "machine_end_gcode",
-        "machine_max_speed_x", "machine_max_speed_y", "machine_max_acceleration_x", "machine_max_acceleration_y",
-        "machine_max_acceleration_extruding", "machine_max_acceleration_travel", "retraction_length",
-        "retraction_speed", "deretraction_speed", "z_hop", "auxiliary_fan", "default_print_profile",
+        "printable_area",
+        "printable_height",
+        "belt_printer",
+        "belt_printer_infinite_y",
+        "belt_slice_rotation_angle",
+        "nozzle_diameter",
+        "nozzle_type",
+        "gcode_flavor",
+        "machine_start_gcode",
+        "machine_end_gcode",
+        "machine_max_speed_x",
+        "machine_max_speed_y",
+        "machine_max_acceleration_x",
+        "machine_max_acceleration_y",
+        "machine_max_acceleration_extruding",
+        "machine_max_acceleration_travel",
+        "retraction_length",
+        "retraction_speed",
+        "deretraction_speed",
+        "z_hop",
+        "auxiliary_fan",
+        "default_print_profile",
         "default_filament_profile",
     }
 )
@@ -404,7 +491,7 @@ def _allowed_values(key: str) -> list[str] | None:
                 if item.get("key") == key:
                     values = item.get("enum_values")
                     break
-        except Exception:  # noqa: BLE001 - validation is best effort
+        except Exception:
             values = None
         _enum_cache[key] = values
     return _enum_cache[key]
@@ -418,7 +505,7 @@ def _number(form: dict, key: str, label: str, lo: float, hi: float) -> float | N
         number = float(value)
     except (TypeError, ValueError):
         raise PrinterError(f"{label} must be a number") from None
-    if number != number or number in (float("inf"), float("-inf")) or not lo <= number <= hi:
+    if not math.isfinite(number) or not lo <= number <= hi:
         raise PrinterError(f"{label} must be between {lo:g} and {hi:g}")
     return number
 
@@ -444,7 +531,12 @@ def _area_points(shape: str, x0: float, y0: float, width: float, depth: float) -
             for i in range(48)
         ]
     x1, y1 = x0 + width, y0 + depth
-    return [f"{_fmt(x0, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y0, False)}", f"{_fmt(x1, False)}x{_fmt(y1, False)}", f"{_fmt(x0, False)}x{_fmt(y1, False)}"]
+    return [
+        f"{_fmt(x0, False)}x{_fmt(y0, False)}",
+        f"{_fmt(x1, False)}x{_fmt(y0, False)}",
+        f"{_fmt(x1, False)}x{_fmt(y1, False)}",
+        f"{_fmt(x0, False)}x{_fmt(y1, False)}",
+    ]
 
 
 def _encode_extra(base_value: object, text: str) -> object:
@@ -455,62 +547,88 @@ def _encode_extra(base_value: object, text: str) -> object:
     return text
 
 
-def build_printer_overrides(base: dict, form: dict) -> dict:
-    """The preset keys a printer form sets, validated, in the shape presets use. `base` is the resolved preset
-    the printer is based on (for list lengths and the belt state); a value the form leaves out is inherited."""
-    out: dict = {}
-    flavour = _text(form, "gcode_flavor", "The G-code flavour", 40)
-    if flavour:
-        allowed = _allowed_values("gcode_flavor")
-        if allowed is not None and flavour not in allowed:
-            raise PrinterError("Choose one of the listed G-code flavours")
-        out["gcode_flavor"] = flavour
-    nozzle_type = _text(form, "nozzle_type", "The nozzle type", 40)
-    if nozzle_type:
-        allowed = _allowed_values("nozzle_type")
-        if allowed is not None and nozzle_type not in allowed:
-            raise PrinterError("Choose one of the listed nozzle types")
-        out["nozzle_type"] = _list_like(base, "nozzle_type", nozzle_type)
+def _choice(form: dict, key: str, label: str, plural: str) -> str | None:
+    """A text value that has to be one of the slicer's own listed values."""
+    value = _text(form, key, label, 40)
+    if not value:
+        return None
+    allowed = _allowed_values(key)
+    if allowed is not None and value not in allowed:
+        raise PrinterError(f"Choose one of the listed {plural}")
+    return value
 
-    nozzle = _number(form, "nozzle_diameter", "The nozzle diameter", 0.1, 2.0)
-    if nozzle is not None:
-        out["nozzle_diameter"] = _list_like(base, "nozzle_diameter", _fmt(nozzle, False))
 
-    # Build plate. A belt printer's length is the belt's: endless (drawn as a long plate, no limit when slicing)
-    # or a real length.
+def _belt_overrides(base: dict, form: dict, depth: float | None) -> tuple[dict, float | None]:
+    """The belt keys the form sets, and the bed depth they imply (a belt printer's length is the belt's: endless,
+    drawn as a long plate with no limit when slicing, or a real length)."""
     belt = form.get("belt")
     belt = bool(base.get("belt_printer") in ("1", 1, True)) if belt is None else bool(belt)
+    if not belt:
+        if form.get("belt") is None:
+            return {}, depth
+        return {"belt_printer": "0", "belt_printer_infinite_y": "0"}, depth
+    endless = form.get("belt_endless", True)
+    length = ENDLESS_BELT_LENGTH_MM if endless else _number(form, "belt_length", "The belt length", 10, 100000)
+    if length is None:
+        raise PrinterError("Give the belt length, or tick Endless belt")
+    out = {"belt_printer": "1", "belt_printer_infinite_y": "1" if endless else "0"}
+    angle = _number(form, "belt_angle", "The belt angle", 1, 89)
+    if angle is not None:
+        out["belt_slice_rotation_angle"] = _fmt(angle, False)
+    return out, length
+
+
+def _bed_area(form: dict, shape: str, width: float, depth: float | None) -> list:
+    if form.get("origin_centre"):
+        span = width if shape == "circle" else depth
+        x0, y0 = -width / 2, -(span or 0) / 2
+    else:
+        x0 = _number(form, "origin_x", "The origin X offset", -5000, 5000) or 0.0
+        y0 = _number(form, "origin_y", "The origin Y offset", -5000, 5000) or 0.0
+    return _area_points(shape, x0, y0, width, depth or width)
+
+
+# (form field, label, lowest, highest, the preset keys it sets): one number that lands in several keys
+_SPREAD_NUMBERS = (
+    ("max_speed", "The maximum speed", 1, 20000, ("machine_max_speed_x", "machine_max_speed_y")),
+    (
+        "max_acceleration",
+        "The maximum acceleration",
+        1,
+        200000,
+        (
+            "machine_max_acceleration_x",
+            "machine_max_acceleration_y",
+            "machine_max_acceleration_extruding",
+            "machine_max_acceleration_travel",
+        ),
+    ),
+    ("retraction_length", "The retraction length", 0, 100, ("retraction_length",)),
+    ("retraction_speed", "The retraction speed", 1, 1000, ("retraction_speed", "deretraction_speed")),
+    ("z_hop", "The Z hop", 0, 50, ("z_hop",)),
+)
+
+
+def _bed_overrides(base: dict, form: dict) -> dict:
+    """The build plate: its belt, shape, size and origin, and the maximum height."""
+    out: dict = {}
     shape = form.get("shape") or "rectangle"
     if shape not in ("rectangle", "circle"):
         raise PrinterError("The bed shape must be a rectangle or a circle")
     width = _number(form, "width", "The bed width", 10, 5000)
     depth = _number(form, "depth", "The bed depth", 10, 5000)
     height = _number(form, "height", "The maximum height", 10, 5000)
-    if belt:
-        endless = form.get("belt_endless", True)
-        length = ENDLESS_BELT_LENGTH_MM if endless else _number(form, "belt_length", "The belt length", 10, 100000)
-        if length is None:
-            raise PrinterError("Give the belt length, or tick Endless belt")
-        depth = length
-        out["belt_printer"] = "1"
-        out["belt_printer_infinite_y"] = "1" if endless else "0"
-        angle = _number(form, "belt_angle", "The belt angle", 1, 89)
-        if angle is not None:
-            out["belt_slice_rotation_angle"] = _fmt(angle, False)
-    elif form.get("belt") is not None:
-        out["belt_printer"] = "0"
-        out["belt_printer_infinite_y"] = "0"
+    belt_keys, depth = _belt_overrides(base, form, depth)
+    out.update(belt_keys)
     if width is not None and (depth is not None or shape == "circle"):
-        if form.get("origin_centre"):
-            span = width if shape == "circle" else depth
-            x0, y0 = -width / 2, -(span or 0) / 2
-        else:
-            x0 = _number(form, "origin_x", "The origin X offset", -5000, 5000) or 0.0
-            y0 = _number(form, "origin_y", "The origin Y offset", -5000, 5000) or 0.0
-        out["printable_area"] = _area_points(shape, x0, y0, width, depth or width)
+        out["printable_area"] = _bed_area(form, shape, width, depth)
     if height is not None:
         out["printable_height"] = _fmt(height, False)
+    return out
 
+
+def _gcode_overrides(form: dict) -> dict:
+    out: dict = {}
     start = _text(form, "start_gcode", "The start G-code")
     if start is not None:
         if not start.strip():
@@ -519,34 +637,43 @@ def build_printer_overrides(base: dict, form: dict) -> dict:
     end = _text(form, "end_gcode", "The end G-code")
     if end is not None:
         out["machine_end_gcode"] = end
+    return out
 
-    speed = _number(form, "max_speed", "The maximum speed", 1, 20000)
-    if speed is not None:
-        for key in ("machine_max_speed_x", "machine_max_speed_y"):
-            out[key] = _list_like(base, key, _fmt(speed, False))
-    accel = _number(form, "max_acceleration", "The maximum acceleration", 1, 200000)
-    if accel is not None:
-        for key in ("machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_extruding", "machine_max_acceleration_travel"):
-            out[key] = _list_like(base, key, _fmt(accel, False))
-    retract = _number(form, "retraction_length", "The retraction length", 0, 100)
-    if retract is not None:
-        out["retraction_length"] = _list_like(base, "retraction_length", _fmt(retract, False))
-    retract_speed = _number(form, "retraction_speed", "The retraction speed", 1, 1000)
-    if retract_speed is not None:
-        out["retraction_speed"] = _list_like(base, "retraction_speed", _fmt(retract_speed, False))
-        out["deretraction_speed"] = _list_like(base, "deretraction_speed", _fmt(retract_speed, False))
-    z_hop = _number(form, "z_hop", "The Z hop", 0, 50)
-    if z_hop is not None:
-        out["z_hop"] = _list_like(base, "z_hop", _fmt(z_hop, False))
-    if form.get("auxiliary_fan") is not None:
-        out["auxiliary_fan"] = "1" if form["auxiliary_fan"] else "0"
 
+def _default_overrides(form: dict) -> dict:
+    out: dict = {}
     process = _text(form, "default_process", "The default process", 200)
     if process:
         out["default_print_profile"] = process
     material = _text(form, "default_material", "The default material", 200)
     if material:
         out["default_filament_profile"] = [material]
+    return out
+
+
+def build_printer_overrides(base: dict, form: dict) -> dict:
+    """The preset keys a printer form sets, validated, in the shape presets use. `base` is the resolved preset
+    the printer is based on (for list lengths and the belt state); a value the form leaves out is inherited."""
+    out: dict = {}
+    flavour = _choice(form, "gcode_flavor", "The G-code flavour", "G-code flavours")
+    if flavour:
+        out["gcode_flavor"] = flavour
+    nozzle_type = _choice(form, "nozzle_type", "The nozzle type", "nozzle types")
+    if nozzle_type:
+        out["nozzle_type"] = _list_like(base, "nozzle_type", nozzle_type)
+    nozzle = _number(form, "nozzle_diameter", "The nozzle diameter", 0.1, 2.0)
+    if nozzle is not None:
+        out["nozzle_diameter"] = _list_like(base, "nozzle_diameter", _fmt(nozzle, False))
+    out.update(_bed_overrides(base, form))
+    out.update(_gcode_overrides(form))
+    for field_name, label, lowest, highest, keys in _SPREAD_NUMBERS:
+        value = _number(form, field_name, label, lowest, highest)
+        if value is not None:
+            for key in keys:
+                out[key] = _list_like(base, key, _fmt(value, False))
+    if form.get("auxiliary_fan") is not None:
+        out["auxiliary_fan"] = "1" if form["auxiliary_fan"] else "0"
+    out.update(_default_overrides(form))
     return out
 
 

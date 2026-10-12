@@ -4,9 +4,10 @@ import zipfile
 
 import pytest
 
-from app import cli_runner, profiles as profiles_module, userprofiles
-from app.profiles import ProfileCatalog
+from app import cli_runner, userprofiles
+from app import profiles as profiles_module
 from app.config import settings
+from app.profiles import ProfileCatalog
 
 
 def _write(vendor_dir, subdir, name, kind, extra=None):
@@ -23,7 +24,9 @@ def catalog(tmp_path, monkeypatch):
     profiles_dir.mkdir()
     (profiles_dir / "Acme.json").write_text(json.dumps({"name": "Acme"}))
     vendor = profiles_dir / "Acme"
-    _write(vendor, "machine", "fdm_base", "machine", {"instantiation": "false", "belt_printer": "1", "from_base": "yes"})
+    _write(
+        vendor, "machine", "fdm_base", "machine", {"instantiation": "false", "belt_printer": "1", "from_base": "yes"}
+    )
     _write(vendor, "machine", "Acme One 0.4", "machine", {"inherits": "fdm_base"})
     cat = profiles_module.ProfileCatalog(profiles_dir)
     cat.load()
@@ -35,7 +38,9 @@ def _preset(name="My Printer", kind="machine", **extra):
 
 
 def test_single_json_preset_is_parsed():
-    presets, issues = userprofiles.parse_upload("p.json", _preset(inherits="Acme One 0.4", print_host="http://x", printhost_apikey="secret"))
+    presets, issues = userprofiles.parse_upload(
+        "p.json", _preset(inherits="Acme One 0.4", print_host="http://x", printhost_apikey="secret")
+    )
     assert issues == []
     (p,) = presets
     assert (p.kind, p.name) == ("machine", "My Printer")
@@ -49,7 +54,15 @@ def test_kind_falls_back_to_the_settings_id_key():
     assert p.kind == "filament"
 
 
-@pytest.mark.parametrize("bad", [b"not json", b"[1, 2]", json.dumps({"name": "../evil", "type": "machine"}).encode(), json.dumps({"name": "x"}).encode()])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        b"not json",
+        b"[1, 2]",
+        json.dumps({"name": "../evil", "type": "machine"}).encode(),
+        json.dumps({"name": "x"}).encode(),
+    ],
+)
 def test_bad_presets_are_reported_not_raised(bad):
     presets, issues = userprofiles.parse_upload("bad.json", bad)
     assert presets == [] and len(issues) == 1
@@ -130,7 +143,10 @@ def test_slice_resolution_uses_the_users_profile(catalog, monkeypatch):
 
 def test_import_routes_end_to_end(client, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "models_dir", tmp_path / "models")
-    files = [("files", ("mine.json", _preset("Route Printer"), "application/json")), ("files", ("junk.json", b"{", "application/json"))]
+    files = [
+        ("files", ("mine.json", _preset("Route Printer"), "application/json")),
+        ("files", ("junk.json", b"{", "application/json")),
+    ]
     body = client.post("/profiles/import", files=files).json()
     assert [i["name"] for i in body["imported"]] == ["Route Printer"]
     assert len(body["skipped"]) == 1
@@ -175,12 +191,20 @@ def material_catalog(catalog, tmp_path):
 
 def _form(**over):
     form = {
-        "filament_type": "PLA", "filament_vendor": "Polymaker",
-        "nozzle_temperature": 215, "nozzle_temperature_initial_layer": 220,
-        "nozzle_temperature_range_low": 190, "nozzle_temperature_range_high": 240,
-        "hot_plate_temp": 65, "cool_plate_temp": 0,
-        "filament_flow_ratio": 0.97, "filament_max_volumetric_speed": 14, "filament_density": 1.24,
-        "filament_diameter": 1.75, "fan_min_speed": 80, "fan_max_speed": 100,
+        "filament_type": "PLA",
+        "filament_vendor": "Polymaker",
+        "nozzle_temperature": 215,
+        "nozzle_temperature_initial_layer": 220,
+        "nozzle_temperature_range_low": 190,
+        "nozzle_temperature_range_high": 240,
+        "hot_plate_temp": 65,
+        "cool_plate_temp": 0,
+        "filament_flow_ratio": 0.97,
+        "filament_max_volumetric_speed": 14,
+        "filament_density": 1.24,
+        "filament_diameter": 1.75,
+        "fan_min_speed": 80,
+        "fan_max_speed": 100,
     }
     form.update(over)
     return form
@@ -266,12 +290,21 @@ def test_material_with_an_unknown_base_is_refused(material_catalog):
 
 def _api_form(**over):
     form = {
-        "name": "Teal PLA", "base_name": "Acme PLA", "filament_type": "PLA", "filament_vendor": "Polymaker",
-        "nozzle_temperature": 215, "nozzle_temperature_initial_layer": 220,
-        "nozzle_temperature_range_low": 190, "nozzle_temperature_range_high": 240,
+        "name": "Teal PLA",
+        "base_name": "Acme PLA",
+        "filament_type": "PLA",
+        "filament_vendor": "Polymaker",
+        "nozzle_temperature": 215,
+        "nozzle_temperature_initial_layer": 220,
+        "nozzle_temperature_range_low": 190,
+        "nozzle_temperature_range_high": 240,
         "plate_temps": {"hot_plate_temp": 65, "cool_plate_temp": 0},
-        "filament_flow_ratio": 0.97, "filament_max_volumetric_speed": 14, "filament_density": 1.24,
-        "filament_diameter": 1.75, "fan_min_speed": 80, "fan_max_speed": 100,
+        "filament_flow_ratio": 0.97,
+        "filament_max_volumetric_speed": 14,
+        "filament_density": 1.24,
+        "filament_diameter": 1.75,
+        "fan_min_speed": 80,
+        "fan_max_speed": 100,
     }
     form.update(over)
     return form
@@ -304,23 +337,33 @@ def test_filament_routes_create_edit_and_delete(client, material_catalog, monkey
 
 
 def test_material_printer_scope_is_stored_listed_and_kept_on_edit(material_catalog):
-    material_catalog.save_filament("u1", "U1 only", _form(printers=["Acme U1 (0.4)", " Acme U1 (0.4)", ""]), base_name="Acme PLA")
+    material_catalog.save_filament(
+        "u1", "U1 only", _form(printers=["Acme U1 (0.4)", " Acme U1 (0.4)", ""]), base_name="Acme PLA"
+    )
     material_catalog.save_filament("u1", "Anywhere", _form(), base_name="Acme PLA")
     listed = {p.name: p for p in material_catalog.list("u1") if p.vendor == userprofiles.IMPORTED_VENDOR}
     assert listed["U1 only"].compatible_printers == ["Acme U1 (0.4)"]  # trimmed, de-duplicated
     assert listed["Anywhere"].compatible_printers == []
     # editing without a choice keeps the stored scope; an explicit choice changes it
     material_catalog.save_filament("u1", "U1 only", _form(nozzle_temperature=210), edit=True)
-    assert material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data["compatible_printers"] == ["Acme U1 (0.4)"]
+    assert material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data[
+        "compatible_printers"
+    ] == ["Acme U1 (0.4)"]
     material_catalog.save_filament("u1", "U1 only", _form(printers=[]), edit=True)
-    assert material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data["compatible_printers"] == []
+    assert (
+        material_catalog.get(userprofiles.IMPORTED_VENDOR, "filament", "U1 only", "u1").data["compatible_printers"]
+        == []
+    )
 
 
 def test_built_in_profiles_report_no_printer_scope(material_catalog):
-    assert all(p.compatible_printers == [] for p in material_catalog.list("u1") if p.vendor != userprofiles.IMPORTED_VENDOR)
+    assert all(
+        p.compatible_printers == [] for p in material_catalog.list("u1") if p.vendor != userprofiles.IMPORTED_VENDOR
+    )
 
 
 # --- printers made in the app ------------------------------------------------
+
 
 @pytest.fixture
 def printer_catalog(tmp_path, monkeypatch):
@@ -331,27 +374,57 @@ def printer_catalog(tmp_path, monkeypatch):
     vendor = tmp_path / "profiles" / "Acme" / "machine"
     vendor.mkdir(parents=True)
     (tmp_path / "profiles" / "Acme.json").write_text("{}")
-    (vendor / "Acme X 0.4 nozzle.json").write_text(json.dumps({
-        "name": "Acme X 0.4 nozzle", "type": "machine", "instantiation": "true", "printer_model": "Acme X",
-        "nozzle_diameter": ["0.4"], "printable_area": ["0x0", "220x0", "220x220", "0x220"], "printable_height": "250",
-        "gcode_flavor": "marlin2", "machine_start_gcode": "G28\nM109 S[nozzle_temperature_initial_layer]",
-        "machine_max_speed_x": ["500", "200"], "machine_max_speed_y": ["500", "200"],
-        "retraction_length": ["0.8", "0.8"], "z_hop": ["0.4", "0.4"],
-        "default_print_profile": "0.20mm Standard @Acme", "default_filament_profile": ["Acme PLA"],
-    }))
+    (vendor / "Acme X 0.4 nozzle.json").write_text(
+        json.dumps(
+            {
+                "name": "Acme X 0.4 nozzle",
+                "type": "machine",
+                "instantiation": "true",
+                "printer_model": "Acme X",
+                "nozzle_diameter": ["0.4"],
+                "printable_area": ["0x0", "220x0", "220x220", "0x220"],
+                "printable_height": "250",
+                "gcode_flavor": "marlin2",
+                "machine_start_gcode": "G28\nM109 S[nozzle_temperature_initial_layer]",
+                "machine_max_speed_x": ["500", "200"],
+                "machine_max_speed_y": ["500", "200"],
+                "retraction_length": ["0.8", "0.8"],
+                "z_hop": ["0.4", "0.4"],
+                "default_print_profile": "0.20mm Standard @Acme",
+                "default_filament_profile": ["Acme PLA"],
+            }
+        )
+    )
     custom = tmp_path / "profiles" / "Custom" / "machine"
     custom.mkdir(parents=True)
     (tmp_path / "profiles" / "Custom.json").write_text("{}")
     for generic, extra in (
         ("MyMarlin 0.4 nozzle", {"gcode_flavor": "marlin"}),
         ("MyKlipper 0.4 nozzle", {"gcode_flavor": "klipper"}),
-        ("MyBeltPrinter 0.4 nozzle", {"gcode_flavor": "klipper", "belt_printer": "1", "belt_printer_infinite_y": "1", "belt_slice_rotation_angle": "45"}),
+        (
+            "MyBeltPrinter 0.4 nozzle",
+            {
+                "gcode_flavor": "klipper",
+                "belt_printer": "1",
+                "belt_printer_infinite_y": "1",
+                "belt_slice_rotation_angle": "45",
+            },
+        ),
     ):
-        (custom / f"{generic}.json").write_text(json.dumps({
-            "name": generic, "type": "machine", "instantiation": "true", "nozzle_diameter": ["0.4"],
-            "printable_area": ["0x0", "250x0", "250x250", "0x250"], "printable_height": "250",
-            "machine_start_gcode": "G28", **extra,
-        }))
+        (custom / f"{generic}.json").write_text(
+            json.dumps(
+                {
+                    "name": generic,
+                    "type": "machine",
+                    "instantiation": "true",
+                    "nozzle_diameter": ["0.4"],
+                    "printable_area": ["0x0", "250x0", "250x250", "0x250"],
+                    "printable_height": "250",
+                    "machine_start_gcode": "G28",
+                    **extra,
+                }
+            )
+        )
     cat.load()
     return cat
 
@@ -363,7 +436,12 @@ def _pform(**over):
 
 
 def test_printer_copy_inherits_the_base_and_sets_the_bed(printer_catalog):
-    ref = printer_catalog.save_printer("u1", "My Acme", _pform(origin_x=5, origin_y=-3, max_speed=300, retraction_length=1.2, z_hop=0.6), base_name="Acme X 0.4 nozzle")
+    ref = printer_catalog.save_printer(
+        "u1",
+        "My Acme",
+        _pform(origin_x=5, origin_y=-3, max_speed=300, retraction_length=1.2, z_hop=0.6),
+        base_name="Acme X 0.4 nozzle",
+    )
     assert (ref.kind, ref.name, ref.inherits) == ("machine", "My Acme", "Acme X 0.4 nozzle")
     d = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "My Acme", "u1").data
     assert d["printable_area"] == ["5x-3", "305x-3", "305x217", "5x217"] and d["printable_height"] == "250"
@@ -377,7 +455,10 @@ def test_printer_with_no_base_starts_from_the_generic_printer_for_the_firmware(p
     marlin = printer_catalog.save_printer("u1", "From nothing", _pform(gcode_flavor="marlin2"))
     klipper = printer_catalog.save_printer("u1", "Klipper one", _pform(gcode_flavor="klipper"))
     assert marlin.inherits == "MyMarlin 0.4 nozzle" and klipper.inherits == "MyKlipper 0.4 nozzle"
-    assert printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "From nothing", "u1").data["gcode_flavor"] == "marlin2"
+    assert (
+        printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "From nothing", "u1").data["gcode_flavor"]
+        == "marlin2"
+    )
 
 
 def test_endless_belt_gets_a_long_plate_and_the_flag(printer_catalog):
@@ -398,20 +479,36 @@ def test_limited_belt_uses_the_given_length(printer_catalog):
 
 def test_centred_and_round_beds(printer_catalog):
     printer_catalog.save_printer("u1", "Centred", _pform(origin_centre=True))
-    assert printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Centred", "u1").data["printable_area"] == ["-150x-110", "150x-110", "150x110", "-150x110"]
+    assert printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Centred", "u1").data["printable_area"] == [
+        "-150x-110",
+        "150x-110",
+        "150x110",
+        "-150x110",
+    ]
     printer_catalog.save_printer("u1", "Round", _pform(shape="circle", width=200, origin_centre=True))
     pts = printer_catalog.get(userprofiles.IMPORTED_VENDOR, "machine", "Round", "u1").data["printable_area"]
     assert len(pts) == 48 and "100x0" in pts
 
 
 def test_printer_advanced_settings_keep_the_base_shape_and_can_be_removed(printer_catalog):
-    printer_catalog.save_printer("u1", "Adv", _pform(advanced={"machine_pause_gcode": "M601", "bed_exclude_area": "0x0, 20x0, 20x20"}), base_name="Acme X 0.4 nozzle")
+    printer_catalog.save_printer(
+        "u1",
+        "Adv",
+        _pform(advanced={"machine_pause_gcode": "M601", "bed_exclude_area": "0x0, 20x0, 20x20"}),
+        base_name="Acme X 0.4 nozzle",
+    )
     stored = printer_catalog.stored_preset("u1", "machine", "Adv")
-    assert stored["machine_pause_gcode"] == "M601" and stored["bed_exclude_area"] == "0x0, 20x0, 20x20"  # base has none: kept as text
+    assert (
+        stored["machine_pause_gcode"] == "M601" and stored["bed_exclude_area"] == "0x0, 20x0, 20x20"
+    )  # base has none: kept as text
     # editing without one drops it; with another keeps the others
     printer_catalog.save_printer("u1", "Adv", _pform(advanced={"machine_pause_gcode": "M25"}), edit=True)
     stored = printer_catalog.stored_preset("u1", "machine", "Adv")
-    assert stored["machine_pause_gcode"] == "M25" and "bed_exclude_area" not in stored and stored["inherits"] == "Acme X 0.4 nozzle"
+    assert (
+        stored["machine_pause_gcode"] == "M25"
+        and "bed_exclude_area" not in stored
+        and stored["inherits"] == "Acme X 0.4 nozzle"
+    )
 
 
 @pytest.mark.parametrize(
@@ -447,7 +544,9 @@ def test_printer_name_clashes_and_unknown_bases_are_refused(printer_catalog):
 
 
 def test_export_round_trips_through_the_importer(printer_catalog):
-    printer_catalog.save_printer("u1", "Export me", _pform(advanced={"machine_pause_gcode": "M601"}), base_name="Acme X 0.4 nozzle")
+    printer_catalog.save_printer(
+        "u1", "Export me", _pform(advanced={"machine_pause_gcode": "M601"}), base_name="Acme X 0.4 nozzle"
+    )
     data, filename = userprofiles.build_export("u1", [("machine", "Export me")])
     assert filename == "Export me.orca_printer"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -457,7 +556,7 @@ def test_export_round_trips_through_the_importer(printer_catalog):
     presets, issues = userprofiles.parse_upload(filename, data)
     assert not issues and [(p.kind, p.name) for p in presets] == [("machine", "Export me")]
     assert presets[0].data["inherits"] == "Acme X 0.4 nozzle" and presets[0].data["machine_pause_gcode"] == "M601"
-    two, name2 = userprofiles.build_export("u1", [("machine", "Export me"), ("machine", "Export me")])
+    _two, name2 = userprofiles.build_export("u1", [("machine", "Export me"), ("machine", "Export me")])
     assert name2 == "Export me.orca_printer"  # duplicates collapse
     with pytest.raises(userprofiles.PrinterNotFound):
         userprofiles.build_export("u1", [("machine", "nope")])
@@ -467,7 +566,15 @@ def test_export_round_trips_through_the_importer(printer_catalog):
 
 def test_printer_routes_create_edit_export_and_delete(client, printer_catalog, monkeypatch):
     monkeypatch.setattr(profiles_module, "catalog", printer_catalog)
-    body = {"name": "Route printer", "base_name": "Acme X 0.4 nozzle", "width": 300, "depth": 220, "height": 250, "start_gcode": "G28", "advanced": {"machine_pause_gcode": "M601"}}
+    body = {
+        "name": "Route printer",
+        "base_name": "Acme X 0.4 nozzle",
+        "width": 300,
+        "depth": 220,
+        "height": 250,
+        "start_gcode": "G28",
+        "advanced": {"machine_pause_gcode": "M601"},
+    }
     created = client.post("/profiles/printers", json=body)
     assert created.status_code == 200 and created.json()["inherits"] == "Acme X 0.4 nozzle"
     assert "Route printer" in {p["name"] for p in client.get("/profiles").json() if p["kind"] == "machine"}
@@ -486,7 +593,10 @@ def test_printer_routes_create_edit_export_and_delete(client, printer_catalog, m
     assert client.put("/profiles/printers/Route printer", json={**body, "name": "Renamed"}).status_code == 422
 
     exported = client.post("/profiles/export", json={"items": [{"kind": "machine", "name": "Route printer"}]})
-    assert exported.status_code == 200 and 'filename="Route printer.orca_printer"' in exported.headers["content-disposition"]
+    assert (
+        exported.status_code == 200
+        and 'filename="Route printer.orca_printer"' in exported.headers["content-disposition"]
+    )
     assert zipfile.ZipFile(io.BytesIO(exported.content)).namelist()
     assert client.post("/profiles/export", json={"items": [{"kind": "machine", "name": "Nope"}]}).status_code == 404
     assert client.post("/profiles/export", json={"items": []}).status_code == 422
@@ -496,8 +606,11 @@ def test_printer_routes_create_edit_export_and_delete(client, printer_catalog, m
 
 # --- materials: the Advanced settings ----------------------------------------
 
+
 def test_material_advanced_settings_keep_the_base_shape_and_can_be_removed(material_catalog):
-    material_catalog.save_filament("u1", "Adv PLA", _form(advanced={"filament_cost": "27.5", "slow_down_layer_time": "6, 8"}), base_name="Acme PLA")
+    material_catalog.save_filament(
+        "u1", "Adv PLA", _form(advanced={"filament_cost": "27.5", "slow_down_layer_time": "6, 8"}), base_name="Acme PLA"
+    )
     stored = material_catalog.stored_preset("u1", "filament", "Adv PLA")
     assert stored["filament_cost"] == "27.5"
     assert stored["slow_down_layer_time"] == "6, 8"  # base has no value for it: kept as typed
@@ -513,7 +626,9 @@ def test_material_advanced_settings_keep_the_base_shape_and_can_be_removed(mater
     assert "slow_down_layer_time" not in material_catalog.stored_preset("u1", "filament", "Adv PLA")
 
 
-@pytest.mark.parametrize("advanced", [{"nozzle_temperature": "999"}, {"layer_height": "0.1"}, {"machine_start_gcode": "G28"}, {"name": "x"}])
+@pytest.mark.parametrize(
+    "advanced", [{"nozzle_temperature": "999"}, {"layer_height": "0.1"}, {"machine_start_gcode": "G28"}, {"name": "x"}]
+)
 def test_material_advanced_refuses_managed_and_non_filament_settings(material_catalog, advanced):
     with pytest.raises(userprofiles.MaterialError, match="not a material setting"):
         material_catalog.save_filament("u1", "Bad Adv", _form(advanced=advanced), base_name="Acme PLA")

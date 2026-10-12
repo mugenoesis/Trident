@@ -5,22 +5,22 @@ from app.printerstore import PrinterStore
 
 
 def _printer_fields(**overrides):
-    fields = dict(
-        name="Living room A1",
-        vendor="BBL",
-        machine_profile="Bambu Lab A1 0.4 nozzle",
-        process_profile="0.20mm Standard @BBL A1",
-        filament_profiles=["Bambu PLA Basic @BBL A1"],
-        filament_colors=["#ffffff"],
-        bed_width=256.0,
-        bed_depth=256.0,
-        bed_height=256.0,
-        host_type=None,
-        print_host=None,
-        printhost_apikey=None,
-        printhost_user=None,
-        printhost_password=None,
-    )
+    fields = {
+        "name": "Living room A1",
+        "vendor": "BBL",
+        "machine_profile": "Bambu Lab A1 0.4 nozzle",
+        "process_profile": "0.20mm Standard @BBL A1",
+        "filament_profiles": ["Bambu PLA Basic @BBL A1"],
+        "filament_colors": ["#ffffff"],
+        "bed_width": 256.0,
+        "bed_depth": 256.0,
+        "bed_height": 256.0,
+        "host_type": None,
+        "print_host": None,
+        "printhost_apikey": None,
+        "printhost_user": None,
+        "printhost_password": None,
+    }
     fields.update(overrides)
     return fields
 
@@ -39,7 +39,8 @@ def test_create_and_get_printer_roundtrip(tmp_path: Path):
 def test_credentials_are_masked_but_flagged(tmp_path: Path):
     db = PrinterStore(tmp_path / "printers.sqlite3")
     printer = db.create_printer(
-        user_id="alice", **_printer_fields(host_type="moonraker", print_host="http://printer.local", printhost_apikey="secret123")
+        user_id="alice",
+        **_printer_fields(host_type="moonraker", print_host="http://printer.local", printhost_apikey="secret123"),
     )
     assert printer.has_credentials is True
     # PrinterRecord has no field that could leak the raw key.
@@ -132,12 +133,12 @@ def test_material_profile_roundtrip(tmp_path: Path):
 
 
 def _material(db: PrinterStore, printer_id: str, **overrides):
-    fields = dict(
-        printer_id=printer_id,
-        user_id="alice",
-        name="PLA",
-        filament_profiles=None,
-    )
+    fields = {
+        "printer_id": printer_id,
+        "user_id": "alice",
+        "name": "PLA",
+        "filament_profiles": None,
+    }
     fields.update(overrides)
     return db.create_material(**fields)
 
@@ -196,14 +197,14 @@ def test_duplicate_missing_material_returns_none(tmp_path: Path):
 
 
 def _settings_profile(db: PrinterStore, printer_id: str, **overrides):
-    fields = dict(
-        printer_id=printer_id,
-        user_id="alice",
-        name="Standard",
-        quick_settings={"layer_height": "0.2"},
-        advanced_overrides={},
-        process_profile=None,
-    )
+    fields = {
+        "printer_id": printer_id,
+        "user_id": "alice",
+        "name": "Standard",
+        "quick_settings": {"layer_height": "0.2"},
+        "advanced_overrides": {},
+        "process_profile": None,
+    }
     fields.update(overrides)
     return db.create_settings_profile(**fields)
 
@@ -278,9 +279,7 @@ def test_settings_profiles_are_independent_of_material_profiles(tmp_path: Path):
     profile on the same printer don't share or clobber each other's data."""
     db = PrinterStore(tmp_path / "printers.sqlite3")
     printer = db.create_printer(user_id="alice", **_printer_fields())
-    material = db.create_material(
-        printer_id=printer.id, user_id="alice", name="PLA", filament_profiles=["Generic PLA"]
-    )
+    material = db.create_material(printer_id=printer.id, user_id="alice", name="PLA", filament_profiles=["Generic PLA"])
     settings_profile = db.create_settings_profile(
         printer_id=printer.id,
         user_id="alice",
@@ -317,8 +316,7 @@ def test_migrates_db_with_old_scalar_filament_profile(tmp_path: Path):
     color of white as a neutral placeholder, since none was ever saved)."""
     db_path = tmp_path / "printers.sqlite3"
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE printers (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
             vendor TEXT NOT NULL, machine_profile TEXT NOT NULL,
@@ -333,26 +331,19 @@ def test_migrates_db_with_old_scalar_filament_profile(tmp_path: Path):
             advanced_overrides TEXT NOT NULL, process_profile TEXT,
             filament_profile TEXT, created_at TEXT NOT NULL
         );
-        """
-    )
-    conn.execute(
-        """INSERT INTO printers (id, user_id, name, vendor, machine_profile, process_profile,
+        """)
+    conn.execute("""INSERT INTO printers (id, user_id, name, vendor, machine_profile, process_profile,
                filament_profile, created_at)
            VALUES ('p1', 'alice', 'Old printer', 'BBL', 'Bambu Lab A1', '0.20mm Standard',
-               'Bambu PLA Basic', '2024-01-01T00:00:00+00:00')"""
-    )
-    conn.execute(
-        """INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
+               'Bambu PLA Basic', '2024-01-01T00:00:00+00:00')""")
+    conn.execute("""INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
                advanced_overrides, process_profile, filament_profile, created_at)
            VALUES ('m1', 'p1', 'alice', 'PLA', '{}', '{}', NULL, 'Bambu PLA Basic',
-               '2024-01-01T00:00:00+00:00')"""
-    )
-    conn.execute(
-        """INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
+               '2024-01-01T00:00:00+00:00')""")
+    conn.execute("""INSERT INTO material_profiles (id, printer_id, user_id, name, quick_settings,
                advanced_overrides, process_profile, filament_profile, created_at)
            VALUES ('m2', 'p1', 'alice', 'No filament set', '{}', '{}', NULL, NULL,
-               '2024-01-01T00:00:00+00:00')"""
-    )
+               '2024-01-01T00:00:00+00:00')""")
     conn.commit()
     conn.close()
 

@@ -11,16 +11,17 @@ Switching single -> multi (auth.py's switch_to_multi) sets credentials
 directly on the existing LOCAL_USER_ID row rather than migrating data to a
 new id, since that row already owns everything created so far.
 """
+
 from __future__ import annotations
 
 import secrets
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from .config import settings
 
@@ -50,7 +51,7 @@ _MIGRATED_COLUMNS = ("last_printer_id", "last_material_id", "last_settings_profi
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -119,8 +120,7 @@ class UserStore:
     def get_or_create_local_user(self) -> User:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO users (id, username, password_hash, created_at) "
-                "VALUES (?, NULL, NULL, ?)",
+                "INSERT OR IGNORE INTO users (id, username, password_hash, created_at) " "VALUES (?, NULL, NULL, ?)",
                 (LOCAL_USER_ID, _now()),
             )
         return self.get_user(LOCAL_USER_ID)  # type: ignore[return-value]

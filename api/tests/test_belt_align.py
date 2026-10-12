@@ -104,7 +104,9 @@ def _patch(monkeypatch, tmp_path, measure):
 
 def test_a_misaligned_start_is_sliced_again_shifted(tmp_path, monkeypatch):
     out, calls, first = _patch(monkeypatch, tmp_path, belt_align.StartMeasure(purge_y=20.0, start_y=35.0))
-    result = jobs_router._align_to_purge_line("job", _request(), None, {"output_dir": out, "model_path": Path("m")}, first)
+    result = jobs_router._align_to_purge_line(
+        "job", _request(), None, {"output_dir": out, "model_path": Path("m")}, first
+    )
     assert calls[0]["belt_shift_y"] == -15.0 and calls[0]["on_progress"] is None
     assert (out / "plate_1.gcode").read_text() == "second" and not (out / "realigned").exists()
     assert result is not first
@@ -117,7 +119,7 @@ def test_a_start_within_tolerance_is_left_alone(tmp_path, monkeypatch):
 
 
 def test_a_failed_second_pass_keeps_the_first_result(tmp_path, monkeypatch):
-    out, calls, first = _patch(monkeypatch, tmp_path, belt_align.StartMeasure(purge_y=20.0, start_y=60.0))
+    out, _calls, first = _patch(monkeypatch, tmp_path, belt_align.StartMeasure(purge_y=20.0, start_y=60.0))
     monkeypatch.setattr(
         cli_runner,
         "run_slice",
@@ -128,7 +130,9 @@ def test_a_failed_second_pass_keeps_the_first_result(tmp_path, monkeypatch):
 
 
 def test_a_refused_shift_is_backed_off(tmp_path, monkeypatch):
-    out, calls, first = _patch(monkeypatch, tmp_path, belt_align.StartMeasure(purge_y=20.0, start_y=86.5))  # wants -66.5
+    out, _calls, first = _patch(
+        monkeypatch, tmp_path, belt_align.StartMeasure(purge_y=20.0, start_y=86.5)
+    )  # wants -66.5
     accepted = SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
     refused = SliceResult(return_code=206, result_json=None, stdout="", stderr="", used_result_json=False)
     outcomes = iter([refused, refused, accepted])
@@ -143,7 +147,11 @@ def test_a_refused_shift_is_backed_off(tmp_path, monkeypatch):
         return res
 
     monkeypatch.setattr(cli_runner, "run_slice", fake)
-    monkeypatch.setattr(belt_align, "measure_start", lambda gcode, t: belt_align.StartMeasure(20.0, 86.5) if len(seen) == 0 else belt_align.StartMeasure(20.0, 20.3))
+    monkeypatch.setattr(
+        belt_align,
+        "measure_start",
+        lambda gcode, t: belt_align.StartMeasure(20.0, 86.5) if len(seen) == 0 else belt_align.StartMeasure(20.0, 20.3),
+    )
     jobs_router._align_to_purge_line("job", _request(), None, {"output_dir": out}, first)
     assert seen == [-66.5, -65.0, -63.5]
     assert (out / "plate_1.gcode").read_text() == "backed off"
@@ -151,7 +159,9 @@ def test_a_refused_shift_is_backed_off(tmp_path, monkeypatch):
 
 def test_a_remaining_error_gets_refined(tmp_path, monkeypatch):
     out, calls, first = _patch(monkeypatch, tmp_path, None)
-    readings = iter([belt_align.StartMeasure(20.0, 35.0), belt_align.StartMeasure(20.0, 21.2), belt_align.StartMeasure(20.0, 20.1)])
+    readings = iter(
+        [belt_align.StartMeasure(20.0, 35.0), belt_align.StartMeasure(20.0, 21.2), belt_align.StartMeasure(20.0, 20.1)]
+    )
     monkeypatch.setattr(belt_align, "measure_start", lambda gcode, t: next(readings))
     jobs_router._align_to_purge_line("job", _request(), None, {"output_dir": out}, first)
     # shifts are cumulative from the default placement; the second one is
@@ -162,7 +172,7 @@ def test_a_remaining_error_gets_refined(tmp_path, monkeypatch):
 
 def test_a_support_that_moves_twice_as_fast_is_learned(tmp_path, monkeypatch):
     # The start moves 2 mm per mm of shift here (the support changes too).
-    out, calls, first = _patch(monkeypatch, tmp_path, None)
+    out, _calls, first = _patch(monkeypatch, tmp_path, None)
     seen = []
 
     def fake(**kw):
@@ -172,6 +182,10 @@ def test_a_support_that_moves_twice_as_fast_is_learned(tmp_path, monkeypatch):
         return SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
 
     monkeypatch.setattr(cli_runner, "run_slice", fake)
-    monkeypatch.setattr(belt_align, "measure_start", lambda gcode, t: belt_align.StartMeasure(20.0, 8.43 + 2.0 * (seen[-1] if seen else 0.0)))
+    monkeypatch.setattr(
+        belt_align,
+        "measure_start",
+        lambda gcode, t: belt_align.StartMeasure(20.0, 8.43 + 2.0 * (seen[-1] if seen else 0.0)),
+    )
     jobs_router._align_to_purge_line("job", _request(), None, {"output_dir": out}, first)
     assert len(seen) == 2 and abs(seen[-1] - 5.785) < 0.01  # converged in two corrections, not overshooting

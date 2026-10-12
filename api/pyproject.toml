@@ -17,11 +17,20 @@ dependencies = [
     # gcode_thumbnail.py resizes the browser's captured preview PNG into the
     # sizes embedded in the sliced gcode.
     "pillow>=10.4",
+    # Parses the XML inside uploaded 3MF files without letting a hostile file expand entities.
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "black>=26.1",
+    "ruff>=0.15",
+    "pyright[nodejs]>=1.1.400",
+    "complexipy>=5.0",
+    "vulture>=2.14",
+    "pip-audit>=2.9",
 ]
 
 [tool.pytest.ini_options]
@@ -34,3 +43,90 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import order
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplifications
+    "C4",       # comprehensions
+    "PL",       # pylint
+    "RUF",      # ruff's own
+    "S",        # bandit (security)
+    "PTH",      # pathlib
+    "ASYNC",    # blocking calls in async code
+    "T20",      # stray print
+    "ERA",      # commented-out code
+]
+ignore = [
+    "E501",     # line length is black's job
+    "PLR2004",  # magic numbers: too noisy for slicer settings
+    "PLR0913",  # many arguments: the slicer API is wide
+    "PLR0917",  # same, positional
+    "PLR0912",  # branch and statement counts: cognitive complexity (complexipy) is the better measure
+    "PLR0915",
+    "PLC0415",  # imports inside functions are deliberate here (lazy, avoids cycles)
+    "S603",     # subprocess runs the slicer binary with arguments the app builds, never a shell
+    "S607",
+    "PLW1510",  # return codes are checked by hand
+    "S110",     # best-effort parsing of user files: skipping a bad entry is the intent
+    "S112",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Query", "fastapi.Header"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "S314", "SIM117", "T201"]
+"app/routers/printers.py" = ["S101"]  # asserts only narrow a value just checked above
+"tests_slicer/project_fixtures.py" = ["B023"]  # the closures run inside the loop that defines them
+"tests_slicer/**" = ["S101", "SIM117", "T201"]
+
+[tool.pyright]
+include = ["app", "tests", "tests_slicer"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+
+# Tests read results that may be None and fail loudly if they are, so narrowing every one adds noise.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+reportOptionalIterable = false
+reportArgumentType = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests_slicer"
+extraPaths = ["."]
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.vulture]
+paths = ["app"]
+min_confidence = 80
+
+[tool.complexipy]
+paths = ["app"]
+max-complexity-allowed = 15

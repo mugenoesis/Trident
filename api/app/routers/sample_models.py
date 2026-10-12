@@ -17,10 +17,7 @@ router = APIRouter(prefix="/sample-models", tags=["sample-models"])
 
 @router.get("", response_model=list[SampleModelSummary])
 def list_sample_models() -> list[SampleModelSummary]:
-    return [
-        SampleModelSummary(id=s.id, name=s.name, description=s.description)
-        for s in sample_catalog.list_samples()
-    ]
+    return [SampleModelSummary(id=s.id, name=s.name, description=s.description) for s in sample_catalog.list_samples()]
 
 
 @router.post("/{sample_id}/load", response_model=ModelUploadResponse)

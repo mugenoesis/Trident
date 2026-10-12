@@ -21,6 +21,7 @@ def test_load_colored_sample_produces_a_real_color_tree(client):
     body = plates.json()
     assert len(body["embedded_filament_colors"]) == 4
     assert len(body["color_tree"]) == 3  # 3 top-level composite objects, per the real badge structure
+
     # Every leaf color actually came from embedded_filament_colors.
     def all_colors(nodes):
         for n in nodes:

@@ -4,6 +4,7 @@ Every path here is baked to match the Docker volume layout in
 docs/ARCHITECTURE.md (`/data/models`, `/data/output`, `/data/orcaslicer-datadir`)
 but defaults to local ./data dirs for running the API outside the container.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,4 +66,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
