@@ -250,7 +250,7 @@ function buildScene(options: SceneOptions): SceneApi {
 						if (child instanceof THREE.Mesh) {
 							child.geometry.dispose();
 							const mats = Array.isArray(child.material) ? child.material : [child.material];
-							mats.forEach((m) => m.dispose());
+							for (const m of mats) m.dispose();
 						}
 					});
 					return;
@@ -284,14 +284,14 @@ function buildScene(options: SceneOptions): SceneApi {
 				triangles += g.index ? g.index.count / 3 : g.getAttribute('position').count / 3;
 			});
 			if (triangles < 200_000) {
-				allMeshes.forEach((m) =>
+				for (const m of allMeshes) {
 					m.add(
 						new THREE.LineSegments(
 							new THREE.EdgesGeometry(m.geometry, 30),
 							new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
 						),
-					),
-				);
+					);
+				}
 			}
 			options.onLoaded(info);
 			requestRender();
@@ -335,7 +335,7 @@ function buildScene(options: SceneOptions): SceneApi {
 				if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.LineLoop) {
 					child.geometry.dispose();
 					const mats = Array.isArray(child.material) ? child.material : [child.material];
-					mats.forEach((m) => m.dispose());
+					for (const m of mats) m.dispose();
 					const original = child.userData.original as THREE.Material | undefined;
 					original?.dispose();
 				}
@@ -448,6 +448,7 @@ export default function RotateMoveDialog({
 	const footprint: Footprint = footprints[selected] ?? { w: 0, d: 0, h: 0 };
 
 	// A different file (after Lay flat, Auto-orient, Apply ...) rebuilds the scene and starts over.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: rebuilds the scene only for a new file or bed
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;
@@ -494,11 +495,13 @@ export default function RotateMoveDialog({
 		if (loaded) sceneRef.current?.setView(view);
 	}, [view, loaded]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the selection or the loaded model changes
 	useEffect(() => {
 		if (loaded) sceneRef.current?.select(selected);
 	}, [selected, loaded, count]);
 
 	// Push whatever changed to the scene and read back each object's footprint.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the objects or the loaded model changes
 	useEffect(() => {
 		const api = sceneRef.current;
 		if (!loaded || !api) return;
@@ -522,6 +525,7 @@ export default function RotateMoveDialog({
 	const [yMin, yMax] = slideRange(bedSize.minY, yTop, footprint.d / 2);
 	const shown: Placement = { x: clamp(current.pos.x, xMin, xMax), y: clamp(current.pos.y, yMin, yMax) };
 	// Turning can leave the selected object hanging past the plate; pull it back.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the footprint, selection or loaded model changes
 	useEffect(() => {
 		if (!loaded || footprint.w === 0) return;
 		if (moved(shown, current.pos)) {
@@ -660,6 +664,7 @@ export default function RotateMoveDialog({
 						{count > MAX_CHIPS ? (
 							<select value={selected} aria-label="Object to move" onChange={(e) => setSelected(Number(e.target.value))}>
 								{objs.map((_, i) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 									<option key={i} value={i}>
 										{nameOf(i)}
 										{changedFlags[i] ? ' (changed)' : ''}
@@ -680,6 +685,7 @@ export default function RotateMoveDialog({
 												: 'unchanged';
 								return (
 									<button
+										// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 										key={i}
 										type="button"
 										className={`rm-chip${i === selected ? ' sel' : ''}${overlap ? ' warn' : ''}`}

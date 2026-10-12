@@ -1,6 +1,6 @@
 import { type BeltTransform, beltBackTransformPoint } from './beltTransform';
 
-export interface GcodeSegment {
+interface GcodeSegment {
 	x1: number;
 	y1: number;
 	z1: number;

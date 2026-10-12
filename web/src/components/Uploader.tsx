@@ -21,6 +21,14 @@ export default function Uploader({ onFileSelected, fileName, uploadStatus, meshN
 
 	return (
 		<div
+			role="button"
+			tabIndex={0}
+			onKeyDown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					inputRef.current?.click();
+				}
+			}}
 			className={`uploader${dragOver ? ' uploader-drag' : ''}`}
 			onClick={() => inputRef.current?.click()}
 			onDragOver={(e) => {

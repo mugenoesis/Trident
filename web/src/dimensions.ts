@@ -163,7 +163,7 @@ export async function scaleStlFile(file: File, factors: Dimensions): Promise<Fil
 	// `new ArrayBuffer(...)`, so this is safe at runtime.
 	const bytes = new Uint8Array(output.buffer, output.byteOffset, output.byteLength);
 	const stem = file.name.replace(/\.[^.]*$/, '') || 'model';
-	return new File([bytes as unknown as BlobPart], stem + '.stl', { type: 'model/stl' });
+	return new File([bytes as unknown as BlobPart], `${stem}.stl`, { type: 'model/stl' });
 }
 
 // Where the slicer puts a lone model when nothing is chosen (plate

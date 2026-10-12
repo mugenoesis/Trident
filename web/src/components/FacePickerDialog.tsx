@@ -223,14 +223,14 @@ function buildScene(
 				triangles += g.index ? g.index.count / 3 : g.getAttribute('position').count / 3;
 			});
 			if (triangles < 200_000) {
-				meshes.forEach((m) =>
+				for (const m of meshes) {
 					m.add(
 						new THREE.LineSegments(
 							new THREE.EdgesGeometry(m.geometry, 30),
 							new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
 						),
-					),
-				);
+					);
+				}
 			}
 			const span = Math.max(size.x, size.y, size.z);
 			const gridSize = Math.max(span * 2.4, 40);
@@ -246,7 +246,7 @@ function buildScene(
 			scene.add(ground, grid);
 			extras.push(ground, grid);
 			// Build the neighbour tables now (a big mesh takes a moment) rather than on the first hover.
-			meshes.forEach((m) => faceIndexFor(m));
+			for (const m of meshes) faceIndexFor(m);
 			const target = new THREE.Vector3(0, 0, size.z / 2);
 			const distance = (span * 1.1) / Math.tan((camera.fov * Math.PI) / 360);
 			camera.position.set(target.x + distance * 0.55, target.y - distance * 0.8, target.z + distance * 0.55);
@@ -284,14 +284,14 @@ function buildScene(
 				if (e instanceof THREE.Mesh || e instanceof THREE.LineSegments) {
 					e.geometry.dispose();
 					const mats = Array.isArray(e.material) ? e.material : [e.material];
-					mats.forEach((m) => m.dispose());
+					for (const m of mats) m.dispose();
 				}
 			});
 			rotator.traverse((child) => {
 				if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
 					child.geometry.dispose();
 					const mats = Array.isArray(child.material) ? child.material : [child.material];
-					mats.forEach((m) => m.dispose());
+					for (const m of mats) m.dispose();
 				}
 			});
 			renderer.dispose();
@@ -314,6 +314,7 @@ export default function FacePickerDialog({ file, rotation, objectIndex = 0, onCa
 	const [hoverArea, setHoverArea] = useState<number | null>(null);
 	const [picked, setPicked] = useState<Picked | null>(null);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: rebuilds the scene only for a new file or object; the turn is applied by a separate effect
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;

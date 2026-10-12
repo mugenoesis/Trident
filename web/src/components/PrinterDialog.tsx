@@ -294,6 +294,7 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 	);
 
 	// Open: fill from the printer (create: the one selected, or generic defaults; edit: the printer itself).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once when the dialog opens, from the printer it was opened with
 	useEffect(() => {
 		let cancelled = false;
 		getPrinterKeys()

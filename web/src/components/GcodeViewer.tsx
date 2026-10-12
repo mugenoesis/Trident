@@ -412,6 +412,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, beltTransform, o
 
 	// Rebuild the displayed object when the render mode is toggled, once a
 	// scene actually exists to rebuild into.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: redraws on a mode or status change; the visible layer range is applied by its own effect
 	useEffect(() => {
 		renderModeRef.current = renderMode;
 		if (status === 'ready') rebuildRef.current?.(renderMode, visibleLayers);

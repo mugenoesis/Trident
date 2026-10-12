@@ -19,6 +19,7 @@ export default function ExportDialog({ onClose }: ExportDialogProps) {
 	const [busy, setBusy] = useState(false);
 	const keyOf = (p: { kind: string; name: string }) => `${p.kind}:${p.name}`;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once when the dialog opens
 	useEffect(() => {
 		listImportedProfiles()
 			.then((list) => {

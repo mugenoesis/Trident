@@ -127,6 +127,7 @@ export default function ProfileImportDialog({ onClose, onChanged }: ProfileImpor
 							</div>
 						)}
 						{result.skipped.map((s, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 							<div className="profile-import-row" key={`s-${i}`}>
 								<span className="profile-import-tag">skipped</span>
 								<span>{s.name ?? s.file}</span>

@@ -7,7 +7,11 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "tsc -b && vite build",
-		"lint": "oxlint",
+		"lint": "biome check",
+		"format": "biome check --write",
+		"knip": "knip",
+		"typecheck": "tsc -b",
+		"audit": "npm audit --omit=dev --audit-level=low",
 		"preview": "vite preview",
 		"smoke": "node smoke-test.mjs"
 	},

@@ -126,7 +126,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 			const canvas = canvasRef.current;
 			const live = liveRef.current;
 			if (!canvas) return null;
-			if (!live || !live.modelBox) {
+			if (!live?.modelBox) {
 				try {
 					return canvas.toDataURL('image/png');
 				} catch {
@@ -675,7 +675,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 				if (child instanceof THREE.Mesh) {
 					child.geometry.dispose();
 					const mats = Array.isArray(child.material) ? child.material : [child.material];
-					mats.forEach((m) => m.dispose());
+					for (const m of mats) m.dispose();
 				} else if (child instanceof THREE.LineSegments) {
 					child.geometry.dispose();
 					(child.material as THREE.Material).dispose();
@@ -700,6 +700,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 
 	// Move the model when only the placement changed (the scene stays).
 	const placementKey = placement ? `${placement.x},${placement.y}` : '';
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on a string that stands for the placements, so it does not rerun on every new array
 	useEffect(() => {
 		placeRef.current?.();
 	}, [placementKey, loadVersion]);
@@ -709,6 +710,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 	// the plate), and report its size.
 	const shownKey = shownObjects ? shownObjects.join(',') : '';
 	const rowKey = rowShifts ? JSON.stringify(rowShifts) : '';
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on strings that stand for the shown objects and rows
 	useEffect(() => {
 		const group = loadedGroupRef.current;
 		const base = centeredRef.current;
@@ -752,6 +754,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 	// editing the shared ones) keeps every other object's color untouched, and
 	// the original is remembered on the mesh so un-excluding restores it.
 	const excludedKey = (excludedObjects ?? []).join(',');
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on a string that stands for the excluded objects
 	useEffect(() => {
 		const group = loadedGroupRef.current;
 		if (!group) return;

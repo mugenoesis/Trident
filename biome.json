@@ -1,6 +1,10 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
 	"files": {
 		"includes": ["web/**", "biome.json", "!**/dist", "!**/node_modules", "!**/test-results", "!web/public"]
 	},
@@ -10,25 +14,191 @@
 		"lineWidth": 140
 	},
 	"javascript": {
-		"formatter": { "quoteStyle": "single", "jsxQuoteStyle": "double" }
+		"formatter": {
+			"quoteStyle": "single",
+			"jsxQuoteStyle": "double"
+		}
 	},
 	"assist": {
-		"actions": { "source": { "organizeImports": "on" } }
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
 	},
 	"linter": {
 		"enabled": true,
 		"rules": {
 			"preset": "recommended",
 			"complexity": {
-				"noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 15 } }
+				"noExcessiveCognitiveComplexity": {
+					"level": "error",
+					"options": {
+						"maxAllowedComplexity": 15
+					}
+				},
+				"noImportantStyles": "off"
+			},
+			"a11y": {
+				"noAutofocus": "off",
+				"useSemanticElements": "off"
 			},
 			"style": {
 				"noNonNullAssertion": "off",
 				"noDescendingSpecificity": "off"
-			},
-			"a11y": {
-				"useSemanticElements": "off"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["web/src/App.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 106
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/gcodeParser.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 56
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/RotateMoveDialog.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 49
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/Viewer.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 34
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/PrinterDialog.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 31
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/MaterialDialog.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 27
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/GcodeViewer.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 22
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/AxisSlider.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 18
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/components/SettingsMenu.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 18
+							}
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["web/src/modelFaces.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 17
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }

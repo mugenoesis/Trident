@@ -153,7 +153,7 @@ export default function MaterialDialog({ mode, base, printerName, schema, onClos
 			if (draft[key] === '' || !Number.isFinite(n)) throw new Error(`${label} must be a number`);
 			return n;
 		};
-		let form;
+		let form: Parameters<typeof createFilament>[0];
 		try {
 			const cleanName = name.trim();
 			if (!cleanName) throw new Error('Give the material a name');

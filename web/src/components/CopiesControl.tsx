@@ -56,6 +56,7 @@ export default function CopiesControl({ copies, onCopiesChange, isBelt, gapMm, o
 					{copyLengthMm > 0 && (
 						<div className="copies-strip" style={{ columnGap: `${(gapMm / total) * 100}%` }} aria-hidden="true">
 							{Array.from({ length: copies }, (_, i) => (
+								// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 								<span key={i} className="copies-block" style={{ width: `${(copyLengthMm / total) * 100}%` }}>
 									{i + 1}
 								</span>

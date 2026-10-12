@@ -89,6 +89,7 @@
 		position: sticky;
 		top: 1rem;
 		max-height: calc(100vh - 2rem);
+		/* biome-ignore lint/suspicious/noDuplicateProperties: dvh is used where supported, vh is the fallback */
 		max-height: calc(100dvh - 2rem);
 		overflow-y: auto;
 	}

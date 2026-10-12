@@ -3,7 +3,7 @@ import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 
-export const MODEL_COLOUR = 0xff6f2c;
+const MODEL_COLOUR = 0xff6f2c;
 
 /** Reads an STL, 3MF or Draco (.drc) model into a three.js object, in the file's own coordinates. */
 export function loadObject(file: File): Promise<THREE.Object3D> {

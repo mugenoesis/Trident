@@ -51,7 +51,7 @@ const printerSelect = page.locator('select').nth(1);
 await page.waitForFunction((sel) => document.querySelectorAll(sel)[1]?.options.length > 1, 'select', { timeout: 10000 });
 const printerOptions = await printerSelect.locator('option').allTextContents();
 const firstPrinter = printerOptions.find((v) => v && !v.includes('Select') && !v.includes('Pick'));
-if (!firstPrinter) throw new Error('No printer options loaded for vendor ' + firstRealVendor);
+if (!firstPrinter) throw new Error(`No printer options loaded for vendor ${firstRealVendor}`);
 await printerSelect.selectOption({ label: firstPrinter });
 console.log(`   printer: ${firstPrinter}`);
 

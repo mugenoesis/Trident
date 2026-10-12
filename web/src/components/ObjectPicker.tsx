@@ -153,7 +153,13 @@ export default function ObjectPicker({
 					<div className="object-picker-belt">
 						<label className="object-picker-row">
 							<span>Line objects up along the belt</span>
-							<input type="checkbox" role="switch" checked={lineUp} onChange={(e) => onLineUpChange(e.target.checked)} />
+							<input
+								type="checkbox"
+								role="switch"
+								aria-checked={lineUp}
+								checked={lineUp}
+								onChange={(e) => onLineUpChange(e.target.checked)}
+							/>
 						</label>
 						{lineUp && (
 							<>
@@ -266,6 +272,7 @@ function BeltStrip({ order, byIndex, thumbnails, gapMm, onReorder }: BeltStripPr
 
 	// While a block is held, follow the pointer on the window. (Pointer
 	// capture on the block does not survive React moving it in the DOM.)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: attaches the drag listeners for the length of one drag
 	useEffect(() => {
 		if (dragging === null) return;
 		const onMove = (e: PointerEvent) => {

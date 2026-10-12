@@ -48,9 +48,9 @@ export interface SampleModelSummary {
 	description: string;
 }
 
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
-export interface JobProgress {
+interface JobProgress {
 	plate_index: number | null;
 	plate_count: number | null;
 	plate_percent: number | null;
@@ -126,7 +126,7 @@ export interface Placement {
 	y: number;
 }
 
-export interface BeltLayout {
+interface BeltLayout {
 	order: number[];
 	gap_mm: number;
 	// A file on several plates: lay each plate out as one block, one after another ('plates'), or put
@@ -188,7 +188,7 @@ export interface ColorNode {
 
 // "unset": fresh install, no mode chosen yet -- behaves like "single"
 // server-side, but the frontend uses it to show the first-run picker.
-export type AuthMode = 'unset' | 'single' | 'multi';
+type AuthMode = 'unset' | 'single' | 'multi';
 
 export interface AuthStatus {
 	mode: AuthMode;
@@ -343,7 +343,7 @@ export interface ImportedProfile {
 	warning?: string | null;
 }
 
-export interface ImportIssue {
+interface ImportIssue {
 	file: string;
 	name?: string | null;
 	reason: string;

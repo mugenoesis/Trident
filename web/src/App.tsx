@@ -1407,6 +1407,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 	// the printers list first loads (not on every later change to it, e.g.
 	// after saving a new printer -- hence keying solely off `printersLoaded`
 	// flipping true rather than the `printers` array itself).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once the printer list has loaded; the saved-printer helpers it calls are not triggers
 	useEffect(() => {
 		if (!printersLoaded) return;
 		const match = authStatus.last_printer_id ? printers.find((p) => p.id === authStatus.last_printer_id) : undefined;
@@ -1566,6 +1567,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 
 	// Poll the active job until it leaves queued/running.
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: restarts only when the job changes or finishes; the rest of the job is not a trigger
 	useEffect(() => {
 		if (!currentJob || !ACTIVE_STATUSES.includes(currentJob.status)) {
 			if (pollRef.current) clearInterval(pollRef.current);
@@ -2012,6 +2014,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 										{fileRoles.length > 1 ? 'This file uses multiple colors -- assign each to a nozzle' : 'Which nozzle should print this?'}
 									</span>
 									{fileRoles.map((role, roleIdx) => (
+										// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 										<div className="nozzle-assignment-row" key={roleIdx}>
 											{fileRoles.length > 1 && (
 												<>
@@ -2037,6 +2040,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 													Choose a nozzle…
 												</option>
 												{filamentSlots.map((slot, slotIdx) => (
+													// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 													<option key={slotIdx} value={slotIdx}>
 														{`Slot ${slotIdx + 1} (${colorLabel(slot.color)})${slot.profile ? ` — ${slot.profile}` : ''}`}
 													</option>
@@ -2123,6 +2127,7 @@ function MainApp({ authStatus, onSwitchToMulti, onSwitchToSingle, onCreateUser, 
 							</div>
 						)}
 						{filamentSlots.map((slot, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 							<div className="filament-slot-row" key={i}>
 								<FilamentSelect
 									profiles={profiles}
