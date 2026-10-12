@@ -66,6 +66,91 @@ function message(err: Error): string {
 	return err.message.replace(/^\d{3}\s+/, '');
 }
 
+// The four common plates are always offered; the rarer two only when the base mentions them.
+const COMMON_PLATES = ['textured_plate_temp', 'cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp'];
+
+type PlateOption = { key: string; label: string };
+
+/** The form's starting values from the base material's resolved settings, and the plates it offers. */
+function draftFromProfile(d: Record<string, unknown>): { draft: Draft; plates: PlateOption[] } {
+	const draft: Draft = { filament_type: first(d, 'filament_type') || 'PLA', filament_vendor: first(d, 'filament_vendor') };
+	for (const f of NUMBER_FIELDS) draft[f.key] = first(d, f.key);
+	const plates: PlateOption[] = [];
+	for (const [key, label] of PLATE_TEMP_KEYS) {
+		if (COMMON_PLATES.includes(key) || d[key] !== undefined) {
+			draft[key] = first(d, key) || '0';
+			plates.push({ key, label: label.replace(' Plate', '') });
+		}
+	}
+	return { draft, plates };
+}
+
+/** The printers a stored material names (empty = every printer). */
+function listedPrinters(d: Record<string, unknown>): string[] {
+	return Array.isArray(d.compatible_printers) ? d.compatible_printers.map(String).filter(Boolean) : [];
+}
+
+/** The settings a stored material holds beyond the form's own: the slicer's keys, as text. */
+function extraSettings(stored: Record<string, unknown>, keys: string[]): Record<string, string> {
+	const allowed = new Set(keys);
+	const extras: Record<string, string> = {};
+	for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v);
+	return extras;
+}
+
+interface FormInput {
+	mode: 'create' | 'edit';
+	base: { name: string };
+	name: string;
+	draft: Draft;
+	plates: PlateOption[];
+	scope: 'this' | 'all';
+	storedPrinters: string[];
+	printerName: string;
+	advanced: Record<string, string> | undefined;
+}
+
+/** What to send to the server; throws a readable error for a field that is not a number. */
+function buildForm(input: FormInput): Parameters<typeof createFilament>[0] {
+	const { mode, base, draft, plates, scope, storedPrinters, printerName } = input;
+	const num = (key: string, label: string): number => {
+		const n = Number(draft[key]);
+		if (draft[key] === '' || !Number.isFinite(n)) throw new Error(`${label} must be a number`);
+		return n;
+	};
+	const cleanName = input.name.trim();
+	if (!cleanName) throw new Error('Give the material a name');
+	return {
+		name: cleanName,
+		base_name: mode === 'create' ? base.name : undefined,
+		filament_type: draft.filament_type,
+		filament_vendor: draft.filament_vendor.trim(),
+		nozzle_temperature: num('nozzle_temperature', 'Nozzle temperature'),
+		nozzle_temperature_initial_layer: num('nozzle_temperature_initial_layer', 'First layer temperature'),
+		nozzle_temperature_range_low: num('nozzle_temperature_range_low', 'Lowest temperature'),
+		nozzle_temperature_range_high: num('nozzle_temperature_range_high', 'Highest temperature'),
+		filament_flow_ratio: num('filament_flow_ratio', 'Flow ratio'),
+		filament_max_volumetric_speed: num('filament_max_volumetric_speed', 'Max speed'),
+		filament_density: num('filament_density', 'Density'),
+		filament_diameter: num('filament_diameter', 'Diameter'),
+		fan_min_speed: num('fan_min_speed', 'Fan min'),
+		fan_max_speed: num('fan_max_speed', 'Fan max'),
+		printers: scope === 'all' ? [] : mode === 'edit' && storedPrinters.length > 0 ? storedPrinters : [printerName],
+		advanced: input.advanced,
+		plate_temps: Object.fromEntries(plates.map((p) => [p.key, num(p.key, `${p.label} bed temperature`)])),
+	};
+}
+
+/** What "Available for this printer" says: the printers a stored material names, or the one being used. */
+function scopeLabel(mode: 'create' | 'edit', storedPrinters: string[], printerName: string): string {
+	if (mode === 'edit' && storedPrinters.length > 0) {
+		return storedPrinters.length === 1
+			? `Only ${storedPrinters[0]}`
+			: `Only ${storedPrinters.length} printers: ${storedPrinters.join(', ')}`;
+	}
+	return printerName ? `Only this printer (${printerName})` : 'Only the selected printer';
+}
+
 /**
  * The "New material" / "Edit material" form: a copy of an existing material
  * with the dozen settings people change. Everything not shown is inherited
@@ -96,24 +181,13 @@ export default function MaterialDialog({ mode, base, printerName, schema, onClos
 		getProfileDetail(base.vendor, 'filament', base.name)
 			.then((detail) => {
 				if (cancelled) return;
-				const d = detail.data;
-				setInherited(d);
+				setInherited(detail.data);
 				if (mode === 'edit') {
-					const listed = Array.isArray(d.compatible_printers) ? d.compatible_printers.map(String).filter(Boolean) : [];
+					const listed = listedPrinters(detail.data);
 					setStoredPrinters(listed);
 					setScope(listed.length > 0 ? 'this' : 'all');
 				}
-				const next: Draft = { filament_type: first(d, 'filament_type') || 'PLA', filament_vendor: first(d, 'filament_vendor') };
-				for (const f of NUMBER_FIELDS) next[f.key] = first(d, f.key);
-				const offered: { key: string; label: string }[] = [];
-				for (const [key, label] of PLATE_TEMP_KEYS) {
-					// The four common plates are always offered; the rarer two only when the base mentions them.
-					const common = ['textured_plate_temp', 'cool_plate_temp', 'eng_plate_temp', 'hot_plate_temp'].includes(key);
-					if (common || d[key] !== undefined) {
-						next[key] = first(d, key) || '0';
-						offered.push({ key, label: label.replace(' Plate', '') });
-					}
-				}
+				const { draft: next, plates: offered } = draftFromProfile(detail.data);
 				setPlates(offered);
 				setDraft(next);
 			})
@@ -126,10 +200,7 @@ export default function MaterialDialog({ mode, base, printerName, schema, onClos
 			Promise.all([getStoredProfile('filament', base.name), getFilamentKeys()])
 				.then(([stored, keys]) => {
 					if (cancelled) return;
-					const allowed = new Set(keys);
-					const extras: Record<string, string> = {};
-					for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v);
-					setAdvanced(extras);
+					setAdvanced(extraSettings(stored, keys));
 					setAdvancedReady(true);
 				})
 				.catch(() => undefined);
@@ -148,34 +219,19 @@ export default function MaterialDialog({ mode, base, printerName, schema, onClos
 
 	const save = () => {
 		if (!draft) return;
-		const num = (key: string, label: string): number => {
-			const n = Number(draft[key]);
-			if (draft[key] === '' || !Number.isFinite(n)) throw new Error(`${label} must be a number`);
-			return n;
-		};
 		let form: Parameters<typeof createFilament>[0];
 		try {
-			const cleanName = name.trim();
-			if (!cleanName) throw new Error('Give the material a name');
-			form = {
-				name: cleanName,
-				base_name: mode === 'create' ? base.name : undefined,
-				filament_type: draft.filament_type,
-				filament_vendor: draft.filament_vendor.trim(),
-				nozzle_temperature: num('nozzle_temperature', 'Nozzle temperature'),
-				nozzle_temperature_initial_layer: num('nozzle_temperature_initial_layer', 'First layer temperature'),
-				nozzle_temperature_range_low: num('nozzle_temperature_range_low', 'Lowest temperature'),
-				nozzle_temperature_range_high: num('nozzle_temperature_range_high', 'Highest temperature'),
-				filament_flow_ratio: num('filament_flow_ratio', 'Flow ratio'),
-				filament_max_volumetric_speed: num('filament_max_volumetric_speed', 'Max speed'),
-				filament_density: num('filament_density', 'Density'),
-				filament_diameter: num('filament_diameter', 'Diameter'),
-				fan_min_speed: num('fan_min_speed', 'Fan min'),
-				fan_max_speed: num('fan_max_speed', 'Fan max'),
-				printers: scope === 'all' ? [] : mode === 'edit' && storedPrinters.length > 0 ? storedPrinters : [printerName],
+			form = buildForm({
+				mode,
+				base,
+				name,
+				draft,
+				plates,
+				scope,
+				storedPrinters,
+				printerName,
 				advanced: advancedReady ? advanced : undefined,
-				plate_temps: Object.fromEntries(plates.map((p) => [p.key, num(p.key, `${p.label} bed temperature`)])),
-			};
+			});
 		} catch (err) {
 			setError((err as Error).message);
 			return;
@@ -239,15 +295,7 @@ export default function MaterialDialog({ mode, base, printerName, schema, onClos
 							<legend>Available for</legend>
 							<label className="material-scope-option">
 								<input type="radio" name="material-scope" checked={scope === 'this'} onChange={() => setScope('this')} />
-								<span>
-									{mode === 'edit' && storedPrinters.length > 0
-										? storedPrinters.length === 1
-											? `Only ${storedPrinters[0]}`
-											: `Only ${storedPrinters.length} printers: ${storedPrinters.join(', ')}`
-										: printerName
-											? `Only this printer (${printerName})`
-											: 'Only the selected printer'}
-								</span>
+								<span>{scopeLabel(mode, storedPrinters, printerName)}</span>
 							</label>
 							<label className="material-scope-option">
 								<input type="radio" name="material-scope" checked={scope === 'all'} onChange={() => setScope('all')} />

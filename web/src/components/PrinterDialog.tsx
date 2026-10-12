@@ -112,38 +112,117 @@ function readBed(data: Record<string, unknown>): Partial<Fields> {
 	};
 }
 
+// A preset stores a switch as "1", 1 or true.
+const isOn = (v: unknown) => v === '1' || v === 1 || v === true;
+
+// Basics fields that are a preset key's first value as text.
+const TEXT_FIELDS: [keyof Fields, string][] = [
+	['flavour', 'gcode_flavor'],
+	['height', 'printable_height'],
+	['beltAngle', 'belt_slice_rotation_angle'],
+	['nozzle', 'nozzle_diameter'],
+	['nozzleType', 'nozzle_type'],
+	['maxSpeed', 'machine_max_speed_x'],
+	['maxAccel', 'machine_max_acceleration_extruding'],
+	['retractLen', 'retraction_length'],
+	['retractSpeed', 'retraction_speed'],
+	['zHop', 'z_hop'],
+	['process', 'default_print_profile'],
+	['material', 'default_filament_profile'],
+];
+
 // The Basics fields a resolved printer preset gives.
 function fieldsFrom(data: Record<string, unknown>): Partial<Fields> {
 	const out: Partial<Fields> = { ...readBed(data) };
-	const belt = data.belt_printer === '1' || data.belt_printer === 1 || data.belt_printer === true;
-	out.belt = belt;
-	if (belt) {
-		out.endless = data.belt_printer_infinite_y === '1' || data.belt_printer_infinite_y === 1 || data.belt_printer_infinite_y === true;
+	out.belt = isOn(data.belt_printer);
+	if (out.belt) {
+		out.endless = isOn(data.belt_printer_infinite_y);
 		if (out.depth && !out.endless) out.beltLength = out.depth;
 	}
-	const text = (k: string) => first(data, k);
-	const pairs: [keyof Fields, string][] = [
-		['flavour', 'gcode_flavor'],
-		['height', 'printable_height'],
-		['beltAngle', 'belt_slice_rotation_angle'],
-		['nozzle', 'nozzle_diameter'],
-		['nozzleType', 'nozzle_type'],
-		['maxSpeed', 'machine_max_speed_x'],
-		['maxAccel', 'machine_max_acceleration_extruding'],
-		['retractLen', 'retraction_length'],
-		['retractSpeed', 'retraction_speed'],
-		['zHop', 'z_hop'],
-		['process', 'default_print_profile'],
-		['material', 'default_filament_profile'],
-	];
-	for (const [field, key] of pairs) {
-		const v = text(key);
+	for (const [field, key] of TEXT_FIELDS) {
+		const v = first(data, key);
 		if (v !== '') (out as Record<string, string>)[field] = v;
 	}
 	out.start = typeof data.machine_start_gcode === 'string' ? data.machine_start_gcode : '';
 	out.end = typeof data.machine_end_gcode === 'string' ? data.machine_end_gcode : '';
-	out.auxFan = data.auxiliary_fan === '1' || data.auxiliary_fan === 1 || data.auxiliary_fan === true;
+	out.auxFan = isOn(data.auxiliary_fan);
 	return out;
+}
+
+/** The fields with `next` laid over them, leaving alone what the user has typed in when keepTouched is set. */
+function mergeFields(prev: Fields, next: Partial<Fields>, touched: Set<string>, keepTouched: boolean): Fields {
+	const merged = { ...prev } as Record<string, unknown>;
+	for (const [k, v] of Object.entries(next)) {
+		if (!(keepTouched && touched.has(k))) merged[k] = v;
+	}
+	return merged as unknown as Fields;
+}
+
+/** The settings a stored printer holds beyond the form's own: the slicer's keys, as text. */
+function extraSettings(stored: Record<string, unknown>, keys: string[]): Record<string, string> {
+	const allowed = new Set(keys);
+	const extras: Record<string, string> = {};
+	for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v);
+	return extras;
+}
+
+/** The drop-down choices for a kind of profile: the current one's vendor and the user's own, else the first 200. */
+function profileChoices(profiles: ProfileSummary[], kind: string, selected: string): ProfileSummary[] {
+	const vendorOf = profiles.find((p) => p.kind === kind && p.name === selected)?.vendor;
+	const list = profiles.filter((p) => p.kind === kind && (p.vendor === vendorOf || p.vendor === IMPORTED_VENDOR));
+	return list.length > 0 ? list : profiles.filter((p) => p.kind === kind).slice(0, 200);
+}
+
+/** The name a setting's value goes by in the menu. */
+function labelFor(def: SettingDef | undefined, value: string): string {
+	const at = def?.enum_values?.indexOf(value) ?? -1;
+	return at >= 0 && def?.enum_labels?.[at] ? def.enum_labels[at] : value;
+}
+
+const optionalNumber = (value: string, label: string): number | undefined =>
+	value.trim() === '' ? undefined : requiredNumber(value, label);
+
+function requiredNumber(value: string, label: string): number {
+	const n = Number(value);
+	if (value.trim() === '' || !Number.isFinite(n)) throw new Error(`${label} must be a number`);
+	return n;
+}
+
+/** The request for the server from the Basics fields; throws a readable error for a field that is not a number. */
+function buildPrinterForm(f: Fields, name: string, baseName: string | null | undefined, advanced: Record<string, string>): PrinterForm {
+	const form: PrinterForm = {
+		name,
+		base_name: baseName,
+		gcode_flavor: f.flavour,
+		shape: f.shape,
+		width: requiredNumber(f.width, 'Width'),
+		height: requiredNumber(f.height, 'Maximum height'),
+		origin_x: requiredNumber(f.originX || '0', 'Origin X offset'),
+		origin_y: requiredNumber(f.originY || '0', 'Origin Y offset'),
+		origin_centre: f.originCentre,
+		belt: f.belt,
+		belt_endless: f.endless,
+		nozzle_diameter: requiredNumber(f.nozzle, 'Nozzle diameter'),
+		nozzle_type: f.nozzleType || undefined,
+		start_gcode: f.start,
+		end_gcode: f.end,
+		max_speed: optionalNumber(f.maxSpeed, 'Maximum speed'),
+		max_acceleration: optionalNumber(f.maxAccel, 'Maximum acceleration'),
+		retraction_length: optionalNumber(f.retractLen, 'Retraction length'),
+		retraction_speed: optionalNumber(f.retractSpeed, 'Retraction speed'),
+		z_hop: optionalNumber(f.zHop, 'Z hop'),
+		auxiliary_fan: f.auxFan,
+		default_process: f.process || undefined,
+		default_material: f.material || undefined,
+		advanced,
+	};
+	if (f.belt) {
+		form.belt_angle = requiredNumber(f.beltAngle, 'Belt angle');
+		if (!f.endless) form.belt_length = requiredNumber(f.beltLength, 'Belt length');
+	} else if (f.shape === 'rectangle') {
+		form.depth = requiredNumber(f.depth, 'Depth');
+	}
+	return form;
 }
 
 // "MyMarlin 0.4 nozzle" and friends: the slicer's generic printer for a firmware (or a belt printer).
@@ -161,10 +240,16 @@ function message(err: Error): string {
 	return err.message.replace(/^\d{3}\s+/, '');
 }
 
-// The bed drawn to scale, with the machine's zero marked.
-function BedDrawing({ f }: { f: Fields }) {
+// How deep the bed is, in mm: a belt's length (or the drawn length of an endless one), a circle's diameter, or the depth.
+function bedDepth(f: Fields): number {
+	if (f.belt) return f.endless ? ENDLESS_BELT_LENGTH_MM : Number(f.beltLength);
+	return f.shape === 'circle' ? Number(f.width) : Number(f.depth);
+}
+
+// Where the bed sits in the drawing and where the machine's zero is, or null when the size is not usable.
+function bedLayout(f: Fields) {
 	const width = Number(f.width);
-	const depth = f.belt ? (f.endless ? ENDLESS_BELT_LENGTH_MM : Number(f.beltLength)) : f.shape === 'circle' ? width : Number(f.depth);
+	const depth = bedDepth(f);
 	if (!(width > 0) || !(depth > 0)) return null;
 	// A long belt is drawn at most three times as long as it is wide, with its end faded.
 	const drawDepth = f.belt ? Math.min(depth, width * 3) : depth;
@@ -179,6 +264,14 @@ function BedDrawing({ f }: { f: Fields }) {
 	const zeroX = left + (-x0 / width) * w;
 	const zeroY = top + h - (-y0 / (f.belt ? drawDepth : f.shape === 'circle' ? width : depth)) * h;
 	const label = f.belt && f.endless ? `${round(width)} mm wide, no length limit` : `${round(width)} × ${round(depth)} mm`;
+	return { w, h, left, top, zeroX, zeroY, label };
+}
+
+// The bed drawn to scale, with the machine's zero marked.
+function BedDrawing({ f }: { f: Fields }) {
+	const layout = bedLayout(f);
+	if (!layout) return null;
+	const { w, h, left, top, zeroX, zeroY, label } = layout;
 	return (
 		<svg viewBox="0 0 190 150" role="img" aria-label={`The bed to scale: ${label}`} className="bed-drawing">
 			{f.shape === 'circle' && !f.belt ? (
@@ -212,6 +305,230 @@ function BedDrawing({ f }: { f: Fields }) {
 	);
 }
 
+function initialName(mode: 'create' | 'edit', current: { name: string } | null): string {
+	if (!current) return '';
+	return mode === 'edit' ? current.name : `${current.name} (custom)`;
+}
+
+function initialBaseKey(mode: 'create' | 'edit', current: { name: string } | null): string {
+	if (mode === 'edit') return 'edit';
+	return current ? 'selected' : 'nothing';
+}
+
+// Where each choice in "Start from" comes from.
+function startOptionsFor(profiles: ProfileSummary[]) {
+	const generics = profiles
+		.filter((p) => p.kind === 'machine' && p.vendor === GENERIC_VENDOR && p.name.startsWith('My') && p.name.endsWith('0.4 nozzle'))
+		.sort((a, b) => a.name.localeCompare(b.name));
+	const mine = profiles.filter((p) => p.kind === 'machine' && p.vendor === IMPORTED_VENDOR);
+	return { generics, mine };
+}
+
+type SetField = <K extends keyof Fields>(key: K, value: Fields[K]) => void;
+
+// The bed's shape, size and origin, whether it is a belt, and the drawing of it.
+function BuildPlateSection({ f, set, onBelt }: { f: Fields; set: SetField; onBelt: (belt: boolean) => void }) {
+	return (
+		<>
+			<h3 className="material-section">Build plate</h3>
+			<div className="printer-bed-row">
+				<div className="printer-bed-fields">
+					<div className="material-grid">
+						<label>
+							Shape
+							<select value={f.shape} disabled={f.belt} onChange={(e) => set('shape', e.target.value as Fields['shape'])}>
+								<option value="rectangle">Rectangle</option>
+								<option value="circle">Circle</option>
+							</select>
+						</label>
+						<label>
+							Max height (Z, mm)
+							<input type="number" step="1" value={f.height} onChange={(e) => set('height', e.target.value)} />
+						</label>
+					</div>
+					<div className="material-grid">
+						<label>
+							{f.shape === 'circle' && !f.belt ? 'Diameter (mm)' : 'Width (X, mm)'}
+							<input type="number" step="1" value={f.width} onChange={(e) => set('width', e.target.value)} />
+						</label>
+						{!f.belt && f.shape === 'rectangle' && (
+							<label>
+								Depth (Y, mm)
+								<input type="number" step="1" value={f.depth} onChange={(e) => set('depth', e.target.value)} />
+							</label>
+						)}
+					</div>
+					<div className="material-grid">
+						<label>
+							Origin X offset (mm)
+							<input type="number" step="1" value={f.originX} disabled={f.originCentre} onChange={(e) => set('originX', e.target.value)} />
+						</label>
+						<label>
+							Origin Y offset (mm)
+							<input type="number" step="1" value={f.originY} disabled={f.originCentre} onChange={(e) => set('originY', e.target.value)} />
+						</label>
+					</div>
+					<label className="checkbox-label">
+						<input type="checkbox" checked={f.originCentre} onChange={(e) => set('originCentre', e.target.checked)} />
+						The origin is at the centre of the bed
+					</label>
+					<label className="checkbox-label">
+						<input type="checkbox" checked={f.belt} onChange={(e) => onBelt(e.target.checked)} />
+						This is a belt (conveyor) printer
+					</label>
+					{f.belt && (
+						<div className="printer-belt">
+							<div className="material-grid">
+								<label>
+									Belt angle (°)
+									<input type="number" step="1" value={f.beltAngle} onChange={(e) => set('beltAngle', e.target.value)} />
+								</label>
+							</div>
+							<label className="checkbox-label">
+								<input type="checkbox" checked={f.endless} onChange={(e) => set('endless', e.target.checked)} />
+								Endless belt
+							</label>
+							{f.endless ? (
+								<p className="auth-hint">
+									No length limit when slicing: long rows, many copies and big groups of models all fit. The plate is drawn{' '}
+									{ENDLESS_BELT_LENGTH_MM} mm long.
+								</p>
+							) : (
+								<label>
+									Belt length (Y, mm)
+									<input type="number" step="1" value={f.beltLength} onChange={(e) => set('beltLength', e.target.value)} />
+								</label>
+							)}
+						</div>
+					)}
+				</div>
+				<div className="printer-bed-drawing">
+					<BedDrawing f={f} />
+				</div>
+			</div>
+		</>
+	);
+}
+
+// Which process and material the printer starts with.
+function DefaultsSection({
+	f,
+	set,
+	processChoices,
+	materialChoices,
+}: {
+	f: Fields;
+	set: SetField;
+	processChoices: ProfileSummary[];
+	materialChoices: ProfileSummary[];
+}) {
+	return (
+		<>
+			<h3 className="material-section">When it is picked</h3>
+			<div className="material-grid">
+				<label>
+					Default process
+					<select value={f.process} onChange={(e) => set('process', e.target.value)}>
+						{f.process && !processChoices.some((p) => p.name === f.process) && <option value={f.process}>{f.process}</option>}
+						{processChoices.map((p) => (
+							<option key={`${p.vendor}/${p.name}`} value={p.name}>
+								{p.name}
+							</option>
+						))}
+					</select>
+				</label>
+				<label>
+					Default material
+					<select value={f.material} onChange={(e) => set('material', e.target.value)}>
+						{f.material && !materialChoices.some((p) => p.name === f.material) && <option value={f.material}>{f.material}</option>}
+						{materialChoices.map((p) => (
+							<option key={`${p.vendor}/${p.name}`} value={p.name}>
+								{p.name}
+							</option>
+						))}
+					</select>
+				</label>
+			</div>
+		</>
+	);
+}
+
+// The printer's name, what it starts from, and a line saying what that means.
+function StartFromRow({
+	mode,
+	name,
+	onName,
+	current,
+	baseKey,
+	onBase,
+	baseNote,
+	startOptions,
+	baseLabel,
+}: {
+	mode: 'create' | 'edit';
+	name: string;
+	onName: (name: string) => void;
+	current: { name: string } | null;
+	baseKey: string;
+	onBase: (key: string) => void;
+	baseNote: string;
+	startOptions: ReturnType<typeof startOptionsFor>;
+	baseLabel: string;
+}) {
+	return (
+		<>
+			<div className="material-grid">
+				<label>
+					Name
+					<input type="text" value={name} readOnly={mode === 'edit'} maxLength={120} onChange={(e) => onName(e.target.value)} />
+				</label>
+				{mode === 'create' ? (
+					<label>
+						Start from (optional)
+						<select value={baseKey} onChange={(e) => onBase(e.target.value)}>
+							{current && <option value="selected">{current.name} (selected printer)</option>}
+							<option value="nothing">Nothing: start from generic defaults</option>
+							{startOptions.generics.length > 0 && (
+								<optgroup label="Generic starting points">
+									{startOptions.generics.map((p) => (
+										<option key={p.name} value={`p:${p.name}`}>
+											{p.name}
+										</option>
+									))}
+								</optgroup>
+							)}
+							{startOptions.mine.length > 0 && (
+								<optgroup label="My printers">
+									{startOptions.mine.map((p) => (
+										<option key={p.name} value={`p:${p.name}`}>
+											{p.name}
+										</option>
+									))}
+								</optgroup>
+							)}
+						</select>
+					</label>
+				) : (
+					<label>
+						Based on
+						<input type="text" value={baseNote || 'Nothing in particular'} readOnly />
+					</label>
+				)}
+			</div>
+			<p className="profile-import-help">
+				{mode === 'create' ? (
+					<>
+						Starts from <strong>{baseLabel}</strong>; anything you leave alone is inherited from it. Saved under{' '}
+						<strong>My profiles</strong>.
+					</>
+				) : (
+					<>Settings not shown here, and any you added under Advanced, stay as they are.</>
+				)}
+			</p>
+		</>
+	);
+}
+
 /**
  * The "New printer" / "Edit printer" form: a copy of a printer (or of the slicer's generic printer for a
  * firmware, or of nothing in particular) with the settings people change on the Basics tab, and every other
@@ -220,10 +537,10 @@ function BedDrawing({ f }: { f: Fields }) {
  */
 export default function PrinterDialog({ mode, current, profiles, schema, onClose, onSaved }: PrinterDialogProps) {
 	const [tab, setTab] = useState<Tab>('basics');
-	const [name, setName] = useState(mode === 'edit' && current ? current.name : current ? `${current.name} (custom)` : '');
+	const [name, setName] = useState(initialName(mode, current));
 	const [f, setF] = useState<Fields>(EMPTY);
 	const touched = useRef(new Set<string>());
-	const [baseKey, setBaseKey] = useState<string>(current && mode === 'create' ? 'selected' : mode === 'create' ? 'nothing' : 'edit');
+	const [baseKey, setBaseKey] = useState<string>(initialBaseKey(mode, current));
 	const [inherited, setInherited] = useState<Record<string, unknown>>({});
 	const [advanced, setAdvanced] = useState<Record<string, string>>({});
 	const [printerKeys, setPrinterKeys] = useState<string[]>([]);
@@ -240,25 +557,14 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 	};
 
 	// Where each choice in "Start from" comes from.
-	const startOptions = useMemo(() => {
-		const generics = profiles
-			.filter((p) => p.kind === 'machine' && p.vendor === GENERIC_VENDOR && p.name.startsWith('My') && p.name.endsWith('0.4 nozzle'))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		const mine = profiles.filter((p) => p.kind === 'machine' && p.vendor === IMPORTED_VENDOR);
-		return { generics, mine };
-	}, [profiles]);
+	const startOptions = useMemo(() => startOptionsFor(profiles), [profiles]);
 
 	// The preset a choice of "Start from" means.
 	const baseFor = useCallback(
 		(key: string, flavour: string, belt: boolean): { vendor: string; name: string } | null => {
-			if (key === 'selected') return current;
-			if (key === 'edit') return current;
-			if (key === 'nothing') {
-				const generic = genericName(flavour, belt);
-				const found = profiles.find((p) => p.kind === 'machine' && p.name === generic);
-				return found ? { vendor: found.vendor, name: found.name } : null;
-			}
-			const found = profiles.find((p) => p.kind === 'machine' && p.name === key.replace(/^p:/, ''));
+			if (key === 'selected' || key === 'edit') return current;
+			const wanted = key === 'nothing' ? genericName(flavour, belt) : key.replace(/^p:/, '');
+			const found = profiles.find((p) => p.kind === 'machine' && p.name === wanted);
 			return found ? { vendor: found.vendor, name: found.name } : null;
 		},
 		[current, profiles],
@@ -277,14 +583,7 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 				.then((detail) => {
 					setInherited(detail.data);
 					const next = fieldsFrom(detail.data);
-					setF((prev) => {
-						const merged = { ...prev };
-						for (const [k, v] of Object.entries(next)) {
-							if (keepTouched && touched.current.has(k)) continue;
-							(merged as Record<string, unknown>)[k] = v;
-						}
-						return merged;
-					});
+					setF((prev) => mergeFields(prev, next, touched.current, keepTouched));
 					setLoadError(null);
 				})
 				.catch((err: Error) => setLoadError(message(err)))
@@ -307,12 +606,8 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 					setInherited(detail.data);
 					setF((prev) => ({ ...prev, ...fieldsFrom(detail.data) }));
 					// The settings this printer holds beyond the form's own become its advanced list.
-					const inheritsFrom = typeof stored.inherits === 'string' ? stored.inherits : '';
-					const allowed = new Set(keys);
-					const extras: Record<string, string> = {};
-					for (const [k, v] of Object.entries(stored)) if (allowed.has(k)) extras[k] = settingText(v);
-					setAdvanced(extras);
-					setBaseNote(inheritsFrom);
+					setAdvanced(extraSettings(stored, keys));
+					setBaseNote(typeof stored.inherits === 'string' ? stored.inherits : '');
 				})
 				.catch((err: Error) => !cancelled && setLoadError(message(err)))
 				.finally(() => !cancelled && setLoading(false));
@@ -342,10 +637,6 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 
 	const flavourDef = defs.get('gcode_flavor');
 	const nozzleTypeDef = defs.get('nozzle_type');
-	const labelFor = (def: SettingDef | undefined, value: string) => {
-		const at = def?.enum_values?.indexOf(value) ?? -1;
-		return at >= 0 && def?.enum_labels?.[at] ? def.enum_labels[at] : value;
-	};
 
 	const save = () => {
 		const cleanName = name.trim();
@@ -353,46 +644,10 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 			setError('Give the printer a name');
 			return;
 		}
-		const num = (value: string, label: string): number => {
-			const n = Number(value);
-			if (value.trim() === '' || !Number.isFinite(n)) throw new Error(`${label} must be a number`);
-			return n;
-		};
-		const optional = (value: string, label: string): number | undefined => (value.trim() === '' ? undefined : num(value, label));
 		let form: PrinterForm;
 		try {
-			form = {
-				name: cleanName,
-				base_name: mode === 'create' ? (baseFor(baseKey, f.flavour, f.belt)?.name ?? null) : undefined,
-				gcode_flavor: f.flavour,
-				shape: f.shape,
-				width: num(f.width, 'Width'),
-				height: num(f.height, 'Maximum height'),
-				origin_x: num(f.originX || '0', 'Origin X offset'),
-				origin_y: num(f.originY || '0', 'Origin Y offset'),
-				origin_centre: f.originCentre,
-				belt: f.belt,
-				belt_endless: f.endless,
-				nozzle_diameter: num(f.nozzle, 'Nozzle diameter'),
-				nozzle_type: f.nozzleType || undefined,
-				start_gcode: f.start,
-				end_gcode: f.end,
-				max_speed: optional(f.maxSpeed, 'Maximum speed'),
-				max_acceleration: optional(f.maxAccel, 'Maximum acceleration'),
-				retraction_length: optional(f.retractLen, 'Retraction length'),
-				retraction_speed: optional(f.retractSpeed, 'Retraction speed'),
-				z_hop: optional(f.zHop, 'Z hop'),
-				auxiliary_fan: f.auxFan,
-				default_process: f.process || undefined,
-				default_material: f.material || undefined,
-				advanced,
-			};
-			if (f.belt) {
-				form.belt_angle = num(f.beltAngle, 'Belt angle');
-				if (!f.endless) form.belt_length = num(f.beltLength, 'Belt length');
-			} else if (f.shape === 'rectangle') {
-				form.depth = num(f.depth, 'Depth');
-			}
+			const baseName = mode === 'create' ? (baseFor(baseKey, f.flavour, f.belt)?.name ?? null) : undefined;
+			form = buildPrinterForm(f, cleanName, baseName, advanced);
 		} catch (err) {
 			setError((err as Error).message);
 			return;
@@ -407,17 +662,8 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 			});
 	};
 
-	const processChoices = useMemo(() => {
-		const vendorOf = profiles.find((p) => p.kind === 'process' && p.name === f.process)?.vendor;
-		const list = profiles.filter((p) => p.kind === 'process' && (p.vendor === vendorOf || p.vendor === IMPORTED_VENDOR));
-		return list.length > 0 ? list : profiles.filter((p) => p.kind === 'process').slice(0, 200);
-	}, [profiles, f.process]);
-	const materialChoices = useMemo(() => {
-		const vendorOf = profiles.find((p) => p.kind === 'filament' && p.name === f.material)?.vendor;
-		const list = profiles.filter((p) => p.kind === 'filament' && (p.vendor === vendorOf || p.vendor === IMPORTED_VENDOR));
-		return list.length > 0 ? list : profiles.filter((p) => p.kind === 'filament').slice(0, 200);
-	}, [profiles, f.material]);
-
+	const processChoices = useMemo(() => profileChoices(profiles, 'process', f.process), [profiles, f.process]);
+	const materialChoices = useMemo(() => profileChoices(profiles, 'filament', f.material), [profiles, f.material]);
 	const title = mode === 'create' ? 'New printer' : 'Edit printer';
 	const baseLabel = (() => {
 		const target = baseFor(baseKey, f.flavour, f.belt);
@@ -445,143 +691,18 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 
 				{tab === 'basics' && (
 					<>
-						<div className="material-grid">
-							<label>
-								Name
-								<input type="text" value={name} readOnly={mode === 'edit'} maxLength={120} onChange={(e) => setName(e.target.value)} />
-							</label>
-							{mode === 'create' ? (
-								<label>
-									Start from (optional)
-									<select value={baseKey} onChange={(e) => chooseBase(e.target.value)}>
-										{current && <option value="selected">{current.name} (selected printer)</option>}
-										<option value="nothing">Nothing: start from generic defaults</option>
-										{startOptions.generics.length > 0 && (
-											<optgroup label="Generic starting points">
-												{startOptions.generics.map((p) => (
-													<option key={p.name} value={`p:${p.name}`}>
-														{p.name}
-													</option>
-												))}
-											</optgroup>
-										)}
-										{startOptions.mine.length > 0 && (
-											<optgroup label="My printers">
-												{startOptions.mine.map((p) => (
-													<option key={p.name} value={`p:${p.name}`}>
-														{p.name}
-													</option>
-												))}
-											</optgroup>
-										)}
-									</select>
-								</label>
-							) : (
-								<label>
-									Based on
-									<input type="text" value={baseNote || 'Nothing in particular'} readOnly />
-								</label>
-							)}
-						</div>
-						<p className="profile-import-help">
-							{mode === 'create' ? (
-								<>
-									Starts from <strong>{baseLabel}</strong>; anything you leave alone is inherited from it. Saved under{' '}
-									<strong>My profiles</strong>.
-								</>
-							) : (
-								<>Settings not shown here, and any you added under Advanced, stay as they are.</>
-							)}
-						</p>
-
-						<h3 className="material-section">Build plate</h3>
-						<div className="printer-bed-row">
-							<div className="printer-bed-fields">
-								<div className="material-grid">
-									<label>
-										Shape
-										<select value={f.shape} disabled={f.belt} onChange={(e) => set('shape', e.target.value as Fields['shape'])}>
-											<option value="rectangle">Rectangle</option>
-											<option value="circle">Circle</option>
-										</select>
-									</label>
-									<label>
-										Max height (Z, mm)
-										<input type="number" step="1" value={f.height} onChange={(e) => set('height', e.target.value)} />
-									</label>
-								</div>
-								<div className="material-grid">
-									<label>
-										{f.shape === 'circle' && !f.belt ? 'Diameter (mm)' : 'Width (X, mm)'}
-										<input type="number" step="1" value={f.width} onChange={(e) => set('width', e.target.value)} />
-									</label>
-									{!f.belt && f.shape === 'rectangle' && (
-										<label>
-											Depth (Y, mm)
-											<input type="number" step="1" value={f.depth} onChange={(e) => set('depth', e.target.value)} />
-										</label>
-									)}
-								</div>
-								<div className="material-grid">
-									<label>
-										Origin X offset (mm)
-										<input
-											type="number"
-											step="1"
-											value={f.originX}
-											disabled={f.originCentre}
-											onChange={(e) => set('originX', e.target.value)}
-										/>
-									</label>
-									<label>
-										Origin Y offset (mm)
-										<input
-											type="number"
-											step="1"
-											value={f.originY}
-											disabled={f.originCentre}
-											onChange={(e) => set('originY', e.target.value)}
-										/>
-									</label>
-								</div>
-								<label className="checkbox-label">
-									<input type="checkbox" checked={f.originCentre} onChange={(e) => set('originCentre', e.target.checked)} />
-									The origin is at the centre of the bed
-								</label>
-								<label className="checkbox-label">
-									<input type="checkbox" checked={f.belt} onChange={(e) => changeBelt(e.target.checked)} />
-									This is a belt (conveyor) printer
-								</label>
-								{f.belt && (
-									<div className="printer-belt">
-										<div className="material-grid">
-											<label>
-												Belt angle (°)
-												<input type="number" step="1" value={f.beltAngle} onChange={(e) => set('beltAngle', e.target.value)} />
-											</label>
-										</div>
-										<label className="checkbox-label">
-											<input type="checkbox" checked={f.endless} onChange={(e) => set('endless', e.target.checked)} />
-											Endless belt
-										</label>
-										{f.endless ? (
-											<p className="auth-hint">
-												No length limit when slicing: long rows, many copies and big groups of models all fit. The plate is drawn{' '}
-												{ENDLESS_BELT_LENGTH_MM} mm long.
-											</p>
-										) : (
-											<label>
-												Belt length (Y, mm)
-												<input type="number" step="1" value={f.beltLength} onChange={(e) => set('beltLength', e.target.value)} />
-											</label>
-										)}
-									</div>
-								)}
-							</div>
-							<div className="printer-bed-drawing">
-								<BedDrawing f={f} />
-							</div>
-						</div>
+						<StartFromRow
+							mode={mode}
+							name={name}
+							onName={setName}
+							current={current}
+							baseKey={baseKey}
+							onBase={chooseBase}
+							baseNote={baseNote}
+							startOptions={startOptions}
+							baseLabel={baseLabel}
+						/>
+						<BuildPlateSection f={f} set={set} onBelt={changeBelt} />
 
 						<h3 className="material-section">Nozzle and firmware</h3>
 						<div className="material-grid material-grid-4">
@@ -659,31 +780,7 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 							</label>
 						</div>
 
-						<h3 className="material-section">When it is picked</h3>
-						<div className="material-grid">
-							<label>
-								Default process
-								<select value={f.process} onChange={(e) => set('process', e.target.value)}>
-									{f.process && !processChoices.some((p) => p.name === f.process) && <option value={f.process}>{f.process}</option>}
-									{processChoices.map((p) => (
-										<option key={`${p.vendor}/${p.name}`} value={p.name}>
-											{p.name}
-										</option>
-									))}
-								</select>
-							</label>
-							<label>
-								Default material
-								<select value={f.material} onChange={(e) => set('material', e.target.value)}>
-									{f.material && !materialChoices.some((p) => p.name === f.material) && <option value={f.material}>{f.material}</option>}
-									{materialChoices.map((p) => (
-										<option key={`${p.vendor}/${p.name}`} value={p.name}>
-											{p.name}
-										</option>
-									))}
-								</select>
-							</label>
-						</div>
+						<DefaultsSection f={f} set={set} processChoices={processChoices} materialChoices={materialChoices} />
 						<p className="auth-hint">
 							Anything else: the{' '}
 							<button type="button" className="link-button" onClick={() => setTab('advanced')}>

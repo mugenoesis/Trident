@@ -19,6 +19,17 @@ interface AxisSliderProps {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
+/** Where a key press takes the slider, or null when the key does nothing. */
+function valueAfterKey(key: string, change: number, vertical: boolean, min: number, max: number, value: number): number | null {
+	const up = vertical ? ['ArrowUp', 'ArrowRight'] : ['ArrowRight', 'ArrowUp'];
+	const down = vertical ? ['ArrowDown', 'ArrowLeft'] : ['ArrowLeft', 'ArrowDown'];
+	if (up.includes(key)) return value + change;
+	if (down.includes(key)) return value - change;
+	if (key === 'Home') return min;
+	if (key === 'End') return max;
+	return null;
+}
+
 /**
  * A slider drawn by hand so the same control can run along the left edge of the
  * preview (vertical) and under it (horizontal), which a native range input
@@ -63,14 +74,7 @@ export default function AxisSlider({
 	};
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (locked) return;
-		const big = event.shiftKey ? 10 : 1;
-		const up = vertical ? ['ArrowUp', 'ArrowRight'] : ['ArrowRight', 'ArrowUp'];
-		const down = vertical ? ['ArrowDown', 'ArrowLeft'] : ['ArrowLeft', 'ArrowDown'];
-		let next: number | null = null;
-		if (up.includes(event.key)) next = value + step * big;
-		else if (down.includes(event.key)) next = value - step * big;
-		else if (event.key === 'Home') next = min;
-		else if (event.key === 'End') next = max;
+		const next = valueAfterKey(event.key, step * (event.shiftKey ? 10 : 1), vertical, min, max, value);
 		if (next === null) return;
 		event.preventDefault();
 		onChange(clamp(next, min, max));

@@ -103,6 +103,58 @@ interface SceneObject {
 	meshes: THREE.Mesh[];
 }
 
+// Give the memory of every mesh, outline and material under root back.
+function disposeTree(root: THREE.Object3D): void {
+	root.traverse((child) => {
+		if (!(child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.LineLoop)) return;
+		child.geometry.dispose();
+		const mats = Array.isArray(child.material) ? child.material : [child.material];
+		for (const m of mats) m.dispose();
+		const original = child.userData.original as THREE.Material | undefined;
+		original?.dispose();
+	});
+}
+
+// Put one object of the file into the scene on its own rotator, centred on the origin, remembering where it started.
+function adoptPart(part: THREE.Object3D, index: number, scene: THREE.Scene) {
+	const box = new THREE.Box3().setFromObject(part, true);
+	const centre = box.getCenter(new THREE.Vector3());
+	const centred = new THREE.Group();
+	centred.position.set(-centre.x, -centre.y, -centre.z);
+	centred.add(part);
+	const rotator = new THREE.Group();
+	rotator.add(centred);
+	scene.add(rotator);
+	const meshes: THREE.Mesh[] = [];
+	part.traverse((child) => {
+		if (child instanceof THREE.Mesh) {
+			child.userData.objectIndex = index;
+			child.userData.original = child.material;
+			meshes.push(child);
+		}
+	});
+	const size = box.getSize(new THREE.Vector3());
+	return { rotator, meshes, centre: { x: centre.x, y: centre.y }, footprint: { w: size.x, d: size.y, h: size.z } };
+}
+
+// Draw the sharp edges on every mesh, unless the model is so big that it would slow the preview.
+function addEdgeOutlines(meshes: THREE.Mesh[]): void {
+	let triangles = 0;
+	for (const m of meshes) {
+		const g = m.geometry;
+		triangles += g.index ? g.index.count / 3 : g.getAttribute('position').count / 3;
+	}
+	if (triangles >= 200_000) return;
+	for (const m of meshes) {
+		m.add(
+			new THREE.LineSegments(
+				new THREE.EdgesGeometry(m.geometry, 30),
+				new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
+			),
+		);
+	}
+}
+
 function buildScene(options: SceneOptions): SceneApi {
 	const { container, file, bed } = options;
 	const scene = new THREE.Scene();
@@ -246,53 +298,15 @@ function buildScene(options: SceneOptions): SceneApi {
 			splitObjects(loaded).forEach((part, fileIndex) => {
 				if (options.only && !options.only.includes(fileIndex)) {
 					// Not on this plate: not shown, and its memory given back.
-					part.traverse((child) => {
-						if (child instanceof THREE.Mesh) {
-							child.geometry.dispose();
-							const mats = Array.isArray(child.material) ? child.material : [child.material];
-							for (const m of mats) m.dispose();
-						}
-					});
+					disposeTree(part);
 					return;
 				}
-				const index = objects.length;
-				// Centre the object on the origin inside its own rotator, remembering where it started.
-				const box = new THREE.Box3().setFromObject(part, true);
-				const centre0 = box.getCenter(new THREE.Vector3());
-				const centred = new THREE.Group();
-				centred.position.set(-centre0.x, -centre0.y, -centre0.z);
-				centred.add(part);
-				const rotator = new THREE.Group();
-				rotator.add(centred);
-				scene.add(rotator);
-				const meshes: THREE.Mesh[] = [];
-				part.traverse((child) => {
-					if (child instanceof THREE.Mesh) {
-						child.userData.objectIndex = index;
-						child.userData.original = child.material;
-						meshes.push(child);
-					}
-				});
+				const { rotator, meshes, centre, footprint } = adoptPart(part, objects.length, scene);
 				allMeshes.push(...meshes);
 				objects.push({ rotator, meshes });
-				const size = box.getSize(new THREE.Vector3());
-				info.push({ fileIndex, centre: { x: centre0.x, y: centre0.y }, footprint: { w: size.x, d: size.y, h: size.z } });
+				info.push({ fileIndex, centre, footprint });
 			});
-			let triangles = 0;
-			allMeshes.forEach((m) => {
-				const g = m.geometry;
-				triangles += g.index ? g.index.count / 3 : g.getAttribute('position').count / 3;
-			});
-			if (triangles < 200_000) {
-				for (const m of allMeshes) {
-					m.add(
-						new THREE.LineSegments(
-							new THREE.EdgesGeometry(m.geometry, 30),
-							new THREE.LineBasicMaterial({ color: 0x2a1508, transparent: true, opacity: 0.5 }),
-						),
-					);
-				}
-			}
+			addEdgeOutlines(allMeshes);
 			options.onLoaded(info);
 			requestRender();
 		})
@@ -331,15 +345,7 @@ function buildScene(options: SceneOptions): SceneApi {
 			canvas.removeEventListener('pointerup', handleUp);
 			controls.dispose();
 			ghost.dispose();
-			scene.traverse((child) => {
-				if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.LineLoop) {
-					child.geometry.dispose();
-					const mats = Array.isArray(child.material) ? child.material : [child.material];
-					for (const m of mats) m.dispose();
-					const original = child.userData.original as THREE.Material | undefined;
-					original?.dispose();
-				}
-			});
+			disposeTree(scene);
 			renderer.dispose();
 			container.removeChild(renderer.domElement);
 		},
@@ -384,6 +390,471 @@ function AngleField({
 			/>
 			<span aria-hidden="true">°</span>
 		</span>
+	);
+}
+
+type Overlap = { other: number; mm: number };
+
+// How far two footprints overlap (the smaller of the two overlaps), or null when they do not meaningfully.
+function overlapBetween(a: ObjectState, fa: Footprint, b: ObjectState, fb: Footprint): number | null {
+	const ox = Math.min(a.pos.x + fa.w / 2, b.pos.x + fb.w / 2) - Math.max(a.pos.x - fa.w / 2, b.pos.x - fb.w / 2);
+	const oy = Math.min(a.pos.y + fa.d / 2, b.pos.y + fb.d / 2) - Math.max(a.pos.y - fa.d / 2, b.pos.y - fb.d / 2);
+	return ox > OVERLAP_MARGIN_MM && oy > OVERLAP_MARGIN_MM ? Math.min(ox, oy) : null;
+}
+
+// Note that objects i and j overlap, unless either already has an overlap noted.
+function recordOverlap(found: Map<number, Overlap>, i: number, j: number, mm: number): void {
+	if (!found.has(i)) found.set(i, { other: j, mm });
+	if (!found.has(j)) found.set(j, { other: i, mm });
+}
+
+// For each object that overlaps another, the first one it overlaps.
+function findOverlaps(objs: ObjectState[], footprints: Footprint[]): Map<number, Overlap> {
+	const found = new Map<number, Overlap>();
+	for (let i = 0; i < objs.length; i++) {
+		for (let j = i + 1; j < objs.length; j++) {
+			const mm = footprints[i] && footprints[j] ? overlapBetween(objs[i], footprints[i], objs[j], footprints[j]) : null;
+			if (mm !== null) recordOverlap(found, i, j, mm);
+		}
+	}
+	return found;
+}
+
+// What a chip says about its object.
+function chipStatus(o: ObjectState, start: ObjectState | undefined, overlapName: string | null): string {
+	if (overlapName) return `overlaps ${overlapName}`;
+	const isMoved = Boolean(start) && moved(o.pos, (start as ObjectState).pos);
+	const turned = isTurned(o.rot);
+	if (turned && isMoved) return 'turned and moved';
+	if (turned) return 'turned';
+	return isMoved ? 'moved' : 'unchanged';
+}
+
+// Which objects are turned or moved from where the window opened.
+function changedFlagsOf(objs: ObjectState[], initial: ObjectState[]): boolean[] {
+	return objs.map((o, i) => isTurned(o.rot) || (initial[i] ? moved(o.pos, initial[i].pos) : false));
+}
+
+// The warning under the preview when the selected object overlaps another.
+function overlapNoteFor(
+	overlaps: Map<number, Overlap>,
+	selected: number,
+	several: boolean,
+	nameOf: (index: number) => string,
+): { name: string; other: string; mm: number } | null {
+	const overlap = overlaps.get(selected);
+	return several && overlap ? { name: nameOf(selected), other: nameOf(overlap.other), mm: overlap.mm } : null;
+}
+
+// The middle of the box around every object's footprint.
+function groupCentreOf(objs: ObjectState[], footprints: Footprint[]): Placement {
+	const half = (i: number, key: 'w' | 'd') => (footprints[i]?.[key] ?? 0) / 2;
+	const minX = Math.min(...objs.map((o, i) => o.pos.x - half(i, 'w')));
+	const maxX = Math.max(...objs.map((o, i) => o.pos.x + half(i, 'w')));
+	const minY = Math.min(...objs.map((o, i) => o.pos.y - half(i, 'd')));
+	const maxY = Math.max(...objs.map((o, i) => o.pos.y + half(i, 'd')));
+	return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+// Each object's start: the whole group's centre put on the current position, every object keeping its place within it.
+function startStates(info: { centre: Placement; footprint: Footprint }[], target: Placement): ObjectState[] {
+	const minX = Math.min(...info.map((o) => o.centre.x - o.footprint.w / 2));
+	const maxX = Math.max(...info.map((o) => o.centre.x + o.footprint.w / 2));
+	const minY = Math.min(...info.map((o) => o.centre.y - o.footprint.d / 2));
+	const maxY = Math.max(...info.map((o) => o.centre.y + o.footprint.d / 2));
+	const shiftX = target.x - (minX + maxX) / 2;
+	const shiftY = target.y - (minY + maxY) / 2;
+	return info.map((o) => ({ rot: ZERO, pos: { x: o.centre.x + shiftX, y: o.centre.y + shiftY } }));
+}
+
+// A file's objects often share one name (several copies of a part); number them so each is distinct.
+function objectLabel(i: number, fileIndexes: number[], objectNames: string[]): string {
+	const fileIndex = fileIndexes[i] ?? i;
+	const name = objectNames[fileIndex];
+	const shown = fileIndexes.map((f) => objectNames[f]);
+	const shared = !name || shown.filter((n) => n === name).length > 1;
+	return shared ? `${name || 'Object'} ${fileIndex + 1}` : name;
+}
+
+interface EditContext {
+	fileIndexes: number[];
+	origins: Placement[];
+	initial: ObjectState[];
+	changedFlags: boolean[];
+	plateObjects: number[] | undefined;
+}
+
+// One plate of several: only what was changed is written, as a move from where the object was in
+// the file, so its place on the plate and every other plate stay as they are. Otherwise every
+// object is written at its place on the bed.
+function buildEdits(objs: ObjectState[], ctx: EditContext): ObjectEdit[] {
+	const { fileIndexes, origins, initial, changedFlags, plateObjects } = ctx;
+	return objs
+		.map((o, i) => ({ o, i }))
+		.filter(({ i }) => !plateObjects || changedFlags[i])
+		.map(({ o, i }) => ({
+			index: fileIndexes[i] ?? i,
+			x_deg: o.rot.x,
+			y_deg: o.rot.y,
+			z_deg: o.rot.z,
+			x: plateObjects ? (origins[i]?.x ?? 0) + (o.pos.x - initial[i].pos.x) : o.pos.x,
+			y: plateObjects ? (origins[i]?.y ?? 0) + (o.pos.y - initial[i].pos.y) : o.pos.y,
+		}));
+}
+
+const sameTurn = (a: Rotation, b: Rotation) => a.x === b.x && a.y === b.y && a.z === b.z;
+
+// Push each object that changed since last time to the scene; returns the footprints read back, or null if nothing changed.
+function syncScene(api: SceneApi, objs: ObjectState[], applied: ObjectState[], footprints: Footprint[]): Footprint[] | null {
+	let changed = false;
+	const next = footprints.slice();
+	objs.forEach((o, i) => {
+		const before = applied[i];
+		if (before && sameTurn(before.rot, o.rot) && !moved(before.pos, o.pos)) return;
+		next[i] = api.setObject(i, o.rot, o.pos);
+		applied[i] = o;
+		changed = true;
+	});
+	return changed ? next : null;
+}
+
+// The objects of a file with several: a row of pictures to pick from, or a list when there are many.
+function ObjectChips({
+	objs,
+	selected,
+	onSelect,
+	nameOf,
+	overlaps,
+	changedFlags,
+	initial,
+	thumbnails,
+	fileIndexes,
+}: {
+	objs: ObjectState[];
+	selected: number;
+	onSelect: (index: number) => void;
+	nameOf: (index: number) => string;
+	overlaps: Map<number, Overlap>;
+	changedFlags: boolean[];
+	initial: ObjectState[];
+	thumbnails: Record<number, string>;
+	fileIndexes: number[];
+}) {
+	return (
+		<div className="rm-objects" role="group" aria-label="Object to move">
+			<span className="rm-objects-label">Moving</span>
+			{objs.length > MAX_CHIPS ? (
+				<select value={selected} aria-label="Object to move" onChange={(e) => onSelect(Number(e.target.value))}>
+					{objs.map((_, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
+						<option key={i} value={i}>
+							{nameOf(i)}
+							{changedFlags[i] ? ' (changed)' : ''}
+						</option>
+					))}
+				</select>
+			) : (
+				objs.map((o, i) => {
+					const overlap = overlaps.get(i);
+					const thumbnail = thumbnails[fileIndexes[i] ?? i];
+					return (
+						<button
+							// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
+							key={i}
+							type="button"
+							className={`rm-chip${i === selected ? ' sel' : ''}${overlap ? ' warn' : ''}`}
+							aria-pressed={i === selected}
+							onClick={() => onSelect(i)}
+						>
+							{thumbnail ? <img src={thumbnail} alt="" /> : <span className="rm-chip-blank" aria-hidden="true" />}
+							<span>
+								{nameOf(i)}
+								<small>{chipStatus(o, initial[i], overlap ? nameOf(overlap.other) : null)}</small>
+							</span>
+						</button>
+					);
+				})
+			)}
+		</div>
+	);
+}
+
+// A slider, an angle box and the quarter-turn buttons for each of the three axes.
+function RotateRows({
+	rotation,
+	disabled,
+	onAxis,
+}: {
+	rotation: Rotation;
+	disabled: boolean;
+	onAxis: (axis: Axis, degrees: number) => void;
+}) {
+	return (
+		<div className="rm-rotate">
+			{AXES.map(({ axis, label, hint }) => (
+				<div className="rm-row" key={axis}>
+					<span className="rm-row-name">
+						{label}
+						<small>{hint}</small>
+					</span>
+					<AxisSlider
+						ariaLabel={`${label}, degrees`}
+						valueText={`${rotation[axis]} degrees`}
+						value={rotation[axis]}
+						min={-180}
+						max={180}
+						step={1}
+						tick={0}
+						disabled={disabled}
+						onChange={(v) => onAxis(axis, v)}
+					/>
+					<AngleField label={`${label}, angle`} value={rotation[axis]} disabled={disabled} onChange={(v) => onAxis(axis, v)} />
+					<span className="rm-quarter">
+						<button type="button" className="preview-button" disabled={disabled} onClick={() => onAxis(axis, rotation[axis] - 90)}>
+							−90
+						</button>
+						<button type="button" className="preview-button" disabled={disabled} onClick={() => onAxis(axis, rotation[axis] + 90)}>
+							+90
+						</button>
+					</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+type Range = { xMin: number; xMax: number; yMin: number; yMax: number };
+
+// The plate preview with a slider down its left edge (front to back) and under it (left to right).
+function Stage({
+	bedSize,
+	shown,
+	range,
+	disabled,
+	containerRef,
+	view,
+	onView,
+	overlapNote,
+	status,
+	readoutName,
+	onMove,
+}: {
+	bedSize: BedSize;
+	shown: Placement;
+	range: Range;
+	disabled: boolean;
+	containerRef: React.RefObject<HTMLDivElement | null>;
+	view: View;
+	onView: (view: View) => void;
+	overlapNote: { name: string; other: string; mm: number } | null;
+	status: { loaded: boolean; loadError: string | null; working: 'apply' | 'lay_flat' | null };
+	readoutName: string | null;
+	onMove: (patch: Partial<Placement>) => void;
+}) {
+	const { xMin, xMax, yMin, yMax } = range;
+	return (
+		<div className="rm-stage">
+			<div className="rm-vslider">
+				<span>Back</span>
+				<AxisSlider
+					orientation="vertical"
+					ariaLabel="Front to back position"
+					valueText={`${(shown.y - bedSize.minY).toFixed(1)} millimetres from the front`}
+					value={shown.y}
+					min={yMin}
+					max={yMax}
+					step={0.5}
+					disabled={disabled}
+					onChange={(y) => onMove({ y })}
+				/>
+				<span>Front</span>
+			</div>
+			<div className="rm-scene">
+				<div ref={containerRef} className="rm-canvas" />
+				<div className="rm-chips" role="group" aria-label="View">
+					{(['3d', 'top'] as View[]).map((v) => (
+						<button key={v} type="button" className={view === v ? 'on' : ''} aria-pressed={view === v} onClick={() => onView(v)}>
+							{v === '3d' ? '3D' : 'Top'}
+						</button>
+					))}
+				</div>
+				{overlapNote && (
+					<div className="rm-tip rm-tip-bad">
+						{overlapNote.name} overlaps {overlapNote.other} by about {overlapNote.mm.toFixed(0)} mm
+					</div>
+				)}
+				<StageOverlay {...status} />
+			</div>
+			<div className="rm-hslider">
+				<span>Left</span>
+				<AxisSlider
+					ariaLabel="Left to right position"
+					valueText={`${(shown.x - bedSize.minX).toFixed(1)} millimetres from the left`}
+					value={shown.x}
+					min={xMin}
+					max={xMax}
+					step={0.5}
+					disabled={disabled}
+					onChange={(x) => onMove({ x })}
+				/>
+				<span>Right</span>
+				<span className="rm-readout">
+					{readoutName ? `${readoutName} · ` : ''}X {(shown.x - bedSize.minX).toFixed(1)} · Y {(shown.y - bedSize.minY).toFixed(1)} mm
+				</span>
+			</div>
+		</div>
+	);
+}
+
+// What covers the preview while it loads, fails or is being worked on.
+function StageOverlay({ loaded, loadError, working }: { loaded: boolean; loadError: string | null; working: 'apply' | 'lay_flat' | null }) {
+	if (loadError) return <div className="rm-overlay rm-error">This file can&rsquo;t be shown here ({loadError}).</div>;
+	if (!loaded) return <div className="rm-overlay">Loading the model…</div>;
+	if (working) return <div className="rm-overlay">{working === 'apply' ? 'Applying…' : 'Laying it flat…'}</div>;
+	return null;
+}
+
+// The selected object's size, with a warning when it is taller than the printer.
+function SizeReadout({
+	footprint,
+	name,
+	tooTall,
+	maxHeight,
+}: {
+	footprint: Footprint;
+	name: string | null;
+	tooTall: boolean;
+	maxHeight: number;
+}) {
+	return (
+		<div className="rm-size" aria-live="polite">
+			{footprint.w > 0 && (
+				<>
+					{name ? `${name}: ` : ''}
+					{footprint.w.toFixed(1)} × {footprint.d.toFixed(1)} × {footprint.h.toFixed(1)} mm
+					{tooTall && <span className="field-error"> · taller than the printer ({maxHeight} mm)</span>}
+				</>
+			)}
+		</div>
+	);
+}
+
+// The line under the tools: the last message, else a hint for what is shown.
+function toolsHint(note: string | null, several: boolean, plateObjects: number[] | undefined): string {
+	if (note) return note;
+	if (several) return 'Turning, moving and the face tools act on the selected object.';
+	if (plateObjects) return 'Only the objects on this plate are shown; the other plates stay as they are.';
+	return 'Lay flat runs in the slicer and takes a second or two.';
+}
+
+// Lay flat, pick a face and the reset buttons.
+function ToolsRow({
+	disabled,
+	locked,
+	several,
+	selectedChanged,
+	changedCount,
+	note,
+	plateObjects,
+	onLayFlat,
+	onPickFace,
+	onResetSelected,
+	onResetAll,
+}: {
+	disabled: boolean;
+	locked: boolean;
+	several: boolean;
+	selectedChanged: boolean;
+	changedCount: number;
+	note: string | null;
+	plateObjects: number[] | undefined;
+	onLayFlat: () => void;
+	onPickFace: () => void;
+	onResetSelected: () => void;
+	onResetAll: () => void;
+}) {
+	return (
+		<div className="rm-tools">
+			<button type="button" className="preview-button" disabled={disabled} onClick={onLayFlat}>
+				Lay flat
+			</button>
+			<button type="button" className="preview-button" disabled={disabled} onClick={onPickFace}>
+				Pick a face…
+			</button>
+			<button
+				type="button"
+				className="preview-button"
+				disabled={locked || !(several ? selectedChanged : changedCount > 0)}
+				onClick={onResetSelected}
+			>
+				{several ? 'Reset this object' : 'Reset'}
+			</button>
+			{several && (
+				<button type="button" className="preview-button" disabled={locked || changedCount === 0} onClick={onResetAll}>
+					Reset all
+				</button>
+			)}
+			<span className="auth-hint rm-tools-note">{toolsHint(note, several, plateObjects)}</span>
+		</div>
+	);
+}
+
+// The label on the Apply button.
+function applyLabel(working: 'apply' | 'lay_flat' | null, several: boolean, changedCount: number): string {
+	if (working === 'apply') return 'Applying…';
+	if (several && changedCount > 0) return `Apply ${changedCount} change${changedCount === 1 ? '' : 's'}`;
+	return 'Apply';
+}
+
+// Auto-orient and auto-arrange on the left, Cancel and Apply on the right.
+function FooterButtons({
+	plateObjects,
+	locked,
+	loaded,
+	working,
+	busyOp,
+	several,
+	changedCount,
+	onClose,
+	onApply,
+	onAutoOrient,
+	onAutoArrange,
+}: {
+	plateObjects: number[] | undefined;
+	locked: boolean;
+	loaded: boolean;
+	working: 'apply' | 'lay_flat' | null;
+	busyOp: 'orient' | 'arrange' | null;
+	several: boolean;
+	changedCount: number;
+	onClose: () => void;
+	onApply: () => void;
+	onAutoOrient: () => void;
+	onAutoArrange: () => void;
+}) {
+	return (
+		<div className="rm-footer">
+			<span className="rm-footer-left">
+				{!plateObjects && (
+					<>
+						<button type="button" className="preview-button" disabled={locked || !loaded} onClick={onAutoOrient}>
+							{busyOp === 'orient' ? 'Orienting…' : several ? 'Auto-orient all' : 'Auto-orient'}
+						</button>
+						<button type="button" className="preview-button" disabled={locked || !loaded} onClick={onAutoArrange}>
+							{busyOp === 'arrange' ? 'Arranging…' : several ? 'Auto-arrange all' : 'Auto-arrange'}
+						</button>
+					</>
+				)}
+			</span>
+			<span className="rm-footer-right">
+				<button type="button" className="preview-button" onClick={onClose} disabled={working !== null}>
+					Cancel
+				</button>
+				<button type="button" onClick={onApply} disabled={locked || !loaded}>
+					{applyLabel(working, several, changedCount)}
+				</button>
+			</span>
+		</div>
 	);
 }
 
@@ -463,14 +934,7 @@ export default function RotateMoveDialog({
 			bed: bedSize,
 			only: plateObjects,
 			onLoaded: (info) => {
-				// Put the whole group's centre on the current position; each object keeps its place within it.
-				const minX = Math.min(...info.map((o) => o.centre.x - o.footprint.w / 2));
-				const maxX = Math.max(...info.map((o) => o.centre.x + o.footprint.w / 2));
-				const minY = Math.min(...info.map((o) => o.centre.y - o.footprint.d / 2));
-				const maxY = Math.max(...info.map((o) => o.centre.y + o.footprint.d / 2));
-				const shiftX = startRef.current.x - (minX + maxX) / 2;
-				const shiftY = startRef.current.y - (minY + maxY) / 2;
-				const start = info.map((o) => ({ rot: ZERO, pos: { x: o.centre.x + shiftX, y: o.centre.y + shiftY } }));
+				const start = startStates(info, startRef.current);
 				setInitial(start);
 				setObjs(start);
 				setFileIndexes(info.map((o) => o.fileIndex));
@@ -505,16 +969,8 @@ export default function RotateMoveDialog({
 	useEffect(() => {
 		const api = sceneRef.current;
 		if (!loaded || !api) return;
-		let changed = false;
-		const next = footprints.slice();
-		objs.forEach((o, i) => {
-			const before = appliedRef.current[i];
-			if (before && before.rot.x === o.rot.x && before.rot.y === o.rot.y && before.rot.z === o.rot.z && !moved(before.pos, o.pos)) return;
-			next[i] = api.setObject(i, o.rot, o.pos);
-			appliedRef.current[i] = o;
-			changed = true;
-		});
-		if (changed) setFootprints(next);
+		const next = syncScene(api, objs, appliedRef.current, footprints);
+		if (next) setFootprints(next);
 		// footprints is read, not a trigger: it only changes here.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [objs, loaded]);
@@ -547,43 +1003,12 @@ export default function RotateMoveDialog({
 	);
 
 	// Which objects are pending changes, and which overlap.
-	const changedFlags = objs.map((o, i) => isTurned(o.rot) || (initial[i] ? moved(o.pos, initial[i].pos) : false));
+	const changedFlags = changedFlagsOf(objs, initial);
 	const changedCount = changedFlags.filter(Boolean).length;
-	const overlaps = useMemo(() => {
-		const found = new Map<number, { other: number; mm: number }>();
-		for (let i = 0; i < objs.length; i++) {
-			for (let j = i + 1; j < objs.length; j++) {
-				const a = footprints[i];
-				const b = footprints[j];
-				if (!a || !b) continue;
-				const ox = Math.min(objs[i].pos.x + a.w / 2, objs[j].pos.x + b.w / 2) - Math.max(objs[i].pos.x - a.w / 2, objs[j].pos.x - b.w / 2);
-				const oy = Math.min(objs[i].pos.y + a.d / 2, objs[j].pos.y + b.d / 2) - Math.max(objs[i].pos.y - a.d / 2, objs[j].pos.y - b.d / 2);
-				if (ox > OVERLAP_MARGIN_MM && oy > OVERLAP_MARGIN_MM) {
-					const mm = Math.min(ox, oy);
-					if (!found.has(i)) found.set(i, { other: j, mm });
-					if (!found.has(j)) found.set(j, { other: i, mm });
-				}
-			}
-		}
-		return found;
-	}, [objs, footprints]);
+	const overlaps = useMemo(() => findOverlaps(objs, footprints), [objs, footprints]);
 	const tooTall = footprint.h > bedSize.height + 0.05;
-	// A file's objects often share one name (several copies of a part); number them so each is distinct.
-	const nameOf = (i: number) => {
-		const fileIndex = fileIndexes[i] ?? i;
-		const name = objectNames[fileIndex];
-		const shown = fileIndexes.map((f) => objectNames[f]);
-		const shared = !name || shown.filter((n) => n === name).length > 1;
-		return shared ? `${name || 'Object'} ${fileIndex + 1}` : name;
-	};
-
-	const groupCentre = (): Placement => {
-		const minX = Math.min(...objs.map((o, i) => o.pos.x - (footprints[i]?.w ?? 0) / 2));
-		const maxX = Math.max(...objs.map((o, i) => o.pos.x + (footprints[i]?.w ?? 0) / 2));
-		const minY = Math.min(...objs.map((o, i) => o.pos.y - (footprints[i]?.d ?? 0) / 2));
-		const maxY = Math.max(...objs.map((o, i) => o.pos.y + (footprints[i]?.d ?? 0) / 2));
-		return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-	};
+	const nameOf = (i: number) => objectLabel(i, fileIndexes, objectNames);
+	const groupCentre = () => groupCentreOf(objs, footprints);
 
 	const run = (kind: 'apply' | 'lay_flat', task: Promise<boolean>) => {
 		setWorking(kind);
@@ -610,20 +1035,7 @@ export default function RotateMoveDialog({
 			onClose();
 			return;
 		}
-		// One plate of several: only what was changed is written, as a move from where the object was in
-		// the file, so its place on the plate and every other plate stay as they are. Otherwise every
-		// object is written at its place on the bed.
-		const edits: ObjectEdit[] = objs
-			.map((o, i) => ({ o, i }))
-			.filter(({ i }) => !plateObjects || changedFlags[i])
-			.map(({ o, i }) => ({
-				index: fileIndexes[i] ?? i,
-				x_deg: o.rot.x,
-				y_deg: o.rot.y,
-				z_deg: o.rot.z,
-				x: plateObjects ? (origins[i]?.x ?? 0) + (o.pos.x - initial[i].pos.x) : o.pos.x,
-				y: plateObjects ? (origins[i]?.y ?? 0) + (o.pos.y - initial[i].pos.y) : o.pos.y,
-			}));
+		const edits = buildEdits(objs, { fileIndexes, origins, initial, changedFlags, plateObjects });
 		run('apply', onTransformObjects(edits, groupCentre()));
 	};
 
@@ -659,230 +1071,64 @@ export default function RotateMoveDialog({
 			</div>
 			<div className="object-picker-scroll rotate-move-body">
 				{several && (
-					<div className="rm-objects" role="group" aria-label="Object to move">
-						<span className="rm-objects-label">Moving</span>
-						{count > MAX_CHIPS ? (
-							<select value={selected} aria-label="Object to move" onChange={(e) => setSelected(Number(e.target.value))}>
-								{objs.map((_, i) => (
-									// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
-									<option key={i} value={i}>
-										{nameOf(i)}
-										{changedFlags[i] ? ' (changed)' : ''}
-									</option>
-								))}
-							</select>
-						) : (
-							objs.map((o, i) => {
-								const overlap = overlaps.get(i);
-								const status = overlap
-									? `overlaps ${nameOf(overlap.other)}`
-									: isTurned(o.rot) && initial[i] && moved(o.pos, initial[i].pos)
-										? 'turned and moved'
-										: isTurned(o.rot)
-											? 'turned'
-											: initial[i] && moved(o.pos, initial[i].pos)
-												? 'moved'
-												: 'unchanged';
-								return (
-									<button
-										// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
-										key={i}
-										type="button"
-										className={`rm-chip${i === selected ? ' sel' : ''}${overlap ? ' warn' : ''}`}
-										aria-pressed={i === selected}
-										onClick={() => setSelected(i)}
-									>
-										{thumbnails[fileIndexes[i] ?? i] ? (
-											<img src={thumbnails[fileIndexes[i] ?? i]} alt="" />
-										) : (
-											<span className="rm-chip-blank" aria-hidden="true" />
-										)}
-										<span>
-											{nameOf(i)}
-											<small>{status}</small>
-										</span>
-									</button>
-								);
-							})
-						)}
-					</div>
+					<ObjectChips
+						objs={objs}
+						selected={selected}
+						onSelect={setSelected}
+						nameOf={nameOf}
+						overlaps={overlaps}
+						changedFlags={changedFlags}
+						initial={initial}
+						thumbnails={thumbnails}
+						fileIndexes={fileIndexes}
+					/>
 				)}
 
-				<div className="rm-stage">
-					<div className="rm-vslider">
-						<span>Back</span>
-						<AxisSlider
-							orientation="vertical"
-							ariaLabel="Front to back position"
-							valueText={`${(shown.y - bedSize.minY).toFixed(1)} millimetres from the front`}
-							value={shown.y}
-							min={yMin}
-							max={yMax}
-							step={0.5}
-							disabled={locked || !loaded}
-							onChange={(y) => update((o) => ({ ...o, pos: { ...shown, y } }))}
-						/>
-						<span>Front</span>
-					</div>
-					<div className="rm-scene">
-						<div ref={containerRef} className="rm-canvas" />
-						<div className="rm-chips" role="group" aria-label="View">
-							{(['3d', 'top'] as View[]).map((v) => (
-								<button key={v} type="button" className={view === v ? 'on' : ''} aria-pressed={view === v} onClick={() => setView(v)}>
-									{v === '3d' ? '3D' : 'Top'}
-								</button>
-							))}
-						</div>
-						{several && overlaps.has(selected) && (
-							<div className="rm-tip rm-tip-bad">
-								{nameOf(selected)} overlaps {nameOf(overlaps.get(selected)!.other)} by about {overlaps.get(selected)!.mm.toFixed(0)} mm
-							</div>
-						)}
-						{!loaded && !loadError && <div className="rm-overlay">Loading the model…</div>}
-						{loadError && <div className="rm-overlay rm-error">This file can&rsquo;t be shown here ({loadError}).</div>}
-						{working && <div className="rm-overlay">{working === 'apply' ? 'Applying…' : 'Laying it flat…'}</div>}
-					</div>
-					<div className="rm-hslider">
-						<span>Left</span>
-						<AxisSlider
-							ariaLabel="Left to right position"
-							valueText={`${(shown.x - bedSize.minX).toFixed(1)} millimetres from the left`}
-							value={shown.x}
-							min={xMin}
-							max={xMax}
-							step={0.5}
-							disabled={locked || !loaded}
-							onChange={(x) => update((o) => ({ ...o, pos: { ...shown, x } }))}
-						/>
-						<span>Right</span>
-						<span className="rm-readout">
-							{several ? `${nameOf(selected)} · ` : ''}X {(shown.x - bedSize.minX).toFixed(1)} · Y {(shown.y - bedSize.minY).toFixed(1)} mm
-						</span>
-					</div>
-				</div>
+				<Stage
+					bedSize={bedSize}
+					shown={shown}
+					range={{ xMin, xMax, yMin, yMax }}
+					disabled={locked || !loaded}
+					containerRef={containerRef}
+					view={view}
+					onView={setView}
+					overlapNote={overlapNoteFor(overlaps, selected, several, nameOf)}
+					status={{ loaded, loadError, working }}
+					readoutName={several ? nameOf(selected) : null}
+					onMove={(patch) => update((o) => ({ ...o, pos: { ...shown, ...patch } }))}
+				/>
 
-				<div className="rm-size" aria-live="polite">
-					{footprint.w > 0 && (
-						<>
-							{several ? `${nameOf(selected)}: ` : ''}
-							{footprint.w.toFixed(1)} × {footprint.d.toFixed(1)} × {footprint.h.toFixed(1)} mm
-							{tooTall && <span className="field-error"> · taller than the printer ({bedSize.height} mm)</span>}
-						</>
-					)}
-				</div>
+				<SizeReadout footprint={footprint} name={several ? nameOf(selected) : null} tooTall={tooTall} maxHeight={bedSize.height} />
 
-				<div className="rm-rotate">
-					{AXES.map(({ axis, label, hint }) => (
-						<div className="rm-row" key={axis}>
-							<span className="rm-row-name">
-								{label}
-								<small>{hint}</small>
-							</span>
-							<AxisSlider
-								ariaLabel={`${label}, degrees`}
-								valueText={`${current.rot[axis]} degrees`}
-								value={current.rot[axis]}
-								min={-180}
-								max={180}
-								step={1}
-								tick={0}
-								disabled={locked || !canRotate}
-								onChange={(v) => setAxis(axis, v)}
-							/>
-							<AngleField
-								label={`${label}, angle`}
-								value={current.rot[axis]}
-								disabled={locked || !canRotate}
-								onChange={(v) => setAxis(axis, v)}
-							/>
-							<span className="rm-quarter">
-								<button
-									type="button"
-									className="preview-button"
-									disabled={locked || !canRotate}
-									onClick={() => setAxis(axis, current.rot[axis] - 90)}
-								>
-									−90
-								</button>
-								<button
-									type="button"
-									className="preview-button"
-									disabled={locked || !canRotate}
-									onClick={() => setAxis(axis, current.rot[axis] + 90)}
-								>
-									+90
-								</button>
-							</span>
-						</div>
-					))}
-				</div>
+				<RotateRows rotation={current.rot} disabled={locked || !canRotate} onAxis={setAxis} />
 
-				<div className="rm-tools">
-					<button type="button" className="preview-button" disabled={locked || !canRotate} onClick={layFlat}>
-						Lay flat
-					</button>
-					<button type="button" className="preview-button" disabled={locked || !canRotate} onClick={() => setPickerOpen(true)}>
-						Pick a face…
-					</button>
-					<button
-						type="button"
-						className="preview-button"
-						disabled={locked || !(several ? changedFlags[selected] : changedCount > 0)}
-						onClick={resetSelected}
-					>
-						{several ? 'Reset this object' : 'Reset'}
-					</button>
-					{several && (
-						<button type="button" className="preview-button" disabled={locked || changedCount === 0} onClick={resetAll}>
-							Reset all
-						</button>
-					)}
-					<span className="auth-hint rm-tools-note">
-						{note ??
-							(several
-								? 'Turning, moving and the face tools act on the selected object.'
-								: plateObjects
-									? 'Only the objects on this plate are shown; the other plates stay as they are.'
-									: 'Lay flat runs in the slicer and takes a second or two.')}
-					</span>
-				</div>
+				<ToolsRow
+					disabled={locked || !canRotate}
+					locked={locked}
+					several={several}
+					selectedChanged={changedFlags[selected]}
+					changedCount={changedCount}
+					note={note}
+					plateObjects={plateObjects}
+					onLayFlat={layFlat}
+					onPickFace={() => setPickerOpen(true)}
+					onResetSelected={resetSelected}
+					onResetAll={resetAll}
+				/>
 			</div>
-			<div className="rm-footer">
-				<span className="rm-footer-left">
-					{!plateObjects && (
-						<>
-							<button
-								type="button"
-								className="preview-button"
-								disabled={locked || !loaded}
-								onClick={() => confirmDiscard() && onAutoOrient()}
-							>
-								{busyOp === 'orient' ? 'Orienting…' : several ? 'Auto-orient all' : 'Auto-orient'}
-							</button>
-							<button
-								type="button"
-								className="preview-button"
-								disabled={locked || !loaded}
-								onClick={() => confirmDiscard() && onAutoArrange()}
-							>
-								{busyOp === 'arrange' ? 'Arranging…' : several ? 'Auto-arrange all' : 'Auto-arrange'}
-							</button>
-						</>
-					)}
-				</span>
-				<span className="rm-footer-right">
-					<button type="button" className="preview-button" onClick={onClose} disabled={working !== null}>
-						Cancel
-					</button>
-					<button type="button" onClick={apply} disabled={locked || !loaded}>
-						{working === 'apply'
-							? 'Applying…'
-							: several && changedCount > 0
-								? `Apply ${changedCount} change${changedCount === 1 ? '' : 's'}`
-								: 'Apply'}
-					</button>
-				</span>
-			</div>
+			<FooterButtons
+				plateObjects={plateObjects}
+				locked={locked}
+				loaded={loaded}
+				working={working}
+				busyOp={busyOp}
+				several={several}
+				changedCount={changedCount}
+				onClose={onClose}
+				onApply={apply}
+				onAutoOrient={() => confirmDiscard() && onAutoOrient()}
+				onAutoArrange={() => confirmDiscard() && onAutoArrange()}
+			/>
 			{pickerOpen && (
 				<FacePickerDialog
 					file={file}

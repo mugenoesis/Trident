@@ -45,6 +45,126 @@ function parseArgs(parts: string[]): Map<string, number> {
 	return args;
 }
 
+type Point = { x: number; y: number; z: number };
+
+/**
+ * Walks G-code line by line, tracking where the head is, and collects the extruding moves by layer.
+ * See parseGcode for what it reads and why.
+ */
+class GcodeReader {
+	readonly layers: GcodeLayer[] = [];
+	private currentLayer: GcodeLayer | null = null;
+	private x = 0;
+	private y = 0;
+	private z = 0;
+	private e = 0;
+	private relativeE = false;
+	// Accumulated so `raw + offset` stays the machine's true, continuous
+	// physical position across a G92 reset (see reset below) -- without this,
+	// a belt printer's start gcode re-zeroing Z partway through (confirmed on
+	// a real IdeaFormer IR3 V2 slice: "G92 Z0" once after the prime lines,
+	// again right before the first layer) makes every point before vs. after
+	// the reset get back-transformed as if they were in the SAME frame when
+	// they're not, rendering the prime line and the object visibly offset
+	// from each other even though the machine never actually moved between them.
+	private offset: Point = { x: 0, y: 0, z: 0 };
+	// Sticks across layer boundaries (OrcaSlicer only re-emits ";TYPE:" when
+	// the feature actually changes, not at the start of every layer) --
+	// resetting it on ";LAYER_CHANGE" would silently misclassify every
+	// segment at the start of a layer that continues the previous layer's
+	// final feature (e.g. a support trunk spanning several layers) as "not
+	// support" until the next explicit ";TYPE:" comment.
+	private isSupportType = false;
+
+	private readonly beltTransform: BeltTransform | null | undefined;
+
+	constructor(beltTransform?: BeltTransform | null) {
+		this.beltTransform = beltTransform;
+	}
+
+	private toRenderSpace(p: Point): Point {
+		return this.beltTransform ? beltBackTransformPoint(this.beltTransform, p.x, p.y, p.z) : p;
+	}
+
+	private here(): Point {
+		return { x: this.x + this.offset.x, y: this.y + this.offset.y, z: this.z + this.offset.z };
+	}
+
+	line(rawLine: string): void {
+		const trimmed = rawLine.trim();
+		// A belt slice appends the new layer's Z value directly onto this
+		// marker with no separator (e.g. ";LAYER_CHANGE32.4794", confirmed
+		// against a real IdeaFormer IR3 V2 slice) -- an exact-string match here
+		// would silently never fire for belt gcode, collapsing the whole file
+		// into one giant "layer".
+		const isLayerChange = trimmed.startsWith(';LAYER_CHANGE');
+		if (isLayerChange || !this.currentLayer) {
+			this.currentLayer = { segments: [] };
+			this.layers.push(this.currentLayer);
+			if (isLayerChange) return;
+		}
+		if (trimmed.startsWith(';')) {
+			this.comment(trimmed, this.currentLayer);
+			return;
+		}
+		const line = trimmed.split(';', 1)[0].trim();
+		if (line) this.command(line.split(/\s+/), this.currentLayer);
+	}
+
+	private comment(trimmed: string, layer: GcodeLayer): void {
+		if (trimmed.startsWith(';HEIGHT:') && layer.height === undefined) {
+			const parsed = Number.parseFloat(trimmed.slice(';HEIGHT:'.length));
+			if (Number.isFinite(parsed)) layer.height = parsed;
+		} else if (trimmed.startsWith(';TYPE:')) {
+			this.isSupportType = /support/i.test(trimmed.slice(';TYPE:'.length));
+		}
+	}
+
+	private command(parts: string[], layer: GcodeLayer): void {
+		const cmd = parts[0].toUpperCase();
+		if (cmd === 'M83' || cmd === 'M82') this.relativeE = cmd === 'M83';
+		else if (cmd === 'G92') this.reset(parseArgs(parts));
+		else if (cmd === 'G0' || cmd === 'G1') this.move(parseArgs(parts), layer);
+	}
+
+	/**
+	 * G92 redefines the CURRENT position without moving the head -- e.g. a
+	 * belt printer's start gcode uses "G92 Z0" to zero the belt's own
+	 * travel origin. Must update the tracked position the same way E is
+	 * already handled, or every subsequent move that omits that axis
+	 * (carrying the old position forward) drifts by a constant offset.
+	 */
+	private reset(args: Map<string, number>): void {
+		const newE = args.get('E');
+		if (newE !== undefined) this.e = newE;
+		for (const axis of ['x', 'y', 'z'] as const) {
+			const v = args.get(axis.toUpperCase());
+			if (v === undefined) continue;
+			this.offset[axis] += this[axis] - v;
+			this[axis] = v;
+		}
+	}
+
+	private move(args: Map<string, number>, layer: GcodeLayer): void {
+		const next = { x: args.get('X') ?? this.x, y: args.get('Y') ?? this.y, z: args.get('Z') ?? this.z };
+		const newE = args.get('E');
+		const eDelta = newE === undefined ? 0 : this.relativeE ? newE : newE - this.e;
+		if (eDelta > 0) {
+			const p1 = this.toRenderSpace(this.here());
+			const p2 = this.toRenderSpace({
+				x: next.x + this.offset.x,
+				y: next.y + this.offset.y,
+				z: next.z + this.offset.z,
+			});
+			layer.segments.push({ x1: p1.x, y1: p1.y, z1: p1.z, x2: p2.x, y2: p2.y, z2: p2.z, isSupport: this.isSupportType });
+		}
+		this.x = next.x;
+		this.y = next.y;
+		this.z = next.z;
+		if (newE !== undefined) this.e = this.relativeE ? this.e + eDelta : newE;
+	}
+}
+
 /**
  * Extracts extruding toolpath segments from G-code text, grouped by layer.
  * Layer boundaries come from OrcaSlicer's own `;LAYER_CHANGE` comment
@@ -70,129 +190,7 @@ function parseArgs(parts: string[]): Map<string, number> {
  * for a non-belt printer, which renders G-code coordinates as-is.
  */
 export function parseGcode(text: string, beltTransform?: BeltTransform | null): ParsedGcode {
-	const layers: GcodeLayer[] = [];
-	let currentLayer: GcodeLayer | null = null;
-
-	let x = 0;
-	let y = 0;
-	let z = 0;
-	let e = 0;
-	let relativeE = false;
-	// Accumulated so `raw + offset` stays the machine's true, continuous
-	// physical position across a G92 reset (see the G92 branch below) --
-	// without this, a belt printer's start gcode re-zeroing Z partway through
-	// (confirmed on a real IdeaFormer IR3 V2 slice: "G92 Z0" once after the
-	// prime lines, again right before the first layer) makes every point
-	// before vs. after the reset get back-transformed as if they were in the
-	// SAME frame when they're not, rendering the prime line and the object
-	// visibly offset from each other even though the machine never actually
-	// moved between them.
-	let xOffset = 0;
-	let yOffset = 0;
-	let zOffset = 0;
-	// Sticks across layer boundaries (OrcaSlicer only re-emits ";TYPE:" when
-	// the feature actually changes, not at the start of every layer) --
-	// resetting it on ";LAYER_CHANGE" would silently misclassify every
-	// segment at the start of a layer that continues the previous layer's
-	// final feature (e.g. a support trunk spanning several layers) as "not
-	// support" until the next explicit ";TYPE:" comment.
-	let isSupportType = false;
-
-	const toRenderSpace = (px: number, py: number, pz: number) =>
-		beltTransform ? beltBackTransformPoint(beltTransform, px, py, pz) : { x: px, y: py, z: pz };
-
-	for (const rawLine of text.split('\n')) {
-		const trimmed = rawLine.trim();
-		// A belt slice appends the new layer's Z value directly onto this
-		// marker with no separator (e.g. ";LAYER_CHANGE32.4794", confirmed
-		// against a real IdeaFormer IR3 V2 slice) -- an exact-string match here
-		// would silently never fire for belt gcode, collapsing the whole file
-		// into one giant "layer".
-		const isLayerChange = trimmed.startsWith(';LAYER_CHANGE');
-		if (isLayerChange || !currentLayer) {
-			currentLayer = { segments: [] };
-			layers.push(currentLayer);
-			if (isLayerChange) continue;
-		}
-
-		if (trimmed.startsWith(';HEIGHT:') && currentLayer.height === undefined) {
-			const parsed = Number.parseFloat(trimmed.slice(';HEIGHT:'.length));
-			if (Number.isFinite(parsed)) currentLayer.height = parsed;
-			continue;
-		}
-
-		if (trimmed.startsWith(';TYPE:')) {
-			isSupportType = /support/i.test(trimmed.slice(';TYPE:'.length));
-			continue;
-		}
-
-		const line = trimmed.split(';', 1)[0].trim();
-		if (!line) continue;
-		const parts = line.split(/\s+/);
-		const cmd = parts[0].toUpperCase();
-
-		if (cmd === 'M83') {
-			relativeE = true;
-			continue;
-		}
-		if (cmd === 'M82') {
-			relativeE = false;
-			continue;
-		}
-		if (cmd === 'G92') {
-			// Redefines the CURRENT position without moving the head -- e.g. a
-			// belt printer's start gcode uses "G92 Z0" to zero the belt's own
-			// travel origin. Must update the tracked position the same way E is
-			// already handled below, or every subsequent move that omits that
-			// axis (carrying the old position forward) drifts by a constant
-			// offset.
-			const args = parseArgs(parts);
-			if (args.has('E')) e = args.get('E')!;
-			if (args.has('X')) {
-				const v = args.get('X')!;
-				xOffset += x - v;
-				x = v;
-			}
-			if (args.has('Y')) {
-				const v = args.get('Y')!;
-				yOffset += y - v;
-				y = v;
-			}
-			if (args.has('Z')) {
-				const v = args.get('Z')!;
-				zOffset += z - v;
-				z = v;
-			}
-			continue;
-		}
-		if (cmd !== 'G0' && cmd !== 'G1') continue;
-
-		const args = parseArgs(parts);
-		const nx = args.has('X') ? args.get('X')! : x;
-		const ny = args.has('Y') ? args.get('Y')! : y;
-		const nz = args.has('Z') ? args.get('Z')! : z;
-		const eDelta = args.has('E') ? (relativeE ? args.get('E')! : args.get('E')! - e) : 0;
-		const extruding = eDelta > 0;
-
-		if (extruding) {
-			const p1 = toRenderSpace(x + xOffset, y + yOffset, z + zOffset);
-			const p2 = toRenderSpace(nx + xOffset, ny + yOffset, nz + zOffset);
-			currentLayer.segments.push({
-				x1: p1.x,
-				y1: p1.y,
-				z1: p1.z,
-				x2: p2.x,
-				y2: p2.y,
-				z2: p2.z,
-				isSupport: isSupportType,
-			});
-		}
-
-		x = nx;
-		y = ny;
-		z = nz;
-		if (args.has('E')) e = relativeE ? e + eDelta : args.get('E')!;
-	}
-
-	return { layers: layers.filter((l) => l.segments.length > 0) };
+	const reader = new GcodeReader(beltTransform);
+	for (const rawLine of text.split('\n')) reader.line(rawLine);
+	return { layers: reader.layers.filter((l) => l.segments.length > 0) };
 }

@@ -58,6 +58,234 @@ export interface ViewerHandle {
 	capturePreview: () => string | null;
 }
 
+const CAPTURE_SIZE = 512;
+// The model's furthest corner reaches 88% of the square capture frame,
+// leaving a small margin so anti-aliased edges aren't clipped -- chosen
+// by comparing several options directly against the real bee model.
+const FRAME_FILL = 0.88;
+
+// The box's eight corners as pixels of the square capture frame, and the rectangle they cover.
+function projectedExtent(box: THREE.Box3, camera: THREE.Camera) {
+	let minPx = Infinity;
+	let maxPx = -Infinity;
+	let minPy = Infinity;
+	let maxPy = -Infinity;
+	for (const x of [box.min.x, box.max.x]) {
+		for (const y of [box.min.y, box.max.y]) {
+			for (const z of [box.min.z, box.max.z]) {
+				const ndc = new THREE.Vector3(x, y, z).project(camera);
+				const px = (ndc.x * 0.5 + 0.5) * CAPTURE_SIZE;
+				// NDC's +y is up; pixel space's +y is down.
+				const py = (1 - (ndc.y * 0.5 + 0.5)) * CAPTURE_SIZE;
+				minPx = Math.min(minPx, px);
+				maxPx = Math.max(maxPx, px);
+				minPy = Math.min(minPy, py);
+				maxPy = Math.max(maxPy, py);
+			}
+		}
+	}
+	return { minPx, maxPx, minPy, maxPy };
+}
+
+// Hides an object and returns what puts it back as it was.
+function hideTemporarily(object: THREE.Object3D | null): () => void {
+	if (!object) return () => undefined;
+	const was = object.visible;
+	object.visible = false;
+	return () => {
+		object.visible = was;
+	};
+}
+
+// The canvas as a PNG, or null when the browser will not give one.
+function canvasPng(canvas: HTMLCanvasElement): string | null {
+	try {
+		return canvas.toDataURL('image/png');
+	} catch {
+		return null;
+	}
+}
+
+interface LiveScene {
+	renderer: THREE.WebGLRenderer;
+	scene: THREE.Scene;
+	camera: THREE.PerspectiveCamera;
+	controls: OrbitControls;
+	plate: THREE.Mesh | null;
+	ceiling: THREE.Mesh | null;
+	modelBox: THREE.Box3 | null;
+}
+
+// A square picture cropped tight to the model, then everything put back before the next paint.
+function captureModelSquare(live: LiveScene & { modelBox: THREE.Box3 }, canvas: HTMLCanvasElement): string | null {
+	const { renderer, scene, camera, plate, ceiling, modelBox } = live;
+	const restorePlate = hideTemporarily(plate);
+	const restoreCeiling = hideTemporarily(ceiling);
+	const savedAspect = camera.aspect;
+	const savedSize = renderer.getSize(new THREE.Vector2());
+	try {
+		renderer.setSize(CAPTURE_SIZE, CAPTURE_SIZE, false);
+		camera.aspect = 1;
+		camera.updateProjectionMatrix();
+		const { minPx, maxPx, minPy, maxPy } = projectedExtent(modelBox, camera);
+		const bboxCx = (minPx + maxPx) / 2;
+		const bboxCy = (minPy + maxPy) / 2;
+		// A single half-extent, big enough to cover whichever axis needs
+		// more room -- keeps the crop window perfectly square so there's
+		// no second crop needed downstream.
+		const cropHalf = Math.max(maxPx - minPx, maxPy - minPy) / 2 / FRAME_FILL;
+		camera.setViewOffset(CAPTURE_SIZE, CAPTURE_SIZE, bboxCx - cropHalf, bboxCy - cropHalf, cropHalf * 2, cropHalf * 2);
+		camera.updateProjectionMatrix();
+		renderer.render(scene, camera);
+		return canvas.toDataURL('image/png');
+	} catch {
+		return null;
+	} finally {
+		camera.clearViewOffset();
+		camera.aspect = savedAspect;
+		restorePlate();
+		restoreCeiling();
+		camera.updateProjectionMatrix();
+		renderer.setSize(savedSize.x, savedSize.y, false);
+		renderer.render(scene, camera);
+	}
+}
+
+// A copy of the geometry with one flat vertex colour per original triangle (null = the fallback colour).
+function paintedGeometry(geometry: THREE.BufferGeometry, triangleColors: (string | null)[], fallbackHex: string): THREE.BufferGeometry {
+	const nonIndexed = geometry.toNonIndexed();
+	const colors = new Float32Array(nonIndexed.attributes.position.count * 3);
+	const fallback = new THREE.Color(fallbackHex);
+	const tmp = new THREE.Color();
+	triangleColors.forEach((hex, i) => {
+		const c = hex ? tmp.set(hex) : fallback;
+		for (let vertex = 0; vertex < 3; vertex++) {
+			const base = (i * 3 + vertex) * 3;
+			colors[base] = c.r;
+			colors[base + 1] = c.g;
+			colors[base + 2] = c.b;
+		}
+	});
+	nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+	return nonIndexed;
+}
+
+// One flat colour per original triangle of a mesh; a mesh whose triangle count does not match keeps the flat material.
+function paintMesh(mesh: THREE.Mesh, baseColorHex: string | null, triangleColors: (string | null)[], flat: THREE.Material): void {
+	const geometry = mesh.geometry;
+	const faceCount = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+	if (faceCount !== triangleColors.length) {
+		// Shape mismatch -- bail to this mesh's flat default rather than
+		// risk coloring the wrong faces.
+		mesh.material = flat;
+		return;
+	}
+	mesh.geometry = paintedGeometry(geometry, triangleColors, baseColorHex ?? '#ffffff');
+	geometry.dispose();
+	mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55 });
+}
+
+// How far the model sits from the middle of the bed: where the user placed it, or the default a belt printer gives.
+function placementOffset(
+	bedSize: BedSize | null | undefined,
+	wanted: { x: number; y: number } | null | undefined,
+	plate: { w: number; d: number },
+	supportEnabled: boolean | undefined,
+	rowDepth: number | null,
+): { x: number; y: number } {
+	if (bedSize && wanted) {
+		return { x: wanted.x - bedSize.minX - plate.w / 2, y: wanted.y - bedSize.minY - plate.d / 2 };
+	}
+	if (bedSize?.beltPrinterInfiniteY) {
+		const margin = supportEnabled ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT : BELT_PRINTER_PREVIEW_MARGIN_MM;
+		// A lined-up row starts at the belt's start; a lone object is centred near it.
+		return { x: 0, y: -plate.d / 2 + margin + (rowDepth !== null ? rowDepth / 2 : 0) };
+	}
+	return { x: 0, y: 0 };
+}
+
+const THUMBNAIL_SIZE = 160;
+
+// One object drawn from a three-quarter view onto the thumbnail renderer, or null for an empty object.
+function renderThumbnail(
+	renderer: THREE.WebGLRenderer,
+	scene: THREE.Scene,
+	camera: THREE.PerspectiveCamera,
+	item: THREE.Object3D,
+): string | null {
+	const clone = item.clone(true);
+	scene.add(clone);
+	try {
+		clone.updateMatrixWorld(true);
+		const box = new THREE.Box3().setFromObject(clone);
+		if (box.isEmpty()) return null;
+		const center = box.getCenter(new THREE.Vector3());
+		const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.001);
+		const distance = (radius / Math.sin(THREE.MathUtils.degToRad(35 / 2))) * 1.05;
+		camera.position.copy(center).addScaledVector(new THREE.Vector3(1, -1, 0.8).normalize(), distance);
+		camera.lookAt(center);
+		camera.near = Math.max(distance - radius * 2, 0.01);
+		camera.far = distance + radius * 2;
+		camera.updateProjectionMatrix();
+		renderer.render(scene, camera);
+		return renderer.domElement.toDataURL('image/png');
+	} finally {
+		scene.remove(clone);
+	}
+}
+
+// Show the chosen objects of a file and hide the rest, moving each kept object by its row shift.
+function arrangeShown(
+	group: THREE.Object3D,
+	starts: THREE.Vector3[],
+	shown: Set<number> | null,
+	rowShifts: Record<number, { dx: number; dy: number }> | null | undefined,
+): void {
+	group.children.forEach((item, i) => {
+		// A lined-up row moves each kept object; the others are not printed, so they are not shown.
+		const start = starts[i];
+		if (start) {
+			item.position.copy(start);
+			const shift = rowShifts?.[i];
+			if (shift) {
+				item.position.x += shift.dx;
+				item.position.y += shift.dy;
+			}
+		}
+		item.visible = (shown === null || shown.has(i)) && (!rowShifts || rowShifts[i] !== undefined);
+	});
+}
+
+// The box around what is visible, measured with the group at the origin.
+function visibleBox(group: THREE.Object3D): THREE.Box3 {
+	const saved = group.position.clone();
+	group.position.set(0, 0, 0);
+	group.updateMatrixWorld(true);
+	const box = new THREE.Box3();
+	for (const item of group.children) if (item.visible) box.expandByObject(item, true);
+	group.position.copy(saved);
+	group.updateMatrixWorld(true);
+	return box;
+}
+
+// Swap in the dim material on excluded objects and put the original back on the rest.
+function dimExcluded(group: THREE.Object3D, excluded: Set<number>, dim: THREE.Material): void {
+	group.children.forEach((item, i) => {
+		item.traverse((node) => {
+			if (!(node instanceof THREE.Mesh)) return;
+			if (!excluded.has(i)) {
+				if (node.userData.origMaterial) {
+					node.material = node.userData.origMaterial;
+					delete node.userData.origMaterial;
+				}
+			} else if (!node.userData.origMaterial) {
+				node.userData.origMaterial = node.material;
+				node.material = dim;
+			}
+		});
+	});
+}
+
 // Basic model preview: not meant to be a full slicer viewport (no layer
 // preview, no plate/gizmos) -- just enough to confirm "yes, that's the
 // object I uploaded" before slicing. Drag-to-rotate/zoom via OrbitControls
@@ -88,16 +316,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 	// Everything capturePreview needs to temporarily re-frame the shot around
 	// just the model (see below) -- populated once finishLoad knows the
 	// model's own bounds, cleared on teardown alongside canvasRef.
-	const liveRef = useRef<{
-		renderer: THREE.WebGLRenderer;
-		scene: THREE.Scene;
-		camera: THREE.PerspectiveCamera;
-		controls: OrbitControls;
-		plate: THREE.Mesh | null;
-		ceiling: THREE.Mesh | null;
-		modelBox: THREE.Box3 | null;
-	} | null>(null);
-
+	const liveRef = useRef<LiveScene | null>(null);
 	useImperativeHandle(ref, () => {
 		// The interactive view frames the model's bounding SPHERE (a
 		// deliberately loose, orientation-independent fit, see finishLoad
@@ -117,80 +336,12 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		// centered on the model's OWN projected bounding box rather than the
 		// frame's center, then restores everything before the next paint --
 		// synchronous, so the live view never actually flashes any of this.
-		const CAPTURE_SIZE = 512;
-		// The model's furthest corner reaches 88% of the square capture frame,
-		// leaving a small margin so anti-aliased edges aren't clipped -- chosen
-		// by comparing several options directly against the real bee model.
-		const FRAME_FILL = 0.88;
 		const capturePreview = (): string | null => {
 			const canvas = canvasRef.current;
 			const live = liveRef.current;
 			if (!canvas) return null;
-			if (!live?.modelBox) {
-				try {
-					return canvas.toDataURL('image/png');
-				} catch {
-					return null;
-				}
-			}
-			const { renderer, scene, camera, plate, ceiling, modelBox } = live;
-			const savedPlateVisible = plate?.visible ?? null;
-			const savedCeilingVisible = ceiling?.visible ?? null;
-			const savedAspect = camera.aspect;
-			const savedSize = renderer.getSize(new THREE.Vector2());
-			try {
-				if (plate) plate.visible = false;
-				if (ceiling) ceiling.visible = false;
-				renderer.setSize(CAPTURE_SIZE, CAPTURE_SIZE, false);
-				camera.aspect = 1;
-				camera.updateProjectionMatrix();
-
-				const corners = [
-					[modelBox.min.x, modelBox.min.y, modelBox.min.z],
-					[modelBox.min.x, modelBox.min.y, modelBox.max.z],
-					[modelBox.min.x, modelBox.max.y, modelBox.min.z],
-					[modelBox.min.x, modelBox.max.y, modelBox.max.z],
-					[modelBox.max.x, modelBox.min.y, modelBox.min.z],
-					[modelBox.max.x, modelBox.min.y, modelBox.max.z],
-					[modelBox.max.x, modelBox.max.y, modelBox.min.z],
-					[modelBox.max.x, modelBox.max.y, modelBox.max.z],
-				] as const;
-				let minPx = Infinity;
-				let maxPx = -Infinity;
-				let minPy = Infinity;
-				let maxPy = -Infinity;
-				for (const [x, y, z] of corners) {
-					const ndc = new THREE.Vector3(x, y, z).project(camera);
-					const px = (ndc.x * 0.5 + 0.5) * CAPTURE_SIZE;
-					// NDC's +y is up; pixel space's +y is down.
-					const py = (1 - (ndc.y * 0.5 + 0.5)) * CAPTURE_SIZE;
-					minPx = Math.min(minPx, px);
-					maxPx = Math.max(maxPx, px);
-					minPy = Math.min(minPy, py);
-					maxPy = Math.max(maxPy, py);
-				}
-				const bboxCx = (minPx + maxPx) / 2;
-				const bboxCy = (minPy + maxPy) / 2;
-				// A single half-extent, big enough to cover whichever axis needs
-				// more room -- keeps the crop window perfectly square so there's
-				// no second crop needed downstream.
-				const cropHalf = Math.max(maxPx - minPx, maxPy - minPy) / 2 / FRAME_FILL;
-
-				camera.setViewOffset(CAPTURE_SIZE, CAPTURE_SIZE, bboxCx - cropHalf, bboxCy - cropHalf, cropHalf * 2, cropHalf * 2);
-				camera.updateProjectionMatrix();
-				renderer.render(scene, camera);
-				return canvas.toDataURL('image/png');
-			} catch {
-				return null;
-			} finally {
-				camera.clearViewOffset();
-				camera.aspect = savedAspect;
-				if (plate && savedPlateVisible !== null) plate.visible = savedPlateVisible;
-				if (ceiling && savedCeilingVisible !== null) ceiling.visible = savedCeilingVisible;
-				camera.updateProjectionMatrix();
-				renderer.setSize(savedSize.x, savedSize.y, false);
-				renderer.render(scene, camera);
-			}
+			if (!live?.modelBox) return canvasPng(canvas);
+			return captureModelSquare({ ...live, modelBox: live.modelBox }, canvas);
 		};
 		return { capturePreview };
 	}, []);
@@ -332,17 +483,13 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 			centeredRef.current = object.position.clone();
 			const modelCenter = new THREE.Vector3(0, 0, 0);
 			const placeModel = () => {
-				let offsetX = 0;
-				let offsetY = 0;
-				const wanted = placementRef.current;
-				if (bedSize && wanted) {
-					offsetX = wanted.x - bedSize.minX - plateWidth / 2;
-					offsetY = wanted.y - bedSize.minY - plateDepth / 2;
-				} else if (bedSize?.beltPrinterInfiniteY) {
-					const margin = supportEnabled ? BELT_PRINTER_PREVIEW_MARGIN_MM_WITH_SUPPORT : BELT_PRINTER_PREVIEW_MARGIN_MM;
-					// A lined-up row starts at the belt's start; a lone object is centred near it.
-					offsetY = -plateDepth / 2 + margin + (rowDepthRef.current !== null ? rowDepthRef.current / 2 : 0);
-				}
+				const { x: offsetX, y: offsetY } = placementOffset(
+					bedSize,
+					placementRef.current,
+					{ w: plateWidth, d: plateDepth },
+					supportEnabled,
+					rowDepthRef.current,
+				);
 				const centered = centeredRef.current ?? object.position;
 				object.position.set(centered.x + offsetX, centered.y + offsetY, centered.z);
 				modelCenter.set(offsetX, offsetY, 0);
@@ -451,33 +598,9 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		// vertices) so each face can carry its own flat vertex color, since
 		// the original indexed geometry shares vertices between faces.
 		const applyTriangleColors = (object3D: THREE.Object3D, baseColorHex: string | null, triangleColors: (string | null)[]) => {
+			const flat = baseColorHex ? materialForColor(baseColorHex) : material;
 			object3D.traverse((child) => {
-				if (!(child instanceof THREE.Mesh)) return;
-				const geometry = child.geometry;
-				const faceCount = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
-				if (faceCount !== triangleColors.length) {
-					// Shape mismatch -- bail to this mesh's flat default rather than
-					// risk coloring the wrong faces.
-					child.material = baseColorHex ? materialForColor(baseColorHex) : material;
-					return;
-				}
-				const nonIndexed = geometry.toNonIndexed();
-				const colors = new Float32Array(nonIndexed.attributes.position.count * 3);
-				const fallback = new THREE.Color(baseColorHex ?? '#ffffff');
-				const tmp = new THREE.Color();
-				triangleColors.forEach((hex, i) => {
-					const c = hex ? tmp.set(hex) : fallback;
-					for (let vertex = 0; vertex < 3; vertex++) {
-						const base = (i * 3 + vertex) * 3;
-						colors[base] = c.r;
-						colors[base + 1] = c.g;
-						colors[base + 2] = c.b;
-					}
-				});
-				nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-				geometry.dispose();
-				child.geometry = nonIndexed;
-				child.material = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55 });
+				if (child instanceof THREE.Mesh) paintMesh(child, baseColorHex, triangleColors, flat);
 			});
 		};
 		const applyColorTree = (object3D: THREE.Object3D, nodes: ColorNode[]) => {
@@ -505,11 +628,10 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		const renderObjectThumbnails = (group: THREE.Group) => {
 			const items = group.children;
 			if (!onObjectThumbnails || items.length < 2) return;
-			const SIZE = 160;
 			const thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 			try {
 				thumbRenderer.setPixelRatio(1);
-				thumbRenderer.setSize(SIZE, SIZE);
+				thumbRenderer.setSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
 				const thumbScene = new THREE.Scene();
 				thumbScene.add(new THREE.AmbientLight(0xffffff, 0.6));
 				const sun = new THREE.DirectionalLight(0xffffff, 1.1);
@@ -519,23 +641,8 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 				thumbCamera.up.set(0, 0, 1);
 				const out: Record<number, string> = {};
 				items.forEach((item, i) => {
-					const clone = item.clone(true);
-					thumbScene.add(clone);
-					clone.updateMatrixWorld(true);
-					const box = new THREE.Box3().setFromObject(clone);
-					if (!box.isEmpty()) {
-						const center = box.getCenter(new THREE.Vector3());
-						const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.001);
-						const distance = (radius / Math.sin(THREE.MathUtils.degToRad(35 / 2))) * 1.05;
-						thumbCamera.position.copy(center).addScaledVector(new THREE.Vector3(1, -1, 0.8).normalize(), distance);
-						thumbCamera.lookAt(center);
-						thumbCamera.near = Math.max(distance - radius * 2, 0.01);
-						thumbCamera.far = distance + radius * 2;
-						thumbCamera.updateProjectionMatrix();
-						thumbRenderer.render(thumbScene, thumbCamera);
-						out[i] = thumbRenderer.domElement.toDataURL('image/png');
-					}
-					thumbScene.remove(clone);
+					const png = renderThumbnail(thumbRenderer, thumbScene, thumbCamera, item);
+					if (png !== null) out[i] = png;
 				});
 				if (!disposed) onObjectThumbnails(out);
 			} catch (err) {
@@ -715,29 +822,8 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		const group = loadedGroupRef.current;
 		const base = centeredRef.current;
 		if (!group || !base) return;
-		const shown = shownObjects ? new Set(shownObjects) : null;
-		group.children.forEach((item, i) => {
-			// A lined-up row moves each kept object; the others are not printed, so they are not shown.
-			const start = baseChildPos.current[i];
-			if (start) {
-				item.position.copy(start);
-				const shift = rowShifts?.[i];
-				if (shift) {
-					item.position.x += shift.dx;
-					item.position.y += shift.dy;
-				}
-			}
-			item.visible = (shown === null || shown.has(i)) && (!rowShifts || rowShifts[i] !== undefined);
-		});
-		const saved = group.position.clone();
-		group.position.set(0, 0, 0);
-		group.updateMatrixWorld(true);
-		const box = new THREE.Box3();
-		group.children.forEach((item) => {
-			if (item.visible) box.expandByObject(item, true);
-		});
-		group.position.copy(saved);
-		group.updateMatrixWorld(true);
+		arrangeShown(group, baseChildPos.current, shownObjects ? new Set(shownObjects) : null, rowShifts);
+		const box = visibleBox(group);
 		if (box.isEmpty()) return;
 		const centre = box.getCenter(new THREE.Vector3());
 		const size = box.getSize(new THREE.Vector3());
@@ -769,20 +855,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 				roughness: 1,
 			});
 		}
-		group.children.forEach((item, i) => {
-			item.traverse((node) => {
-				if (!(node instanceof THREE.Mesh)) return;
-				if (excluded.has(i)) {
-					if (!node.userData.origMaterial) {
-						node.userData.origMaterial = node.material;
-						node.material = dimMaterialRef.current!;
-					}
-				} else if (node.userData.origMaterial) {
-					node.material = node.userData.origMaterial;
-					delete node.userData.origMaterial;
-				}
-			});
-		});
+		dimExcluded(group, excluded, dimMaterialRef.current);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [excludedKey, loadVersion]);
 	useEffect(() => () => dimMaterialRef.current?.dispose(), []);

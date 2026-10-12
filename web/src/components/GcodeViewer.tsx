@@ -22,6 +22,26 @@ function averageLayerZ(layer: GcodeLayer): number {
 	return sum / layer.segments.length;
 }
 
+// How thick a layer is drawn: its own nominal height when the G-code gave one, else the step from the layer before.
+function layerHeightOf(layer: GcodeLayer, index: number, layerZs: number[]): number {
+	if (layer.height !== undefined) return Math.max(0.05, layer.height);
+	const step = index === 0 ? layerZs[0] : Math.abs(layerZs[index] - layerZs[index - 1]);
+	return Math.max(0.05, step);
+}
+
+// The box around every extruding segment.
+function layersBounds(layers: GcodeLayer[]): THREE.Box3 {
+	const bounds = new THREE.Box3();
+	const point = new THREE.Vector3();
+	for (const layer of layers) {
+		for (const seg of layer.segments) {
+			bounds.expandByPoint(point.set(seg.x1, seg.y1, seg.z1));
+			bounds.expandByPoint(point.set(seg.x2, seg.y2, seg.z2));
+		}
+	}
+	return bounds;
+}
+
 interface GcodeViewerProps {
 	jobId: string;
 	// This job's total filament weight (api/app/gcode_stats.py), shown as a
@@ -202,6 +222,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, beltTransform, o
 			const beltRawZ = groundZ + center.z;
 			layers.forEach((layer, layerIndex) => {
 				const layerColor = new THREE.Color().setHSL(0.72 - 0.72 * (layerIndex / Math.max(1, layers.length - 1)), 0.7, 0.55);
+				const segmentColor = (isSupport: boolean) => (isSupport ? supportColor : layerColor);
 				for (const seg of layer.segments) {
 					positions.push(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2);
 					// Highlight segments that actually touch the belt in white,
@@ -213,7 +234,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, beltTransform, o
 					// correctly anchored to the belt. This makes that anchoring
 					// visible directly instead of requiring a gcode-math explanation.
 					const grounded = beltTransform && Math.min(seg.z1, seg.z2) - beltRawZ < GROUNDED_HEIGHT_MM;
-					const c = grounded ? groundedColor : seg.isSupport ? supportColor : layerColor;
+					const c = grounded ? groundedColor : segmentColor(seg.isSupport);
 					colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
 				}
 				ends.push(positions.length / 3);
@@ -273,9 +294,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, beltTransform, o
 			const ends: number[] = [];
 			const layerZs = layers.map(averageLayerZ);
 			layers.forEach((layer, layerIndex) => {
-				const fallbackHeight =
-					layerIndex === 0 ? Math.max(0.05, layerZs[0]) : Math.max(0.05, Math.abs(layerZs[layerIndex] - layerZs[layerIndex - 1]));
-				const layerHeight = layer.height !== undefined ? Math.max(0.05, layer.height) : fallbackHeight;
+				const layerHeight = layerHeightOf(layer, layerIndex, layerZs);
 				for (const seg of layer.segments) {
 					const length = orientDummy(seg.x1, seg.y1, seg.z1, seg.x2, seg.y2, seg.z2);
 					if (length <= 0) continue;
@@ -329,14 +348,7 @@ export default function GcodeViewer({ jobId, filamentUsedGrams, beltTransform, o
 				layersRef.current = layers;
 				setHasSupport(layers.some((layer) => layer.segments.some((seg) => seg.isSupport)));
 
-				const bounds = new THREE.Box3();
-				const point = new THREE.Vector3();
-				for (const layer of layers) {
-					for (const seg of layer.segments) {
-						bounds.expandByPoint(point.set(seg.x1, seg.y1, seg.z1));
-						bounds.expandByPoint(point.set(seg.x2, seg.y2, seg.z2));
-					}
-				}
+				const bounds = layersBounds(layers);
 				bounds.getCenter(center);
 				const size = new THREE.Vector3();
 				bounds.getSize(size);

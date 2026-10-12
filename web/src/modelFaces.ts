@@ -105,13 +105,19 @@ export class FaceIndex {
 		}
 	}
 
-	regionAt(seed: number): FaceRegion {
+	/**
+	 * The triangles reachable from `seed` through neighbours whose normal is within the flat tolerance of the
+	 * seed's own. Compared with the face's first triangle, not the neighbour, so a gentle curve cannot drift
+	 * into a "flat" face one small step at a time. `seen` and `mark` keep track of what is already taken.
+	 */
+	private grow(seed: number, seen: (t: number) => boolean, mark: (t: number) => void): { triangles: number[]; area: number } {
 		const n = this.normals;
 		const nx = n[seed * 3];
 		const ny = n[seed * 3 + 1];
 		const nz = n[seed * 3 + 2];
 		const minDot = Math.cos((FLAT_TOLERANCE_DEGREES * Math.PI) / 180);
-		const seen = new Set<number>([seed]);
+		const triangles = [seed];
+		mark(seed);
 		const stack = [seed];
 		let area = 0;
 		while (stack.length > 0) {
@@ -119,16 +125,25 @@ export class FaceIndex {
 			area += this.areas[t];
 			for (let slot = 0; slot < 3; slot++) {
 				const next = this.neighbours[t * 3 + slot];
-				if (next < 0 || seen.has(next)) continue;
-				// Compared with the face's first triangle, not the neighbour, so a gentle
-				// curve cannot drift into a "flat" face one small step at a time.
+				if (next < 0 || seen(next)) continue;
 				if (n[next * 3] * nx + n[next * 3 + 1] * ny + n[next * 3 + 2] * nz >= minDot) {
-					seen.add(next);
+					mark(next);
+					triangles.push(next);
 					stack.push(next);
 				}
 			}
 		}
-		return { triangles: [...seen], normal: new THREE.Vector3(nx, ny, nz), area };
+		return { triangles, area };
+	}
+
+	regionAt(seed: number): FaceRegion {
+		const taken = new Set<number>();
+		const { triangles, area } = this.grow(
+			seed,
+			(t) => taken.has(t),
+			(t) => taken.add(t),
+		);
+		return { triangles, normal: this.normalAt(seed), area };
 	}
 
 	/** The outward normal of one triangle, in the geometry's own coordinates. */
@@ -144,28 +159,16 @@ export class FaceIndex {
 	/** Every flat face of the mesh (a seed triangle and the area), largest first. */
 	regions(): { seed: number; area: number }[] {
 		const visited = new Uint8Array(this.triangleCount);
-		const minDot = Math.cos((FLAT_TOLERANCE_DEGREES * Math.PI) / 180);
 		const found: { seed: number; area: number }[] = [];
 		for (let seed = 0; seed < this.triangleCount; seed++) {
 			if (visited[seed]) continue;
-			visited[seed] = 1;
-			const nx = this.normals[seed * 3];
-			const ny = this.normals[seed * 3 + 1];
-			const nz = this.normals[seed * 3 + 2];
-			const stack = [seed];
-			let area = 0;
-			while (stack.length > 0) {
-				const t = stack.pop() as number;
-				area += this.areas[t];
-				for (let slot = 0; slot < 3; slot++) {
-					const next = this.neighbours[t * 3 + slot];
-					if (next < 0 || visited[next]) continue;
-					if (this.normals[next * 3] * nx + this.normals[next * 3 + 1] * ny + this.normals[next * 3 + 2] * nz >= minDot) {
-						visited[next] = 1;
-						stack.push(next);
-					}
-				}
-			}
+			const { area } = this.grow(
+				seed,
+				(t) => visited[t] === 1,
+				(t) => {
+					visited[t] = 1;
+				},
+			);
 			found.push({ seed, area });
 		}
 		return found.sort((a, b) => b.area - a.area);

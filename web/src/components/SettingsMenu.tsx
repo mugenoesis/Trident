@@ -24,7 +24,7 @@ export default function SettingsMenu({
 	onLoadSample,
 }: SettingsMenuProps) {
 	const [open, setOpen] = useState(false);
-	const [form, setForm] = useState<'none' | 'switch' | 'add' | 'downgrade' | 'samples'>('none');
+	const [form, setForm] = useState<MenuForm>('none');
 	const [username, setUsername] = useState('');
 	const [password, setPassword] = useState('');
 	const [error, setError] = useState<string | null>(null);
@@ -84,101 +84,183 @@ export default function SettingsMenu({
 			</button>
 			{open && (
 				<div className="settings-panel">
-					{status.mode === 'single' && form === 'none' && (
-						<>
-							<div className="settings-status">Single-user mode</div>
-							<button type="button" className="link-button" onClick={() => setForm('switch')}>
-								Switch to multi-user…
-							</button>
-						</>
-					)}
-					{status.mode === 'multi' && form === 'none' && (
-						<>
-							<div className="settings-status">Signed in as {status.username}</div>
-							<button type="button" className="link-button" onClick={() => setForm('add')}>
-								Add another user…
-							</button>
-							<button type="button" className="link-button" onClick={() => onLogout()}>
-								Log out
-							</button>
-							<button type="button" className="link-button danger-text" onClick={() => setForm('downgrade')}>
-								Switch back to single-user…
-							</button>
-						</>
-					)}
-					{form === 'none' && (
-						<button type="button" className="link-button" onClick={() => setForm('samples')}>
-							Load a sample model…
-						</button>
-					)}
+					{form === 'none' && <AccountLinks status={status} onChoose={setForm} onLogout={onLogout} />}
 					{form === 'samples' && (
-						<div className="sample-models-list">
-							<p className="auth-hint">No file of your own? Try one of these.</p>
-							{sampleModels.map((sample) => (
-								<button
-									key={sample.id}
-									type="button"
-									className="link-button sample-model-option"
-									disabled={loadingSampleId !== null}
-									onClick={() => loadSample(sample.id)}
-								>
-									<span className="sample-model-name">{loadingSampleId === sample.id ? 'Loading…' : sample.name}</span>
-									<span className="sample-model-description">{sample.description}</span>
-								</button>
-							))}
-							<div className="auth-form-actions">
-								<button type="button" className="link-button" disabled={loadingSampleId !== null} onClick={resetForm}>
-									Cancel
-								</button>
-							</div>
-							{error && <div className="job-error">{error}</div>}
-						</div>
+						<SamplesList samples={sampleModels} loadingId={loadingSampleId} error={error} onLoad={loadSample} onCancel={resetForm} />
 					)}
-					{form === 'downgrade' && (
-						<div className="auth-form">
-							<p className="auth-hint">
-								This deletes every account (usernames and passwords) and merges everyone&rsquo;s printers and job history into one shared,
-								login-free setup. Nothing is lost, but accounts and who-owned-what can&rsquo;t be split apart again afterward.
-							</p>
-							<div className="auth-form-actions">
-								<button type="button" className="danger-button" disabled={busy} onClick={confirmDowngrade}>
-									{busy ? 'Merging…' : 'Yes, switch back to single-user'}
-								</button>
-								<button type="button" className="link-button" disabled={busy} onClick={resetForm}>
-									Cancel
-								</button>
-							</div>
-							{error && <div className="job-error">{error}</div>}
-						</div>
-					)}
+					{form === 'downgrade' && <DowngradePanel busy={busy} error={error} onConfirm={confirmDowngrade} onCancel={resetForm} />}
 					{(form === 'switch' || form === 'add') && (
-						<form className="auth-form" onSubmit={submit(form === 'switch' ? onSwitchToMulti : onCreateUser)}>
-							{form === 'switch' && (
-								<p className="auth-hint">
-									This can&rsquo;t be undone -- your existing printers and job history stay attached to this account.
-								</p>
-							)}
-							<label>
-								Username
-								<input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-							</label>
-							<label>
-								Password
-								<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-							</label>
-							<div className="auth-form-actions">
-								<button type="submit" disabled={busy || !username || !password}>
-									{busy ? 'Saving…' : form === 'switch' ? 'Switch to multi-user' : 'Create user'}
-								</button>
-								<button type="button" className="link-button" disabled={busy} onClick={resetForm}>
-									Cancel
-								</button>
-							</div>
-							{error && <div className="job-error">{error}</div>}
-						</form>
+						<CredentialsForm
+							mode={form}
+							username={username}
+							password={password}
+							busy={busy}
+							error={error}
+							onUsername={setUsername}
+							onPassword={setPassword}
+							onSubmit={submit(form === 'switch' ? onSwitchToMulti : onCreateUser)}
+							onCancel={resetForm}
+						/>
 					)}
 				</div>
 			)}
 		</div>
+	);
+}
+
+type MenuForm = 'none' | 'switch' | 'add' | 'downgrade' | 'samples';
+
+function AccountLinks({
+	status,
+	onChoose,
+	onLogout,
+}: {
+	status: AuthStatus;
+	onChoose: (form: MenuForm) => void;
+	onLogout: () => Promise<unknown>;
+}) {
+	return (
+		<>
+			{status.mode === 'single' && (
+				<>
+					<div className="settings-status">Single-user mode</div>
+					<button type="button" className="link-button" onClick={() => onChoose('switch')}>
+						Switch to multi-user…
+					</button>
+				</>
+			)}
+			{status.mode === 'multi' && (
+				<>
+					<div className="settings-status">Signed in as {status.username}</div>
+					<button type="button" className="link-button" onClick={() => onChoose('add')}>
+						Add another user…
+					</button>
+					<button type="button" className="link-button" onClick={() => onLogout()}>
+						Log out
+					</button>
+					<button type="button" className="link-button danger-text" onClick={() => onChoose('downgrade')}>
+						Switch back to single-user…
+					</button>
+				</>
+			)}
+			<button type="button" className="link-button" onClick={() => onChoose('samples')}>
+				Load a sample model…
+			</button>
+		</>
+	);
+}
+
+function SamplesList({
+	samples,
+	loadingId,
+	error,
+	onLoad,
+	onCancel,
+}: {
+	samples: SampleModelSummary[];
+	loadingId: string | null;
+	error: string | null;
+	onLoad: (sampleId: string) => void;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="sample-models-list">
+			<p className="auth-hint">No file of your own? Try one of these.</p>
+			{samples.map((sample) => (
+				<button
+					key={sample.id}
+					type="button"
+					className="link-button sample-model-option"
+					disabled={loadingId !== null}
+					onClick={() => onLoad(sample.id)}
+				>
+					<span className="sample-model-name">{loadingId === sample.id ? 'Loading…' : sample.name}</span>
+					<span className="sample-model-description">{sample.description}</span>
+				</button>
+			))}
+			<div className="auth-form-actions">
+				<button type="button" className="link-button" disabled={loadingId !== null} onClick={onCancel}>
+					Cancel
+				</button>
+			</div>
+			{error && <div className="job-error">{error}</div>}
+		</div>
+	);
+}
+
+function DowngradePanel({
+	busy,
+	error,
+	onConfirm,
+	onCancel,
+}: {
+	busy: boolean;
+	error: string | null;
+	onConfirm: () => void;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="auth-form">
+			<p className="auth-hint">
+				This deletes every account (usernames and passwords) and merges everyone&rsquo;s printers and job history into one shared,
+				login-free setup. Nothing is lost, but accounts and who-owned-what can&rsquo;t be split apart again afterward.
+			</p>
+			<div className="auth-form-actions">
+				<button type="button" className="danger-button" disabled={busy} onClick={onConfirm}>
+					{busy ? 'Merging…' : 'Yes, switch back to single-user'}
+				</button>
+				<button type="button" className="link-button" disabled={busy} onClick={onCancel}>
+					Cancel
+				</button>
+			</div>
+			{error && <div className="job-error">{error}</div>}
+		</div>
+	);
+}
+
+function CredentialsForm({
+	mode,
+	username,
+	password,
+	busy,
+	error,
+	onUsername,
+	onPassword,
+	onSubmit,
+	onCancel,
+}: {
+	mode: 'switch' | 'add';
+	username: string;
+	password: string;
+	busy: boolean;
+	error: string | null;
+	onUsername: (value: string) => void;
+	onPassword: (value: string) => void;
+	onSubmit: (e: React.FormEvent) => void;
+	onCancel: () => void;
+}) {
+	return (
+		<form className="auth-form" onSubmit={onSubmit}>
+			{mode === 'switch' && (
+				<p className="auth-hint">This can&rsquo;t be undone -- your existing printers and job history stay attached to this account.</p>
+			)}
+			<label>
+				Username
+				<input value={username} onChange={(e) => onUsername(e.target.value)} autoFocus />
+			</label>
+			<label>
+				Password
+				<input type="password" value={password} onChange={(e) => onPassword(e.target.value)} />
+			</label>
+			<div className="auth-form-actions">
+				<button type="submit" disabled={busy || !username || !password}>
+					{busy ? 'Saving…' : mode === 'switch' ? 'Switch to multi-user' : 'Create user'}
+				</button>
+				<button type="button" className="link-button" disabled={busy} onClick={onCancel}>
+					Cancel
+				</button>
+			</div>
+			{error && <div className="job-error">{error}</div>}
+		</form>
 	);
 }
