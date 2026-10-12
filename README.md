@@ -151,9 +151,8 @@ Python tools through `scripts/py.sh`, a throwaway container, for example `script
 | API | [black](https://black.readthedocs.io) (format), [ruff](https://docs.astral.sh/ruff) (lint, security, imports), [pyright](https://github.com/microsoft/pyright) (types), [complexipy](https://github.com/rohaquinlop/complexipy) (cognitive complexity), [vulture](https://github.com/jendrikseipp/vulture) (dead code), pytest with a coverage floor |
 | Both | `scripts/audit.sh` (known vulnerabilities in what ships), `scripts/docker-lint.sh` (hadolint and trivy on the Dockerfile), Dependabot |
 
-Format with `npm run format` in `web/` and `black app tests tests_slicer` in `api/`. Functions over a cognitive complexity of 15 are
-existing debt: Biome records them per file in `biome.json`, complexipy in `api/complexipy-snapshot.json`. New code is held to 15, and
-the numbers only go down. Run `git config blame.ignoreRevsFile .git-blame-ignore-revs` so `git blame` skips the reformat commits.
+Format with `npm run format` in `web/` and `black app tests tests_slicer` in `api/`. Every function is held to a cognitive
+complexity of 15 (Biome in the web app, complexipy in the API): when one goes over, split it into smaller pieces. Run `git config blame.ignoreRevsFile .git-blame-ignore-revs` so `git blame` skips the reformat commits.
 
 ```
 Trident/

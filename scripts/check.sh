@@ -31,7 +31,7 @@ check_api() {
   step "api: black"; py black --check app tests tests_slicer
   step "api: ruff"; py ruff check app tests tests_slicer
   step "api: pyright"; py pyright
-  step "api: cognitive complexity (complexipy; existing debt is in complexipy-snapshot.json)"; py complexipy
+  step "api: cognitive complexity (complexipy)"; py complexipy
   step "api: dead code (vulture)"; py vulture
   step "api: tests + coverage floor"; py pytest -q --cov --cov-fail-under=80
 }

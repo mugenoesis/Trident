@@ -42,8 +42,7 @@ jobs:
       - run: black --check app tests tests_slicer
       - run: ruff check app tests tests_slicer
       - run: pyright
-      - name: Cognitive complexity (existing debt is recorded in complexipy-snapshot.json)
-        run: complexipy
+      - run: complexipy
       - run: vulture
       - name: Tests with a coverage floor
         run: pytest -q --cov --cov-report=xml --cov-fail-under=80
