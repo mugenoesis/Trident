@@ -843,6 +843,25 @@
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
+.api-key-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 0.5rem;
+	border: 1px solid var(--panel-border);
+	border-radius: 6px;
+	padding: 0.5rem;
+}
+
+.api-key-secret {
+	font-family: ui-monospace, monospace;
+	font-size: 0.85rem;
+}
+
+.settings-panel.wide {
+	width: min(380px, calc(100vw - 2rem));
+}
+
 .settings-status {
 	font-size: 0.85rem;
 	color: var(--text-dim);

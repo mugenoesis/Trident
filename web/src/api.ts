@@ -1,4 +1,7 @@
 import type {
+	ApiKeyCreated,
+	ApiKeyInfo,
+	ApiKeyScope,
 	AuthStatus,
 	ExportItem,
 	FilamentForm,
@@ -183,6 +186,23 @@ export async function uploadModel(file: File): Promise<ModelUploadResponse> {
 	const form = new FormData();
 	form.append('file', file);
 	return request('/models', { method: 'POST', body: form });
+}
+
+// A model that is already stored: how the page opens one it was sent (?model=<id>), e.g. by Holecraft.
+export function getModel(modelId: string): Promise<ModelUploadResponse> {
+	return request(`/models/${encodeURIComponent(modelId)}`);
+}
+
+export function listApiKeys(): Promise<ApiKeyInfo[]> {
+	return request('/auth/keys');
+}
+
+export function createApiKey(name: string, scope: ApiKeyScope): Promise<ApiKeyCreated> {
+	return postJson('/auth/keys', { name, scope });
+}
+
+export function revokeApiKey(keyId: string): Promise<unknown> {
+	return request(`/auth/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
 }
 
 export function listSampleModels(): Promise<SampleModelSummary[]> {

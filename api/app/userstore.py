@@ -14,6 +14,7 @@ new id, since that row already owns everything created so far.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import sqlite3
 import uuid
@@ -41,6 +42,16 @@ CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- Keys another program uses instead of a login (see auth.py). Only the SHA-256 of the secret is kept.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+);
 """
 
 # Columns added after the initial release -- CREATE TABLE IF NOT EXISTS is a
@@ -61,6 +72,24 @@ class User:
     last_printer_id: str | None = None
     last_material_id: str | None = None
     last_settings_profile_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ApiKey:
+    id: str
+    user_id: str
+    name: str
+    scope: str  # "upload" (may only upload a model) or "full" (every API except managing keys)
+    created_at: str
+    last_used_at: str | None = None
+
+
+API_KEY_PREFIX = "trident_"
+
+
+def _hash_secret(secret: str) -> str:
+    # The secret is 32 random bytes, so an unsalted fast hash is enough: there is nothing to guess.
+    return hashlib.sha256(secret.encode()).hexdigest()
 
 
 class UserStore:
@@ -181,6 +210,57 @@ class UserStore:
             last_settings_profile_id=row["last_settings_profile_id"],
         )
 
+    # -- API keys ---------------------------------------------------------
+
+    @staticmethod
+    def _row_to_key(row: sqlite3.Row) -> ApiKey:
+        return ApiKey(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            scope=row["scope"],
+            created_at=row["created_at"],
+            last_used_at=row["last_used_at"],
+        )
+
+    def create_api_key(self, user_id: str, *, name: str, scope: str) -> tuple[ApiKey, str]:
+        """A new key for a user, and its secret -- the only time the secret exists in the clear."""
+        secret = API_KEY_PREFIX + secrets.token_urlsafe(32)
+        key_id = uuid.uuid4().hex
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO api_keys (id, user_id, name, scope, key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (key_id, user_id, name, scope, _hash_secret(secret), now),
+            )
+        return ApiKey(id=key_id, user_id=user_id, name=name, scope=scope, created_at=now), secret
+
+    def list_api_keys(self, user_id: str) -> list[ApiKey]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM api_keys WHERE user_id = ? ORDER BY created_at, id", (user_id,)
+            ).fetchall()
+        return [self._row_to_key(r) for r in rows]
+
+    def delete_api_key(self, user_id: str, key_id: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM api_keys WHERE id = ? AND user_id = ?", (key_id, user_id)).rowcount > 0
+
+    def resolve_api_key(self, secret: str) -> tuple[ApiKey, User] | None:
+        """The key and its user for a secret, noting that it was used; None if there is no such key."""
+        digest = _hash_secret(secret)
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM api_keys WHERE key_hash = ?", (digest,)).fetchone()
+            if row is None:
+                return None
+            used = _now()
+            conn.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (used, row["id"]))
+        user = self.get_user(row["user_id"])
+        if user is None:
+            return None
+        key = self._row_to_key(row)
+        return ApiKey(**{**key.__dict__, "last_used_at": used}), user
+
     def collapse_to_single_user(self) -> None:
         """Deletes every account and returns to the implicit local user.
 
@@ -189,6 +269,8 @@ class UserStore:
         store only knows about accounts, not the data they own.
         """
         with self._connect() as conn:
+            # every account's keys go with their data to the one implicit user
+            conn.execute("UPDATE api_keys SET user_id = ?", (LOCAL_USER_ID,))
             conn.execute("DELETE FROM users")
         self.get_or_create_local_user()
         self.set_auth_mode("single")
@@ -203,6 +285,7 @@ class UserStore:
         """
         with self._connect() as conn:
             conn.execute("DELETE FROM users")
+            conn.execute("DELETE FROM api_keys")
             conn.execute("DELETE FROM app_config WHERE key = 'auth_mode'")
 
     def get_user_by_username(self, username: str) -> tuple[User, str] | None:

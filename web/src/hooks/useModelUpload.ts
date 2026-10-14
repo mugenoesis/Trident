@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { downloadModelFile, getModelPlates, loadSampleModel, uploadModel } from '../api';
+import { downloadModelFile, getModel, getModelPlates, loadSampleModel, uploadModel } from '../api';
 import type { Dimensions } from '../dimensions';
 import type { ThreeMfInspection } from '../types';
 import type { AppState, MainAppProps } from './useAppState';
@@ -136,9 +136,62 @@ export function useModelUpload(c: AppState & Pick<MainAppProps, never>) {
 		],
 	);
 
+	// Opens a model that is already stored (the page was opened at ?model=<id>, e.g. by Holecraft sending one): like a sample model
+	// there is no File in hand, so its bytes are fetched back into one for the preview.
+	const handleOpenModel = useCallback(
+		(modelId: string) => {
+			setFile(null);
+			setModelId(null);
+			setUploadStatus('uploading');
+			setScaleToastDismissed(false);
+			setViewMode('model');
+			setPlateInfo(null);
+			setPlateIndex(null);
+			setObjectThumbs({});
+			setObjectPickerOpen(false);
+			setPlacement(null);
+			setCopies(1);
+			setMeshReport(null);
+			setMeshToastDismissed(false);
+			return getModel(modelId)
+				.then((res) => {
+					setMeshReport(res.mesh_report ?? null);
+					setModelId(res.model_id);
+					getModelPlates(res.model_id)
+						.then(applyInspection)
+						.catch(() => setPlateInfo(null));
+					return downloadModelFile(res.model_id);
+				})
+				.then((downloaded) => {
+					setFile(downloaded);
+					setUploadStatus('done');
+				})
+				.catch((err: Error) => {
+					setUploadStatus('error');
+					throw err;
+				});
+		},
+		[
+			applyInspection,
+			setCopies,
+			setMeshReport,
+			setMeshToastDismissed,
+			setPlacement,
+			setViewMode,
+			setUploadStatus,
+			setScaleToastDismissed,
+			setPlateInfo,
+			setObjectThumbs,
+			setPlateIndex,
+			setObjectPickerOpen,
+			setFile,
+			setModelId,
+		],
+	);
+
 	// Stable reference: Viewer's effect depends on this, and an inline arrow
 	// function would make it re-run (tearing down/rebuilding the three.js
 	// scene) on every unrelated App re-render.
 	const handleDimensions = useCallback((dims: Dimensions | null) => setDimensions(dims), [setDimensions]);
-	return { applyInspection, handleFileSelected, handleLoadSample, handleDimensions };
+	return { applyInspection, handleFileSelected, handleLoadSample, handleOpenModel, handleDimensions };
 }
