@@ -330,6 +330,24 @@ class AuthStatus(BaseModel):
     last_settings_profile_id: str | None = None
 
 
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    scope: Literal["upload", "full"]
+
+
+class ApiKeyInfo(BaseModel):
+    id: str
+    name: str
+    scope: Literal["upload", "full"]
+    created_at: str
+    last_used_at: str | None = None
+
+
+class ApiKeyCreated(ApiKeyInfo):
+    # The secret, shown once: only a hash of it is kept.
+    key: str
+
+
 class LastSelectionRequest(BaseModel):
     printer_id: str | None = None
     material_id: str | None = None

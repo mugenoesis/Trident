@@ -7,6 +7,7 @@ from ..auth import (
     SESSION_MAX_AGE,
     create_session_cookie,
     hash_password,
+    require_session_user,
     require_user,
     verify_password,
     verify_session_cookie,
@@ -14,6 +15,9 @@ from ..auth import (
 from ..jobstore import store as job_store
 from ..printerstore import store as printer_store
 from ..schemas import (
+    ApiKeyCreated,
+    ApiKeyCreateRequest,
+    ApiKeyInfo,
     AuthSetupRequest,
     AuthStatus,
     LastSelectionRequest,
@@ -175,3 +179,26 @@ def create_user(body: UserCreateRequest, current: User = Depends(require_user)) 
     user_store.create_user(username=body.username, password_hash=hash_password(body.password))
     # Adds a new account; the caller stays logged in as themself.
     return _status("multi", current)
+
+
+def _key_info(key) -> ApiKeyInfo:
+    return ApiKeyInfo(id=key.id, name=key.name, scope=key.scope, created_at=key.created_at, last_used_at=key.last_used_at)  # type: ignore[arg-type]
+
+
+@router.post("/keys", response_model=ApiKeyCreated)
+def create_api_key(body: ApiKeyCreateRequest, current: User = Depends(require_session_user)) -> ApiKeyCreated:
+    """Makes an API key for the signed-in user. The secret is in this response and nowhere else, ever again."""
+    key, secret = user_store.create_api_key(current.id, name=body.name.strip(), scope=body.scope)
+    return ApiKeyCreated(**_key_info(key).model_dump(), key=secret)
+
+
+@router.get("/keys", response_model=list[ApiKeyInfo])
+def list_api_keys(current: User = Depends(require_session_user)) -> list[ApiKeyInfo]:
+    return [_key_info(k) for k in user_store.list_api_keys(current.id)]
+
+
+@router.delete("/keys/{key_id}")
+def revoke_api_key(key_id: str, current: User = Depends(require_session_user)) -> dict[str, bool]:
+    if not user_store.delete_api_key(current.id, key_id):
+        raise HTTPException(status_code=404, detail="No such API key")
+    return {"revoked": True}

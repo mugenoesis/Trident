@@ -42,6 +42,21 @@ export interface ModelUploadResponse {
 	mesh_report?: MeshReport | null;
 }
 
+export type ApiKeyScope = 'upload' | 'full';
+
+// A key another program uses instead of a login (see api/app/auth.py). The secret is only in ApiKeyCreated.
+export interface ApiKeyInfo {
+	id: string;
+	name: string;
+	scope: ApiKeyScope;
+	created_at: string;
+	last_used_at: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyInfo {
+	key: string;
+}
+
 export interface SampleModelSummary {
 	id: string;
 	name: string;

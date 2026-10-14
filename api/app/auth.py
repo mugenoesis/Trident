@@ -5,7 +5,7 @@ this project's existing minimal-deps style (raw sqlite3, no ORM,
 regex-fallback settings parsing) -- no passlib/bcrypt, no itsdangerous or
 Starlette SessionMiddleware.
 
-require_user() is the FastAPI dependency every user-owned endpoint uses:
+require_user() is the FastAPI dependency every user-owned endpoint uses (API keys: see _key_user):
   - "unset"/"single" mode: always resolves to one implicit local user, no
     cookie involved -- there's nothing to log into.
   - "multi" mode: reads a signed session cookie, 401s if missing/invalid.
@@ -69,7 +69,7 @@ def verify_session_cookie(value: str) -> str | None:
     return user_id
 
 
-def require_user(request: Request) -> User:
+def _session_user(request: Request) -> User:
     if user_store.get_auth_mode() != "multi":
         return user_store.get_or_create_local_user()
     token = request.cookies.get(SESSION_COOKIE_NAME)
@@ -78,3 +78,37 @@ def require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
+
+
+def _key_user(request: Request, scopes: tuple[str, ...]) -> User | None:
+    """The user an `Authorization: Bearer <key>` header stands for, or None when the request has no such header.
+
+    A key that is sent must be a good one, even when nothing needs a login: a mistyped key should say so rather
+    than be ignored. A good key whose access is too small for this endpoint is a 403.
+    """
+    header = request.headers.get("authorization", "")
+    scheme, _, secret = header.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    found = user_store.resolve_api_key(secret.strip()) if secret.strip() else None
+    if found is None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    key, user = found
+    if key.scope not in scopes:
+        raise HTTPException(status_code=403, detail="This API key is not allowed to do that")
+    return user
+
+
+def require_user(request: Request) -> User:
+    """A signed-in user (or the implicit one with no login), or the user of a full-access API key."""
+    return _key_user(request, ("full",)) or _session_user(request)
+
+
+def require_upload_user(request: Request) -> User:
+    """Like require_user, and also accepts an upload-only API key (the one endpoint that key is for)."""
+    return _key_user(request, ("full", "upload")) or _session_user(request)
+
+
+def require_session_user(request: Request) -> User:
+    """A signed-in user only (never an API key): for managing API keys themselves."""
+    return _session_user(request)

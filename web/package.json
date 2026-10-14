@@ -13,7 +13,8 @@
 		"typecheck": "tsc -b",
 		"audit": "npm audit --omit=dev --audit-level=low",
 		"preview": "vite preview",
-		"smoke": "node smoke-test.mjs"
+		"smoke": "node smoke-test.mjs",
+		"smoke:keys": "node keys-test.mjs"
 	},
 	"dependencies": {
 		"@types/three": "^0.186.0",

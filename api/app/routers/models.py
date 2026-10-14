@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import cli_runner, meshcheck, threemf, threemf_objects
-from ..auth import require_user
+from ..auth import require_upload_user, require_user
 from ..config import settings
 from ..schemas import (
     ColorNode,
@@ -108,7 +108,7 @@ def finalize_new_model(
 
 
 @router.post("", response_model=ModelUploadResponse)
-async def upload_model(file: UploadFile, current: User = Depends(require_user)) -> ModelUploadResponse:
+async def upload_model(file: UploadFile, current: User = Depends(require_upload_user)) -> ModelUploadResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _ALLOWED_SUFFIXES:
         raise HTTPException(
@@ -231,6 +231,22 @@ def transform_objects(
 @router.post("/{model_id}/arrange", response_model=ModelUploadResponse)
 def arrange_model(model_id: str, body: ModelOpRequest, current: User = Depends(require_user)) -> ModelUploadResponse:
     return _converted_copy(model_id, body, current, orient=False, arrange=True)
+
+
+@router.get("/{model_id}", response_model=ModelUploadResponse)
+def get_model(model_id: str, current: User = Depends(require_user)) -> ModelUploadResponse:
+    """What an upload answered, for a model already stored: how the page opens one it was sent (`?model=<id>`)."""
+    resolve_model_path(model_id)  # 404s on unknown/invalid model_id
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    meta = _read_meta(model_id) or {}
+    report = meta.get("mesh_report")
+    return ModelUploadResponse(
+        model_id=model_id,
+        filename=resolve_model_original_name(model_id) or resolve_model_path(model_id).name,
+        mesh_report=MeshReport(**report) if report else None,
+    )
 
 
 @router.get("/{model_id}/file")

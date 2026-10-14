@@ -11,6 +11,7 @@ import { useModelOps } from './useModelOps';
 import { useModelUpload } from './useModelUpload';
 import { useNozzleRefs } from './useNozzleRefs';
 import { useObjectsView } from './useObjectsView';
+import { useOpenModelFromUrl } from './useOpenModelFromUrl';
 import { usePlateShown } from './usePlateShown';
 import { usePolling } from './usePolling';
 import { usePrimeTower } from './usePrimeTower';
@@ -49,6 +50,7 @@ export function useAppController(props: MainAppProps) {
 	const profileApply = useProfileApply({ ...props, ...state });
 	useProfileLists({ ...props, ...state, ...profileApply });
 	const modelUpload = useModelUpload({ ...props, ...state });
+	useOpenModelFromUrl(modelUpload.handleOpenModel);
 	const modelOps = useModelOps({ ...props, ...state, ...modelUpload });
 	const objectsView = useObjectsView({ ...props, ...state });
 	const beltRow = useBeltRow({ ...props, ...state, ...objectsView });

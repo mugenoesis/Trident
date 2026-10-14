@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AuthStatus, SampleModelSummary } from '../types';
+import ApiKeysPanel from './ApiKeysPanel';
 
 interface SettingsMenuProps {
 	status: AuthStatus;
@@ -83,11 +84,12 @@ export default function SettingsMenu({
 				⚙
 			</button>
 			{open && (
-				<div className="settings-panel">
+				<div className={`settings-panel${form === 'keys' ? ' wide' : ''}`}>
 					{form === 'none' && <AccountLinks status={status} onChoose={setForm} onLogout={onLogout} />}
 					{form === 'samples' && (
 						<SamplesList samples={sampleModels} loadingId={loadingSampleId} error={error} onLoad={loadSample} onCancel={resetForm} />
 					)}
+					{form === 'keys' && <ApiKeysPanel onBack={resetForm} />}
 					{form === 'downgrade' && <DowngradePanel busy={busy} error={error} onConfirm={confirmDowngrade} onCancel={resetForm} />}
 					{(form === 'switch' || form === 'add') && (
 						<CredentialsForm
@@ -108,7 +110,7 @@ export default function SettingsMenu({
 	);
 }
 
-type MenuForm = 'none' | 'switch' | 'add' | 'downgrade' | 'samples';
+type MenuForm = 'none' | 'switch' | 'add' | 'downgrade' | 'samples' | 'keys';
 
 function AccountLinks({
 	status,
@@ -143,6 +145,9 @@ function AccountLinks({
 					</button>
 				</>
 			)}
+			<button type="button" className="link-button" onClick={() => onChoose('keys')}>
+				API keys…
+			</button>
 			<button type="button" className="link-button" onClick={() => onChoose('samples')}>
 				Load a sample model…
 			</button>
