@@ -175,8 +175,12 @@ class Placement(BaseModel):
 
 class JobCreateRequest(BaseModel):
     model_id: str
+    # "fdm" (G-code, from the Orca profile catalogue) or "resin" (the printer's own file, from the resin catalogue). For
+    # a resin job printer_profile is the resin printer's name, filament_profiles may name one resin, setting_overrides are
+    # resin settings (resin_runner.RESIN_OVERRIDE_KEYS) and process_profile is not used.
+    technology: Literal["fdm", "resin"] = "fdm"
     printer_profile: str
-    process_profile: str
+    process_profile: str = ""
     filament_profiles: list[str] = Field(default_factory=list)
     setting_overrides: dict[str, Any] = Field(default_factory=dict)
     # 1-based, mirrors OrcaSlicer's own --slice N syntax. None means "not a
@@ -203,6 +207,12 @@ class JobCreateRequest(BaseModel):
     # nothing loaded to capture -- the job still slices normally, just
     # without a preview.
     preview_image_base64: str | None = None
+
+    @model_validator(mode="after")
+    def _fdm_needs_a_process(self) -> JobCreateRequest:
+        if self.technology == "fdm" and not self.process_profile:
+            raise ValueError("process_profile is required for an FDM job")
+        return self
 
 
 class JobProgress(BaseModel):
@@ -628,3 +638,46 @@ class ExportItem(BaseModel):
 
 class ExportRequest(BaseModel):
     items: list[ExportItem] = Field(min_length=1, max_length=200)
+
+
+class ResinPrinterInfo(BaseModel):
+    """A resin (MSLA) printer of the engine's catalogue."""
+
+    name: str
+    vendor: str
+    model: str
+    # The file format the printer reads, and whether the engine can write it yet.
+    format: str
+    supported: bool
+    # Some 12K/16K panels have rectangular pixels (the catalogue says which).
+    nonsquare_pixels: bool = False
+    display_width_mm: float | None = None
+    display_height_mm: float | None = None
+    pixels_x: int | None = None
+    pixels_y: int | None = None
+    pixel_size_mm: float | None = None
+    build_height_mm: float | None = None
+
+
+class ResinInfo(BaseModel):
+    name: str
+    vendor: str
+    family: str = ""
+    color: str = ""
+    resin_type: str = ""
+
+
+class ResinChoice(BaseModel):
+    """The settings of a resin for a printer and layer height: what the slicer will use."""
+
+    resin: str
+    printer: str
+    layer_height: float
+    # The row is for this printer, for the printer's vendor, or for any printer.
+    match: str
+    # Whether the row is for the layer height asked, or the nearest one the resin has.
+    exact_layer_height: bool
+    settings: dict[str, Any]
+    source: str = ""
+    retrieved: str = ""
+    notes: str = ""
