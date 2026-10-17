@@ -133,7 +133,7 @@ def generate(
             _finish_failed(out, error or f"exit code {result.return_code}")
             return
         count, peak_layer, peak_cm2 = measure(
-            out / PREVIEW_DIR / ARCHIVE_NAME, resin_module.catalog.screen_mm(printer_name)
+            out / PREVIEW_DIR / ARCHIVE_NAME, resin_module.catalog.screen_mm(printer_name, user_id)
         )
         _write(
             out,

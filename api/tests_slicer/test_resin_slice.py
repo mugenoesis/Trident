@@ -132,3 +132,40 @@ def test_a_layer_preview_is_the_real_slice_as_png_layers(client):
     layer = client.get(f"/jobs/{job['id']}/layers/{preview['layer_count'] // 2}.png")
     assert layer.status_code == 200
     assert layer.content.startswith(b"\x89PNG")
+
+
+def test_a_printer_made_by_the_user_is_sliced_for_by_the_real_slicer(client):
+    made = client.post(
+        "/resin/my-printers",
+        json={
+            "name": "My test printer",
+            "display_width_mm": 143.36,
+            "display_height_mm": 89.6,
+            "pixels_x": 2048,
+            "pixels_y": 1280,
+            "build_height_mm": 175,
+            "format": "GOO",
+            "copy_from": "Elegoo Mars 3",
+        },
+    )
+    assert made.status_code == 200, made.text
+    body = {
+        "technology": "resin",
+        "model_id": _upload(client),
+        "printer_profile": "My test printer",
+        "filament_profiles": ["Siraya Tech Easy Grey"],
+        "setting_overrides": {
+            "layer_height": 0.1,
+            "supports_enable": False,
+            "pad_enable": False,
+            "hollowing_enable": False,
+        },
+    }
+    job = _wait(client, client.post("/jobs", json=body).json()["id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert job["result"]["archive_format"] == "GOO"
+    assert job["result"]["archive_file"].endswith(".goo")
+    archive = client.get(f"/jobs/{job['id']}/archive")
+    assert archive.status_code == 200
+    assert archive.headers["content-disposition"].endswith('.goo"')
+    assert client.delete("/resin/my-printers/My test printer").status_code == 200

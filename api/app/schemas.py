@@ -715,3 +715,30 @@ class LayerPreviewStatus(BaseModel):
     peak_area_cm2: float | None = None
     peel_warning: bool = False
     peel_warning_cm2: float | None = None
+
+
+class ResinFormat(BaseModel):
+    """A printer file format the slicer can write."""
+
+    id: str
+    extension: str
+    label: str
+
+
+class MyResinPrinterRequest(BaseModel):
+    """A resin printer that is not in the catalogue: its screen, build height and file format, optionally copied from one that is."""
+
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    display_width_mm: float = Field(gt=0, le=2000)
+    display_height_mm: float = Field(gt=0, le=2000)
+    pixels_x: int = Field(gt=0, le=100000)
+    pixels_y: int = Field(gt=0, le=100000)
+    build_height_mm: float = Field(gt=0, le=2000)
+    format: str
+    # A catalogue printer whose other settings (mirroring, delays, lift) this one starts from.
+    copy_from: str | None = None
+    # Whether the image is flipped across the screen; left out, a copied printer keeps its own.
+    mirror_x: bool | None = None
+    mirror_y: bool | None = None
+    # A few screens really have pixels that are not square; without this a width, height and pixel count that do not fit are refused.
+    rectangular_pixels: bool = False
