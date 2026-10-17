@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createJob, deleteMyResin, getJob, getResinChoice, listResinPrinters, listResins, saveMyResin } from '../api';
+import {
+	changeMyPrinter,
+	createJob,
+	deleteMyPrinter,
+	deleteMyResin,
+	getJob,
+	getResinChoice,
+	listResinFormats,
+	listResinPrinters,
+	listResins,
+	makeMyPrinter,
+	saveMyResin,
+} from '../api';
 import { ACTIVE_STATUSES, POLL_INTERVAL_MS } from '../appHelpers';
 import {
 	DEFAULT_RESIN_PROCESS,
@@ -13,7 +25,7 @@ import {
 	unpackResinSettings,
 	valuesFromChoice,
 } from '../resinSettings';
-import type { JobRecord, PrinterRecord, ResinChoice, ResinInfo, ResinPrinterInfo } from '../types';
+import type { JobRecord, MyResinPrinterRequest, PrinterRecord, ResinChoice, ResinFormat, ResinInfo, ResinPrinterInfo } from '../types';
 import { useResinLayers } from './useResinLayers';
 
 export type Technology = 'fdm' | 'resin';
@@ -32,20 +44,23 @@ function storedTechnology(): Technology {
 function useResinCatalog(active: boolean) {
 	const [printers, setPrinters] = useState<ResinPrinterInfo[]>([]);
 	const [resins, setResins] = useState<ResinInfo[]>([]);
+	const [formats, setFormats] = useState<ResinFormat[]>([]);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const loaded = useRef(false);
 	useEffect(() => {
 		if (!active || loaded.current) return;
 		loaded.current = true;
-		Promise.all([listResinPrinters(), listResins()])
-			.then(([p, r]) => {
+		Promise.all([listResinPrinters(), listResins(), listResinFormats()])
+			.then(([p, r, f]) => {
 				setPrinters(p);
 				setResins(r);
+				setFormats(f);
 			})
 			.catch((err: Error) => setCatalogError(err.message));
 	}, [active]);
 	const reloadResins = useCallback(() => listResins().then(setResins), []);
-	return { printers, resins, catalogError, reloadResins };
+	const reloadPrinters = useCallback(() => listResinPrinters().then(setPrinters), []);
+	return { printers, resins, formats, catalogError, reloadResins, reloadPrinters };
 }
 
 // The resin's own values for the printer and layer height chosen, fetched when any of them changes (and so replacing edits made to the old ones).
@@ -140,6 +155,22 @@ export function useResin(modelId: string | null) {
 		[printerName, process.layerHeight, values, resinName, catalog],
 	);
 
+	// Saves a printer of the user's own (a new one, or the changes to `editing`) and chooses it.
+	const saveMyPrinter = useCallback(
+		(body: MyResinPrinterRequest, editing: string | null) =>
+			(editing ? changeMyPrinter(editing, body) : makeMyPrinter(body)).then(async (info) => {
+				await catalog.reloadPrinters();
+				setPrinterName(info.name);
+			}),
+		[catalog],
+	);
+
+	const removeMyPrinter = useCallback(async () => {
+		await deleteMyPrinter(printerName);
+		await catalog.reloadPrinters();
+		setPrinterName('');
+	}, [printerName, catalog]);
+
 	const removeMyResin = useCallback(async () => {
 		await deleteMyResin(resinName);
 		await catalog.reloadResins();
@@ -206,6 +237,8 @@ export function useResin(modelId: string | null) {
 		applySavedResinPrinter,
 		makeMyResin,
 		removeMyResin,
+		saveMyPrinter,
+		removeMyPrinter,
 		layers,
 	};
 }

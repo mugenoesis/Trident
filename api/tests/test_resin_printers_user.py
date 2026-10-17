@@ -231,3 +231,10 @@ def test_the_slicer_is_given_the_resins_row_under_the_name_of_my_printer(client)
     rows = json.loads(Path(settings.output_dir, job_id, "args.json").read_text())["material"]["settings"]
     assert rows[0]["printers"] == ["Elegoo Mars 3", "My Saturn"]
     assert rows[0]["exposure_time"] == 7
+
+
+def test_the_printer_list_says_how_each_printer_mirrors_the_image(client):
+    client.post("/resin/my-printers", json=_printer(copy_from="Elegoo Mars 3"))
+    mars = _mine(client, "Elegoo Mars 3")
+    assert (mars["mirror_x"], mars["mirror_y"]) == (True, False)
+    assert (_mine(client)["mirror_x"], _mine(client)["mirror_y"]) == (True, False)  # copied

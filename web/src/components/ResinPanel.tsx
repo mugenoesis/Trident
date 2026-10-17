@@ -19,6 +19,7 @@ import {
 	uniqueVendors,
 } from '../resinSettings';
 import type { JobRecord } from '../types';
+import MyPrinterControls from './MyPrinterControls';
 import MyResinForm from './MyResinForm';
 
 function PrinterSection({ r }: { r: ResinState }) {
@@ -57,6 +58,7 @@ function PrinterSection({ r }: { r: ResinState }) {
 				</select>
 			</Field>
 			{printer && <PrinterFacts printer={printer} />}
+			<MyPrinterControls r={r} />
 		</details>
 	);
 }

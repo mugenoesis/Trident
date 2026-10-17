@@ -667,6 +667,9 @@ class ResinPrinterInfo(BaseModel):
     pixels_y: int | None = None
     pixel_size_mm: float | None = None
     build_height_mm: float | None = None
+    # Whether the image is flipped left to right / top to bottom on this printer (None when the catalogue does not say).
+    mirror_x: bool | None = None
+    mirror_y: bool | None = None
 
 
 class ResinInfo(BaseModel):

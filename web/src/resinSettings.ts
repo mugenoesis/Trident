@@ -1,4 +1,4 @@
-import type { ResinChoice, ResinInfo, ResinPrinterInfo } from './types';
+import type { MyResinPrinterRequest, ResinChoice, ResinFormat, ResinInfo, ResinPrinterInfo } from './types';
 
 // The vendor the user's own resins are listed under (the API puts them there).
 export const MY_RESINS = 'My resins';
@@ -180,4 +180,49 @@ export function unpackResinSettings(saved: Record<string, unknown>): { process: 
 	const process = { ...DEFAULT_RESIN_PROCESS, ...(typeof saved.process === 'object' && saved.process ? saved.process : {}) };
 	const values = typeof saved.values === 'object' && saved.values ? { ...EMPTY_RESIN_VALUES, ...saved.values } : null;
 	return { process, values };
+}
+
+// The vendor the user's own printers are listed under (the API puts them there).
+export const MY_PRINTERS = 'My printers';
+
+// The pixel size in mm of a screen of this width and height and these pixel counts, or null while a number is missing.
+function pixelPitch(form: MyResinPrinterRequest): { x: number; y: number } | null {
+	const { display_width_mm: w, display_height_mm: h, pixels_x: px, pixels_y: py } = form;
+	return w > 0 && h > 0 && px > 0 && py > 0 ? { x: w / px, y: h / py } : null;
+}
+
+// What is wrong with the numbers of a printer, in the words of the server's check (a printer rejects a file that does not match its
+// screen, and says nothing about why), or null when they fit; also the pixel size to show when they do.
+export function checkPrinterNumbers(form: MyResinPrinterRequest): { problem: string | null; pitch: { x: number; y: number } | null } {
+	const pitch = pixelPitch(form);
+	if (!pitch) return { problem: null, pitch };
+	const size = `${pitch.x.toFixed(4)} × ${pitch.y.toFixed(4)} mm`;
+	if (Math.min(pitch.x, pitch.y) < 0.005 || Math.max(pitch.x, pitch.y) > 0.5) {
+		return { problem: `These numbers give pixels of ${size}, which no resin screen has: check them.`, pitch };
+	}
+	if (!form.rectangular_pixels && Math.abs(pitch.x / pitch.y - 1) > 0.02) {
+		return {
+			problem: `These numbers give pixels of ${size}, which are not square: check the screen size and the pixel counts (a printer rejects a file that does not match its screen), or say the pixels are rectangular.`,
+			pitch,
+		};
+	}
+	return { problem: null, pitch };
+}
+
+// The form for a printer of your own, started from a printer of the catalogue (or from nothing).
+export function formFromPrinter(printer: ResinPrinterInfo | null, formats: ResinFormat[]): MyResinPrinterRequest {
+	const writable = printer && formats.some((f) => f.id === printer.format);
+	return {
+		name: '',
+		display_width_mm: printer?.display_width_mm ?? 0,
+		display_height_mm: printer?.display_height_mm ?? 0,
+		pixels_x: printer?.pixels_x ?? 0,
+		pixels_y: printer?.pixels_y ?? 0,
+		build_height_mm: printer?.build_height_mm ?? 0,
+		format: writable ? printer.format : (formats[0]?.id ?? ''),
+		copy_from: printer && printer.vendor !== MY_PRINTERS ? printer.name : null,
+		mirror_x: printer?.mirror_x ?? false,
+		mirror_y: printer?.mirror_y ?? false,
+		rectangular_pixels: printer?.nonsquare_pixels ?? false,
+	};
 }

@@ -449,6 +449,8 @@ export interface ResinPrinterInfo {
 	pixels_y: number | null;
 	pixel_size_mm: number | null;
 	build_height_mm: number | null;
+	mirror_x: boolean | null;
+	mirror_y: boolean | null;
 }
 
 export interface ResinInfo {
@@ -491,4 +493,26 @@ export interface LayerPreviewStatus {
 	peak_area_cm2: number | null;
 	peel_warning: boolean;
 	peel_warning_cm2: number | null;
+}
+
+// A printer file format the slicer can write.
+export interface ResinFormat {
+	id: string;
+	extension: string;
+	label: string;
+}
+
+// A resin printer of the user's own: its screen, build height and file format (see api/app/routers/resin.py).
+export interface MyResinPrinterRequest {
+	name: string;
+	display_width_mm: number;
+	display_height_mm: number;
+	pixels_x: number;
+	pixels_y: number;
+	build_height_mm: number;
+	format: string;
+	copy_from: string | null;
+	mirror_x: boolean | null;
+	mirror_y: boolean | null;
+	rectangular_pixels: boolean;
 }

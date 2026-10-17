@@ -290,6 +290,10 @@ def file_extension(format_id: str) -> str:
     return _FORMAT_EXTENSIONS.get(format_id, format_id.lower())
 
 
+def _flag(value: Any) -> bool | None:
+    return None if value is None else str(value).strip() in ("1", "true", "True")
+
+
 def _display_facts(preset: dict[str, Any]) -> dict[str, Any]:
     width, height = _num(preset.get("display_width")), _num(preset.get("display_height"))
     px, py = _num(preset.get("display_pixels_x")), _num(preset.get("display_pixels_y"))
@@ -299,6 +303,9 @@ def _display_facts(preset: dict[str, Any]) -> dict[str, Any]:
         "pixels_x": int(px) if px else None,
         "pixels_y": int(py) if py else None,
         "build_height_mm": _num(preset.get("printable_height")),
+        # Whether the image is flipped across the screen (the form for a printer of your own starts from these).
+        "mirror_x": _flag(preset.get("display_mirror_x")),
+        "mirror_y": _flag(preset.get("display_mirror_y")),
     }
     facts["pixel_size_mm"] = round(width / px, 4) if width and px else None
     return facts

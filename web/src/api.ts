@@ -14,6 +14,7 @@ import type {
 	MaterialProfileRecord,
 	MaterialProfileUpdateRequest,
 	ModelUploadResponse,
+	MyResinPrinterRequest,
 	MyResinRequest,
 	ObjectEdit,
 	PrinterConnection,
@@ -24,6 +25,7 @@ import type {
 	ProfileDetail,
 	ProfileSummary,
 	ResinChoice,
+	ResinFormat,
 	ResinInfo,
 	ResinPrinterInfo,
 	SampleModelSummary,
@@ -291,6 +293,26 @@ export function getLayerPreview(jobId: string): Promise<LayerPreviewStatus> {
 // Layer `index` (from 0) of a job's preview, as the printer would expose it.
 export function layerImageUrl(jobId: string, index: number): string {
 	return `${API_BASE}/jobs/${jobId}/layers/${index}.png`;
+}
+
+export function listResinFormats(): Promise<ResinFormat[]> {
+	return request('/resin/formats');
+}
+
+export function makeMyPrinter(body: MyResinPrinterRequest): Promise<ResinPrinterInfo> {
+	return postJson('/resin/my-printers', body);
+}
+
+export function readMyPrinter(name: string): Promise<MyResinPrinterRequest> {
+	return request(`/resin/my-printers/${encodeURIComponent(name)}`);
+}
+
+export function changeMyPrinter(name: string, body: MyResinPrinterRequest): Promise<ResinPrinterInfo> {
+	return putJson(`/resin/my-printers/${encodeURIComponent(name)}`, body);
+}
+
+export function deleteMyPrinter(name: string): Promise<{ ok: boolean }> {
+	return request(`/resin/my-printers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 export function saveMyResin(body: MyResinRequest): Promise<ResinInfo> {
