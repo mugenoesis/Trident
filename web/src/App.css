@@ -2313,3 +2313,12 @@
 	font-size: 0.85rem;
 	color: var(--text-dim);
 }
+
+.resin-warning {
+	font-size: 0.85rem;
+	border: 1px solid #8a6a2a;
+	background: rgba(200, 150, 50, 0.12);
+	border-radius: 6px;
+	padding: 0.5rem 0.7rem;
+	margin-bottom: 0.8rem;
+}

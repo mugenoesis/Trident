@@ -486,4 +486,9 @@ export interface LayerPreviewStatus {
 	status: 'none' | 'running' | 'ready' | 'failed';
 	layer_count: number | null;
 	error: string | null;
+	// Once ready: the largest layer (from 0), its area, and whether it is over the limit for an easy peel.
+	peak_layer: number | null;
+	peak_area_cm2: number | null;
+	peel_warning: boolean;
+	peel_warning_cm2: number | null;
 }

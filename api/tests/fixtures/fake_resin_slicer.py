@@ -7,11 +7,26 @@ args.json so the tests can look at them; a process profile with hollowing_min_th
 """
 
 import argparse
-import base64
 import json
 import pathlib
+import struct
 import sys
 import zipfile
+import zlib
+
+
+def square_png(i: int, width: int = 100, height: int = 60) -> bytes:
+    """A width x height grayscale PNG with a white square of (i + 1) * 5 pixels on black: layer i has ((i + 1) * 5) ** 2 white pixels."""
+    side = (i + 1) * 5
+    rows = b"".join(b"\x00" + bytes(255 if x < side and y < side else 0 for x in range(width)) for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--slice")
@@ -55,14 +70,11 @@ if process.get("hollowing_min_thickness") == "99":
 
 if printer.get("sla_archive_format") == "SL1":
     # an SL1 archive: settings text and one PNG per layer (three here)
-    png = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
-    )
     sl1 = out / "plate_1.sl1"
     with zipfile.ZipFile(sl1, "w") as z:
         z.writestr("config.ini", "action = print\n")
         for i in range(3):
-            z.writestr(f"fake{i:05d}.png", png)
+            z.writestr(f"fake{i:05d}.png", square_png(i))
 ext = {"CTB": "ctb", "CTBENCRYPTED": "ctb", "GOO": "goo"}.get(printer.get("sla_archive_format", ""), "sl1")
 archive = out / f"plate_1.{ext}"
 if printer.get("sla_archive_format") != "SL1":

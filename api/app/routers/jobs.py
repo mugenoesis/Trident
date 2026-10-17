@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, resin_runner, threemf_objects
+from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, layer_preview, resin_runner, threemf_objects
 from .. import resin as resin_module
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
@@ -360,6 +360,20 @@ def _record_outcome(job_id: str, request: JobCreateRequest, result) -> None:
     store.finish(job_id, status=JobStatus.SUCCEEDED, result=result_json)
 
 
+def _make_layer_preview(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None) -> None:
+    """The layer images and peel check of a resin job, made right after it succeeds (the job already reads as done)."""
+    out = _job_output_dir(job_id)
+    if layer_preview.begin(out):
+        layer_preview.generate(
+            out=out,
+            model_path=model_path,
+            printer_name=request.printer_profile,
+            resin_name=request.filament_profiles[0] if request.filament_profiles else None,
+            overrides=request.setting_overrides,
+            user_id=user_id,
+        )
+
+
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
@@ -372,6 +386,8 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
         store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
         return
     _record_outcome(job_id, request, result)
+    if request.technology == "resin" and store.get(job_id).status == JobStatus.SUCCEEDED:  # type: ignore[union-attr]
+        _make_layer_preview(job_id, model_path, request, user_id)
 
 
 def _check_object_selection(request: JobCreateRequest, model_path: Path) -> None:
