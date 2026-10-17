@@ -126,3 +126,17 @@ def test_only_a_finished_resin_job_has_a_preview(client):
     assert client.post(f"/jobs/{failed}/layer-preview").status_code == 409
     assert client.post("/jobs/nope/layer-preview").status_code == 404
     assert client.get("/jobs/nope/layers/0.png").status_code == 404
+
+
+def test_the_preview_is_drawn_small_but_the_jobs_own_file_is_not(client):
+    job_id = _resin_job(client)
+    _settled(client, job_id)
+    out = Path(settings.output_dir) / job_id
+    preview = json.loads((out / "preview" / "args.json").read_text())["printer"]
+    job = json.loads((out / "args.json").read_text())["printer"]
+    # the printer's screen is 4098 x 2560 pixels: the preview keeps its shape on a 1024 pixel long side
+    assert (preview["display_pixels_x"], preview["display_pixels_y"]) == ("1024", "640")
+    assert (job["display_pixels_x"], job["display_pixels_y"]) == ("4098", "2560")
+    # the screen's size in mm, which the measuring relies on, is the same
+    assert preview["display_width"] == job["display_width"]
+    assert preview["display_height"] == job["display_height"]

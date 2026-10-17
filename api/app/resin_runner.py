@@ -82,6 +82,22 @@ def _process_preset(overrides: dict[str, Any]) -> dict[str, str]:
     return process
 
 
+def _smaller_screen(preset: dict[str, Any], long_side: int) -> dict[str, Any]:
+    """The preset with the screen's pixel count scaled down so its long side is `long_side` (its size in mm is kept, so the picture shows the same area)."""
+    try:
+        px, py = int(preset["display_pixels_x"]), int(preset["display_pixels_y"])
+    except (KeyError, TypeError, ValueError):
+        return preset
+    scale = long_side / max(px, py)
+    if scale >= 1:
+        return preset
+    return {
+        **preset,
+        "display_pixels_x": str(max(1, round(px * scale))),
+        "display_pixels_y": str(max(1, round(py * scale))),
+    }
+
+
 def run_resin_slice(
     *,
     model_path: Path,
@@ -93,6 +109,7 @@ def run_resin_slice(
     timeout_s: float | None = None,
     user_id: str | None = None,
     archive_format: str | None = None,
+    raster_long_side: int | None = None,
 ) -> SliceResult:
     printer = resin_module.catalog.get_printer(printer_name)
     preset = resin_module.catalog.printer_preset(printer_name)
@@ -110,6 +127,8 @@ def run_resin_slice(
     if archive_format:
         # a different file than the printer's own (a layer preview is written as SL1)
         preset = {**preset, "sla_archive_format": archive_format}
+    if raster_long_side:
+        preset = _smaller_screen(preset, raster_long_side)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="headless-orca-resin-"))

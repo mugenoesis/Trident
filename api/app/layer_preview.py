@@ -25,6 +25,9 @@ from . import resin_runner
 PREVIEW_DIR = "preview"
 ARCHIVE_FORMAT = "SL1"
 ARCHIVE_NAME = "plate_1.sl1"
+# The preview is drawn with this many pixels on the screen's long side, not the printer's thousands: about a quarter of the work and a
+# quarter of the disk, and a peak area within about 1% of the full size one.
+PREVIEW_LONG_SIDE_PX = 1024
 
 # A layer of cured resin peels off the film in one go, and the force grows with its area, so a large solid layer is where a print
 # fails or a film tears. The limit is a rule of thumb of this app, not a figure from any resin or printer maker.
@@ -127,6 +130,7 @@ def generate(
             timeout_s=1800.0,
             user_id=user_id,
             archive_format=ARCHIVE_FORMAT,
+            raster_long_side=PREVIEW_LONG_SIDE_PX,
         )
         if not result.succeeded:
             error = (result.result_json or {}).get("error_string") or result.stderr
