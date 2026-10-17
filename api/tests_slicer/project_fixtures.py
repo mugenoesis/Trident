@@ -134,7 +134,7 @@ def make_project(
                     block = re.sub(r'(key="extruder" value=")\d+(")', rf"\g<1>{number[0]}\g<2>", match.group(0))
                     return block
 
-                text = re.sub(r'<object id="\d+">.*?</object>', assign, text, flags=re.S)
+                text = re.sub(r'<object id="\d+"[^>]*>.*?</object>', assign, text, flags=re.S)
                 if number[0] != colours:
                     raise RuntimeError(f"expected {colours} objects in the project, found {number[0]}")
                 data = text.encode()

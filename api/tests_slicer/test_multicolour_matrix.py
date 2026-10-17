@@ -130,11 +130,6 @@ def test_a_project_saved_on_the_u1_itself(projects, slice_project, colours, styl
     assert_slices(result, f"{colours} {style} colours saved on the U1")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The slicer corrupts its heap when given four filaments for a one-colour file. The app sends one filament "
-    "per colour in the file, so it does not happen there; if this starts passing the slicer was fixed.",
-)
 def test_a_one_colour_file_given_four_profiles(projects, slice_project):
     p = PRINTERS["U1 (4 nozzles)"]
     result = slice_project(
