@@ -91,6 +91,7 @@ def run_resin_slice(
     setting_overrides: dict[str, Any],
     on_progress: ProgressCallback | None = None,
     timeout_s: float | None = None,
+    user_id: str | None = None,
 ) -> SliceResult:
     printer = resin_module.catalog.get_printer(printer_name)
     preset = resin_module.catalog.printer_preset(printer_name)
@@ -101,7 +102,7 @@ def run_resin_slice(
     check_overrides(setting_overrides)
     material_file = None
     if resin_name:
-        material_file = resin_module.catalog.resin_path(resin_name)
+        material_file = resin_module.catalog.resin_path(resin_name, user_id)
         if material_file is None:
             raise ResinJobError(f"Unknown resin: {resin_name!r}")
 

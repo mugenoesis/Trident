@@ -471,3 +471,12 @@ export interface ResinChoice {
 	retrieved: string;
 	notes: string;
 }
+
+// "Make my own resin from these values": the resin's values for one printer and layer height, saved under a name.
+export interface MyResinRequest {
+	name: string;
+	printer: string;
+	layer_height: number;
+	settings: Record<string, number>;
+	based_on: string | null;
+}

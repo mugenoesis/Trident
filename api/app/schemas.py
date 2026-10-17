@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, computed_field, model_validator
 
 
 class JobStatus(StrEnum):
@@ -691,3 +691,14 @@ class ResinChoice(BaseModel):
     source: str = ""
     retrieved: str = ""
     notes: str = ""
+
+
+class MyResinRequest(BaseModel):
+    """ "Make my own resin from these values": the resin's values for one printer and layer height, saved under a name."""
+
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    printer: str
+    layer_height: float = Field(gt=0, le=1)
+    settings: dict[str, float]
+    # A resin the values started from (its kind and colour are kept, and the note says so).
+    based_on: str | None = None

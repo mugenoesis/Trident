@@ -13,6 +13,7 @@ import type {
 	MaterialProfileRecord,
 	MaterialProfileUpdateRequest,
 	ModelUploadResponse,
+	MyResinRequest,
 	ObjectEdit,
 	PrinterConnection,
 	PrinterCreateRequest,
@@ -276,6 +277,14 @@ export function listResinPrinters(): Promise<ResinPrinterInfo[]> {
 
 export function listResins(): Promise<ResinInfo[]> {
 	return request('/resin/resins');
+}
+
+export function saveMyResin(body: MyResinRequest): Promise<ResinInfo> {
+	return postJson('/resin/my-resins', body);
+}
+
+export function deleteMyResin(name: string): Promise<{ ok: boolean }> {
+	return request(`/resin/my-resins/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 export function getResinChoice(resin: string, printer: string, layerHeight: number): Promise<ResinChoice> {
