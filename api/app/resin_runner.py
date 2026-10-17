@@ -82,6 +82,20 @@ def _process_preset(overrides: dict[str, Any]) -> dict[str, str]:
     return process
 
 
+def _material_file_for(
+    material_file: Path, resin_name: str, printer_name: str, user_id: str | None, scratch: Path
+) -> Path:
+    """The resin's file, or for a printer of the user's copied from a catalogue one a copy of it whose rows are also for that printer."""
+    catalog = resin_module.catalog
+    like_names = catalog.settings_names(printer_name, user_id)
+    material = catalog.get_resin(resin_name, user_id)
+    if material is None or len(like_names) <= 2:
+        return material_file
+    path = scratch / "material.json"
+    path.write_text(json.dumps(resin_module.rows_for_printer(material, printer_name, like_names)))
+    return path
+
+
 def run_resin_slice(
     *,
     model_path: Path,
@@ -94,8 +108,8 @@ def run_resin_slice(
     user_id: str | None = None,
     archive_format: str | None = None,
 ) -> SliceResult:
-    printer = resin_module.catalog.get_printer(printer_name)
-    preset = resin_module.catalog.printer_preset(printer_name)
+    printer = resin_module.catalog.get_printer(printer_name, user_id)
+    preset = resin_module.catalog.printer_preset(printer_name, user_id)
     if printer is None or preset is None:
         raise ResinJobError(f"Unknown resin printer: {printer_name!r}")
     if not printer["supported"]:
@@ -114,6 +128,8 @@ def run_resin_slice(
     output_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="headless-orca-resin-"))
     try:
+        if resin_name and material_file is not None:
+            material_file = _material_file_for(material_file, resin_name, printer_name, user_id, scratch)
         printer_path = scratch / "printer.json"
         printer_path.write_text(json.dumps(preset))
         process_path = scratch / "process.json"

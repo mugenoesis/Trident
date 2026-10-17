@@ -15,6 +15,8 @@ PRESET = {
     "display_pixels_x": "4098",
     "display_pixels_y": "2560",
     "printable_height": "175",
+    "display_mirror_x": "1",
+    "display_mirror_y": "0",
     "sla_archive_format": "CTBENCRYPTED",
 }
 MATERIAL = {
@@ -22,6 +24,17 @@ MATERIAL = {
     "name": "Test resin",
     "vendor": "Test",
     "settings": [{"printers": ["*"], "layer_height": 0.05, "exposure_time": 2.5, "initial_exposure_time": 30}],
+}
+
+
+# A resin whose only row is for one printer (like most published ones), to show what a printer that is not in the catalogue can use.
+SPECIFIC_MATERIAL = {
+    "type": "material",
+    "name": "Specific resin",
+    "vendor": "Test",
+    "settings": [
+        {"printers": ["Elegoo Mars 3"], "layer_height": 0.05, "exposure_time": 7, "initial_exposure_time": 40}
+    ],
 }
 
 
@@ -45,6 +58,10 @@ def build_resin_dir(root: Path) -> Path:
     (root / "index.json").write_text(json.dumps({"printers": printers}))
     (root / "materials" / "Test").mkdir(parents=True)
     (root / "materials" / "Test" / "Resin.json").write_text(json.dumps(MATERIAL))
-    entry = {"name": "Test resin", "vendor": "Test", "file": "materials/Test/Resin.json"}
-    (root / "materials-index.json").write_text(json.dumps({"materials": [entry]}))
+    (root / "materials" / "Test" / "Specific.json").write_text(json.dumps(SPECIFIC_MATERIAL))
+    entries = [
+        {"name": "Test resin", "vendor": "Test", "file": "materials/Test/Resin.json"},
+        {"name": "Specific resin", "vendor": "Test", "file": "materials/Test/Specific.json"},
+    ]
+    (root / "materials-index.json").write_text(json.dumps({"materials": entries}))
     return root

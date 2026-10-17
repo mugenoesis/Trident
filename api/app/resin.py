@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .resin_printers_user import user_resin_printers
 from .resin_user import user_resins
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ def _row_score(row: dict[str, Any], printer_names: list[str]) -> int:
 
 def check_printer_and_resins(printer_name: str, resin_names: list[str], user_id: str | None = None) -> None:
     """Raise ValueError saying why a resin printer with these resins cannot be sliced for."""
-    printer = catalog.get_printer(printer_name)
+    printer = catalog.get_printer(printer_name, user_id)
     if printer is None:
         raise ValueError(f"Unknown resin printer: {printer_name!r}")
     if not printer["supported"]:
@@ -85,6 +86,24 @@ def check_printer_and_resins(printer_name: str, resin_names: list[str], user_id:
         raise ValueError("A resin printer uses at most one resin")
     if resin_names and catalog.resin_path(resin_names[0], user_id) is None:
         raise ValueError(f"Unknown resin: {resin_names[0]!r}")
+
+
+def _row_with_printer(row: Any, printer_name: str, like_names: list[str]) -> Any:
+    printers = row.get("printers") if isinstance(row, dict) else None
+    if not isinstance(printers, list) or printer_name in printers:
+        return row
+    if max((_printer_score(p, like_names) for p in printers if isinstance(p, str)), default=0) < 2:
+        return row
+    return {**row, "printers": [*printers, printer_name]}
+
+
+def rows_for_printer(material: dict[str, Any], printer_name: str, like_names: list[str]) -> dict[str, Any]:
+    """The material with `printer_name` added to every row that names one of `like_names` (a printer or its vendor), so the slicer, which
+    matches rows by the printer's own name, finds them for a printer of the user's that is like another."""
+    return {
+        **material,
+        "settings": [_row_with_printer(row, printer_name, like_names) for row in material.get("settings", [])],
+    }
 
 
 def choose_row(material: dict[str, Any], printer_names: list[str], layer_height: float) -> dict[str, Any] | None:
@@ -165,28 +184,53 @@ class ResinCatalog:
         )
 
     # ---- printers
-    def printers(self) -> list[dict[str, Any]]:
-        """Every resin printer with its screen and build height read from its preset."""
+    def printers(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        """Every resin printer (the catalogue's, then the user's own) with its screen and build height read from its preset."""
+        mine = user_resin_printers.list(user_id) if user_id else []
         out = []
-        for p in self._printers:
+        for p in [*self._printers, *mine]:
             info = dict(p)
-            data = self.printer_preset(p["name"]) or {}
+            data = self.printer_preset(p["name"], user_id) or {}
             info.update(_display_facts(data))
             info["extension"] = file_extension(info["format"])
             info.pop("file", None)
             out.append(info)
         return out
 
-    def get_printer(self, name: str) -> dict[str, Any] | None:
-        return next((p for p in self._printers if p["name"] == name), None)
+    def settings_names(self, name: str, user_id: str | None = None) -> list[str]:
+        """The names a resin's settings rows are looked up under for this printer: its own, and those of the catalogue printer a printer of
+        the user's was copied from (resins publish their settings per printer model, and a new printer has none of its own).
+        """
+        printer = self.get_printer(name, user_id)
+        if printer is None:
+            return [name]
+        names = [printer["name"], printer["model"]]
+        form = None if self.is_built_in_printer(name) or not user_id else user_resin_printers.form(user_id, name)
+        like = self.get_printer(form["copy_from"]) if form and form.get("copy_from") else None
+        return [*names, like["name"], like["model"]] if like else names
 
-    def screen_mm(self, name: str) -> tuple[float, float]:
+    def get_printer(self, name: str, user_id: str | None = None) -> dict[str, Any] | None:
+        found = next((p for p in self._printers if p["name"] == name), None)
+        if found is None and user_id:
+            found = next((p for p in user_resin_printers.list(user_id) if p["name"] == name), None)
+        return found
+
+    def is_built_in_printer(self, name: str) -> bool:
+        return any(p["name"] == name for p in self._printers)
+
+    def formats(self) -> dict[str, str]:
+        """The file formats the slicer can write (those of the catalogue's printers marked supported): id -> file ending."""
+        return {p["format"]: file_extension(p["format"]) for p in self._printers if p["supported"]}
+
+    def screen_mm(self, name: str, user_id: str | None = None) -> tuple[float, float]:
         """The width and height in mm of the printer's screen (0, 0 when the catalogue does not say)."""
-        preset = self.printer_preset(name) or {}
+        preset = self.printer_preset(name, user_id) or {}
         return (_num(preset.get("display_width")) or 0.0, _num(preset.get("display_height")) or 0.0)
 
-    def printer_preset(self, name: str) -> dict[str, Any] | None:
+    def printer_preset(self, name: str, user_id: str | None = None) -> dict[str, Any] | None:
         """The printer's machine preset (flat key/value JSON as the slicer's --load-settings takes it)."""
+        if not self.is_built_in_printer(name):
+            return user_resin_printers.preset(user_id, name) if user_id else None
         printer = self.get_printer(name)
         if printer is None:
             return None
@@ -261,3 +305,22 @@ def _display_facts(preset: dict[str, Any]) -> dict[str, Any]:
 
 
 catalog = ResinCatalog(settings.resin_dir)
+
+
+_FORMAT_LABELS = {
+    "CBDDLP": "Chitubox CBDDLP / Photon",
+    "CHITUBOXZIP": "Chitubox zip",
+    "CTB": "Chitubox CTB (version 4)",
+    "CTBENCRYPTED": "Chitubox CTB (encrypted, version 5)",
+    "CTBGKTWO": "Chitubox CTB, UniFormation GKtwo",
+    "CXDLP": "Creality CXDLP",
+    "GOO": "Elegoo GOO",
+    "PHROZENZIP": "Phrozen zip",
+    "SVGX": "FlashForge SVGX",
+    "TINYMAKER": "TinyMaker",
+}
+
+
+def format_label(format_id: str) -> str:
+    """What a file format is called on screen: its name, and for an Anycubic one the printer file it makes."""
+    return _FORMAT_LABELS.get(format_id) or f"Anycubic Photon Workshop (.{format_id})"
