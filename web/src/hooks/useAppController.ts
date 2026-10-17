@@ -65,8 +65,8 @@ export function useAppController(props: MainAppProps) {
 	const bedTypes = useBedTypes({ ...props, ...state });
 	const profileHandlers = useProfileHandlers({ ...props, ...state });
 	const slotHandlers = useSlotHandlers({ ...props, ...state, ...profileHandlers });
-	const savedPrinterApply = useSavedPrinterApply({ ...props, ...state });
-	const printerCrud = usePrinterCrud({ ...props, ...state });
+	const savedPrinterApply = useSavedPrinterApply({ ...props, ...state, resin });
+	const printerCrud = usePrinterCrud({ ...props, ...state, resin });
 	useRestore({ ...props, ...state, ...savedPrinterApply });
 	const materialCrud = useMaterialCrud({ ...props, ...state });
 	const settingsCrud = useSettingsCrud({ ...props, ...state });

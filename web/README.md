@@ -29,7 +29,7 @@ The screen is `src/App.tsx` (the login gates) around `components/MainView.tsx`, 
 need React (building the slicer's settings, naming a default profile) is in `appHelpers.ts` and `sliceRequest.ts`.
 Biome holds every function to a cognitive complexity of 15, so a new feature goes in its own small hook or component.
 
-Resin printing is a second mode of the same panel: `TechnologyToggle` switches `MainSettingsPanel` between the filament settings and `ResinPanel`, whose state is in `hooks/useResin.ts` and whose request-building is in `resinSettings.ts`. `npm run smoke:resin` (`resin-test.mjs`) checks it in a browser against a running container.
+Resin printing is a second mode of the same panel: `TechnologyToggle` switches `MainSettingsPanel` between the filament settings and `ResinPanel`, whose state is in `hooks/useResin.ts` (a saved resin printer is a saved printer with `technology: "resin"`, its resin in `filament_profiles` and its slice settings in `resin_settings`; `useSavedPrinterApply` switches mode when one is chosen) and whose request-building is in `resinSettings.ts`. `npm run smoke:resin` (`resin-test.mjs`) checks it in a browser against a running container.
 
 `npm run smoke:viewer` (`viewer-test.mjs`) checks that the model preview draws a whole solid, also for a file whose triangles are wound inward; the preview materials are double-sided for that reason, so keep them so.
 

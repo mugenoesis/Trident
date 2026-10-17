@@ -18,6 +18,8 @@ interface SavedPrintersProps {
 	onSavePrinter: (name: string, connection: ConnectionFields) => Promise<unknown>;
 	onUpdatePrinter: (id: string, body: PrinterUpdateRequest) => Promise<unknown>;
 	onDeletePrinter: (id: string) => void;
+	// The mode the screen is in: a resin printer has no G-code connection to ask about.
+	technology: 'fdm' | 'resin';
 }
 
 // Shared by the create-printer form (testing connection details before the
@@ -110,36 +112,40 @@ function PrinterSettingsForm({
 				Name
 				<input value={name} onChange={(e) => setName(e.target.value)} />
 			</label>
-			<label>
-				Connection
-				<select value={hostType} onChange={(e) => setHostType(e.target.value as '' | PrintHostType)}>
-					<option value="">None</option>
-					<option value="moonraker">Klipper (Moonraker)</option>
-					<option value="octoprint">OctoPrint</option>
-				</select>
-			</label>
-			{hostType && (
+			{printer.technology === 'fdm' && (
 				<>
 					<label>
-						Host (e.g. http://printer.local:7125)
-						<input value={printHost} onChange={(e) => setPrintHost(e.target.value)} />
+						Connection
+						<select value={hostType} onChange={(e) => setHostType(e.target.value as '' | PrintHostType)}>
+							<option value="">None</option>
+							<option value="moonraker">Klipper (Moonraker)</option>
+							<option value="octoprint">OctoPrint</option>
+						</select>
 					</label>
-					<label>
-						API key {printer.has_credentials && '(leave blank to keep the saved one)'}
-						<input value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-					</label>
-					<label>
-						HTTP username {printer.has_credentials && '(leave blank to keep the saved one)'}
-						<input value={hostUser} onChange={(e) => setHostUser(e.target.value)} />
-					</label>
-					<label>
-						HTTP password {printer.has_credentials && '(leave blank to keep the saved one)'}
-						<input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
-					</label>
-					{printer.has_credentials && (
-						<button type="button" className="link-button danger-text" disabled={busy} onClick={clearCredentials}>
-							Clear saved credentials
-						</button>
+					{hostType && (
+						<>
+							<label>
+								Host (e.g. http://printer.local:7125)
+								<input value={printHost} onChange={(e) => setPrintHost(e.target.value)} />
+							</label>
+							<label>
+								API key {printer.has_credentials && '(leave blank to keep the saved one)'}
+								<input value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+							</label>
+							<label>
+								HTTP username {printer.has_credentials && '(leave blank to keep the saved one)'}
+								<input value={hostUser} onChange={(e) => setHostUser(e.target.value)} />
+							</label>
+							<label>
+								HTTP password {printer.has_credentials && '(leave blank to keep the saved one)'}
+								<input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
+							</label>
+							{printer.has_credentials && (
+								<button type="button" className="link-button danger-text" disabled={busy} onClick={clearCredentials}>
+									Clear saved credentials
+								</button>
+							)}
+						</>
 					)}
 				</>
 			)}
@@ -174,6 +180,7 @@ export default function SavedPrinters({
 	onSavePrinter,
 	onUpdatePrinter,
 	onDeletePrinter,
+	technology,
 }: SavedPrintersProps) {
 	const [savingPrinter, setSavingPrinter] = useState(false);
 	const [printerName, setPrinterName] = useState('');
@@ -227,11 +234,7 @@ export default function SavedPrinters({
 						}}
 					>
 						<option value="">— choose a saved printer —</option>
-						{printers.map((p) => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
+						<PrinterOptions printers={printers} />
 					</select>
 				</label>
 			</div>
@@ -246,44 +249,48 @@ export default function SavedPrinters({
 						Name
 						<input value={printerName} onChange={(e) => setPrinterName(e.target.value)} autoFocus />
 					</label>
-					<label>
-						Connection (optional, for sending G-code directly to the printer)
-						<select value={hostType} onChange={(e) => setHostType(e.target.value as '' | PrintHostType)}>
-							<option value="">None</option>
-							<option value="moonraker">Klipper (Moonraker)</option>
-							<option value="octoprint">OctoPrint</option>
-						</select>
-					</label>
-					{hostType && (
+					{technology === 'fdm' && (
 						<>
 							<label>
-								Host (e.g. http://printer.local:7125)
-								<input value={printHost} onChange={(e) => setPrintHost(e.target.value)} />
+								Connection (optional, for sending G-code directly to the printer)
+								<select value={hostType} onChange={(e) => setHostType(e.target.value as '' | PrintHostType)}>
+									<option value="">None</option>
+									<option value="moonraker">Klipper (Moonraker)</option>
+									<option value="octoprint">OctoPrint</option>
+								</select>
 							</label>
-							<label>
-								API key (if required)
-								<input value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-							</label>
-							<label>
-								HTTP username (if behind basic auth)
-								<input value={hostUser} onChange={(e) => setHostUser(e.target.value)} />
-							</label>
-							<label>
-								HTTP password (if behind basic auth)
-								<input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
-							</label>
-							{printHost && (
-								<TestConnectionButton
-									onTest={() =>
-										testConnectionDetails({
-											host_type: hostType || null,
-											print_host: printHost || null,
-											printhost_apikey: apiKey || null,
-											printhost_user: hostUser || null,
-											printhost_password: hostPassword || null,
-										})
-									}
-								/>
+							{hostType && (
+								<>
+									<label>
+										Host (e.g. http://printer.local:7125)
+										<input value={printHost} onChange={(e) => setPrintHost(e.target.value)} />
+									</label>
+									<label>
+										API key (if required)
+										<input value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+									</label>
+									<label>
+										HTTP username (if behind basic auth)
+										<input value={hostUser} onChange={(e) => setHostUser(e.target.value)} />
+									</label>
+									<label>
+										HTTP password (if behind basic auth)
+										<input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
+									</label>
+									{printHost && (
+										<TestConnectionButton
+											onTest={() =>
+												testConnectionDetails({
+													host_type: hostType || null,
+													print_host: printHost || null,
+													printhost_apikey: apiKey || null,
+													printhost_user: hostUser || null,
+													printhost_password: hostPassword || null,
+												})
+											}
+										/>
+									)}
+								</>
 							)}
 						</>
 					)}
@@ -327,5 +334,25 @@ export default function SavedPrinters({
 				</details>
 			)}
 		</div>
+	);
+}
+
+function printerLabel(p: PrinterRecord): string {
+	return p.technology === 'resin' ? `${p.name} · Resin` : p.name;
+}
+
+// The saved printers as options: grouped FDM and Resin once there is a resin one, plain as before while there is not.
+function PrinterOptions({ printers }: { printers: PrinterRecord[] }) {
+	const option = (p: PrinterRecord) => (
+		<option key={p.id} value={p.id}>
+			{printerLabel(p)}
+		</option>
+	);
+	if (!printers.some((p) => p.technology === 'resin')) return <>{printers.map(option)}</>;
+	return (
+		<>
+			<optgroup label="FDM">{printers.filter((p) => p.technology !== 'resin').map(option)}</optgroup>
+			<optgroup label="Resin">{printers.filter((p) => p.technology === 'resin').map(option)}</optgroup>
+		</>
 	);
 }

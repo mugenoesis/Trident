@@ -133,3 +133,14 @@ export function choiceNote(choice: ResinChoice, vendor: string, printer: ResinPr
 				: ` They have no row for the ${printer.model}, so their general row is used.`;
 	return `Using ${vendor}'s published settings ${layerPart}.${printerPart}`;
 }
+
+// A saved resin printer keeps the slice settings as {process, values}; what was saved by an older or newer version is read as far as it fits.
+export function packResinSettings(process: ResinProcess, values: ResinValues): Record<string, unknown> {
+	return { process, values };
+}
+
+export function unpackResinSettings(saved: Record<string, unknown>): { process: ResinProcess; values: ResinValues | null } {
+	const process = { ...DEFAULT_RESIN_PROCESS, ...(typeof saved.process === 'object' && saved.process ? saved.process : {}) };
+	const values = typeof saved.values === 'object' && saved.values ? { ...EMPTY_RESIN_VALUES, ...saved.values } : null;
+	return { process, values };
+}

@@ -400,18 +400,10 @@ def _check_object_selection(request: JobCreateRequest, model_path: Path) -> None
 
 def _check_resin_request(request: JobCreateRequest) -> None:
     """Refuse a resin job that cannot be honoured before it is queued."""
-    printer = resin_module.catalog.get_printer(request.printer_profile)
-    if printer is None:
-        raise HTTPException(status_code=400, detail=f"Unknown resin printer: {request.printer_profile!r}")
-    if not printer["supported"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{printer['name']} reads {printer['format']} files, which the slicer cannot write yet",
-        )
-    if len(request.filament_profiles) > 1:
-        raise HTTPException(status_code=400, detail="A resin job uses at most one resin")
-    if request.filament_profiles and resin_module.catalog.resin_path(request.filament_profiles[0]) is None:
-        raise HTTPException(status_code=400, detail=f"Unknown resin: {request.filament_profiles[0]!r}")
+    try:
+        resin_module.check_printer_and_resins(request.printer_profile, request.filament_profiles)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if (
         request.copies != 1
         or request.excluded_objects
