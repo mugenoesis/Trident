@@ -4,6 +4,7 @@ import { ACTIVE_STATUSES, POLL_INTERVAL_MS } from '../appHelpers';
 import {
 	DEFAULT_RESIN_PROCESS,
 	EMPTY_RESIN_VALUES,
+	keepBottle,
 	numericValues,
 	packResinSettings,
 	type ResinProcess,
@@ -54,6 +55,8 @@ function useResinChoice(printerName: string, resinName: string, layerHeight: str
 	const [values, setValues] = useState<ResinValues>(EMPTY_RESIN_VALUES);
 	// Values restored from a saved printer: they win over the resin's own the first time its choice loads.
 	const restored = useRef<ResinValues | null>(null);
+	// The resin the values on screen are of: a price typed for it is kept while only the printer or layer height changes.
+	const valuesOf = useRef('');
 	useEffect(() => {
 		setChoice(null);
 		setChoiceError(null);
@@ -63,8 +66,11 @@ function useResinChoice(printerName: string, resinName: string, layerHeight: str
 			.then((c) => {
 				if (stale) return;
 				setChoice(c);
-				setValues(restored.current ?? valuesFromChoice(c));
+				const fromResin = valuesFromChoice(c);
+				const sameResin = valuesOf.current === resinName;
+				setValues((prev) => restored.current ?? (sameResin ? keepBottle(fromResin, prev, c) : fromResin));
 				restored.current = null;
+				valuesOf.current = resinName;
 			})
 			.catch((err: Error) => {
 				if (!stale) setChoiceError(err.message);

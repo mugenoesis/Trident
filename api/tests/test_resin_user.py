@@ -125,3 +125,12 @@ def test_one_users_resins_are_not_another_users(tmp_path: Path):
     assert store.list("bob") == []
     assert store.path("bob", "Alice grey") is None
     assert store.path("alice", "Alice grey") is not None
+
+
+def test_a_bottle_price_and_size_are_kept_with_my_resin(client):
+    client.post(
+        "/resin/my-resins", json=_mine(settings={"exposure_time": 3, "bottle_cost": 29.9, "bottle_volume": 1000})
+    )
+    body = client.get("/resin/choice", params={"resin": "My grey", **CHOICE}).json()
+    assert body["settings"]["bottle_cost"] == pytest.approx(29.9)
+    assert body["settings"]["bottle_volume"] == pytest.approx(1000)

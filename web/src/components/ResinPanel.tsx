@@ -4,6 +4,7 @@ import type { ResinState } from '../hooks/useResin';
 import type { ResinLayers } from '../hooks/useResinLayers';
 import {
 	choiceNote,
+	formatCost,
 	formatDuration,
 	formatMl,
 	MY_RESINS,
@@ -11,6 +12,7 @@ import {
 	type PadMode,
 	RESIN_LAYER_HEIGHTS,
 	RESIN_VALUE_FIELDS,
+	resinCost,
 	resinDisplayName,
 	SUPPORT_LEVELS,
 	type SupportLevel,
@@ -256,6 +258,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 	const layerCount = number(job, 'layer_count');
 	const seconds = number(job, 'estimated_print_time_s');
 	const ml = number(job, 'resin_used_ml');
+	const cost = resinCost(ml, job.setting_overrides);
 	return (
 		<div className="resin-result">
 			<h3>
@@ -265,6 +268,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 				{layerCount !== null && <Stat label="Layers" value={layerCount.toLocaleString()} />}
 				{seconds !== null && <Stat label="Print time" value={formatDuration(seconds)} />}
 				{ml !== null && <Stat label="Resin" value={formatMl(ml)} />}
+				{cost !== null && <Stat label="Cost" value={formatCost(cost)} />}
 			</div>
 			<PeelWarning layers={layers} />
 			<LayerControls job={job} layers={layers} />
