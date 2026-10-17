@@ -480,3 +480,10 @@ export interface MyResinRequest {
 	settings: Record<string, number>;
 	based_on: string | null;
 }
+
+// Where a resin job's layer preview stands: not asked for, being made, ready (with its layers) or failed.
+export interface LayerPreviewStatus {
+	status: 'none' | 'running' | 'ready' | 'failed';
+	layer_count: number | null;
+	error: string | null;
+}

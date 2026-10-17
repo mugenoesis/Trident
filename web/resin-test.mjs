@@ -74,6 +74,26 @@ check(res.ok(), 'the download works');
 const bytes = await res.body();
 check(bytes.length > 1000, `the file has content (${bytes.length} bytes)`);
 
+console.log('[6b/13] Looking at the layers ...');
+await panel.getByRole('button', { name: 'Preview layers' }).click();
+const slider = panel.getByLabel('Layer', { exact: true });
+await slider.waitFor({ timeout: 60000 });
+const layerImage = page.locator('.resin-layer-view img');
+await layerImage.waitFor();
+check(await panel.getByText(/Layer 1 of [\d,]+/).isVisible(), 'the slider says which layer, of how many');
+check(
+	await page.waitForFunction(() => document.querySelector('.resin-layer-view img')?.naturalWidth > 0).then(() => true),
+	'the layer image loads',
+);
+const first = await layerImage.getAttribute('src');
+await page.screenshot({ path: 'smoke-resin-layers.png' });
+await slider.fill('50');
+await panel.getByText(/Layer 51 of/).waitFor();
+check((await layerImage.getAttribute('src')) !== first, 'moving the slider shows another layer');
+await page.getByRole('button', { name: 'Back to model' }).click();
+await page.waitForSelector('.viewer canvas');
+check((await page.locator('.resin-layer-view').count()) === 0, 'Back to model returns to the model');
+
 console.log('[7/13] Back to FDM ...');
 await panel.getByRole('button', { name: 'FDM', exact: true }).click();
 await panel.getByText('Nozzle diameter').first().waitFor();

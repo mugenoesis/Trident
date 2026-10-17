@@ -21,7 +21,7 @@ FastAPI API (`api/`) and a React web UI (`web/`), shipped as one container. Lice
    2. Run it and confirm it fails for the expected reason.
    3. Implement until it passes, then refactor.
    4. A test written after the code is mutation-checked: break the code and see the test fail.
-   API tests are in `api/tests` (fast, no engine; `api/tests_slicer` runs the real binary). Browser behaviour is tested by the Playwright
+   API tests are in `api/tests` (fast, no engine; `api/tests_slicer` runs the real binary). `scripts/slicer-tests.sh <image>` runs the real-slicer ones in an image that has the engine. Browser behaviour is tested by the Playwright
    scripts in `web/` (`smoke-test.mjs`, `keys-test.mjs`, `resin-test.mjs`, `viewer-test.mjs`), each run against a *running* container.
 2. **Every change is a new branch and a new PR** off up-to-date `origin/master`, for the user to merge. Never push to `master`, never
    force-push it, never merge for the user. Follow-up work after a merged PR gets a fresh branch and a fresh PR. Say so when a PR

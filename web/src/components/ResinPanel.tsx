@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { archiveDownloadUrl } from '../api';
 import type { ResinState } from '../hooks/useResin';
+import type { ResinLayers } from '../hooks/useResinLayers';
 import {
 	choiceNote,
 	formatDuration,
@@ -251,8 +252,8 @@ function number(job: JobRecord, key: string): number | null {
 	return typeof v === 'number' ? v : null;
 }
 
-function ResinResult({ job, archiveName }: { job: JobRecord; archiveName: string }) {
-	const layers = number(job, 'layer_count');
+function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName: string; layers: ResinLayers }) {
+	const layerCount = number(job, 'layer_count');
 	const seconds = number(job, 'estimated_print_time_s');
 	const ml = number(job, 'resin_used_ml');
 	return (
@@ -261,10 +262,11 @@ function ResinResult({ job, archiveName }: { job: JobRecord; archiveName: string
 				<span>Sliced</span> <small>for {job.printer_profile}</small>
 			</h3>
 			<div className="resin-stats">
-				{layers !== null && <Stat label="Layers" value={layers.toLocaleString()} />}
+				{layerCount !== null && <Stat label="Layers" value={layerCount.toLocaleString()} />}
 				{seconds !== null && <Stat label="Print time" value={formatDuration(seconds)} />}
 				{ml !== null && <Stat label="Resin" value={formatMl(ml)} />}
 			</div>
+			<LayerControls job={job} layers={layers} />
 			<a className="download-button" href={archiveDownloadUrl(job.id)} download>
 				Download {archiveName}
 			</a>
@@ -290,7 +292,7 @@ export default function ResinPanel({ r, fileName }: { r: ResinState; fileName: s
 				{active && job.progress?.message && <div className="job-progress-message">{job.progress.message}</div>}
 				{sliceError && <div className="job-error">{sliceError}</div>}
 				{job?.status === 'failed' && <div className="job-error">{job.error ?? 'Slicing failed'}</div>}
-				{job?.status === 'succeeded' && <ResinResult job={job} archiveName={`${stem}${extension}`} />}
+				{job?.status === 'succeeded' && <ResinResult job={job} archiveName={`${stem}${extension}`} layers={r.layers} />}
 			</div>
 		</>
 	);
@@ -302,6 +304,48 @@ function Field({ label, id, children }: { label: string; id: string; children: R
 		<div className="field-group">
 			<label htmlFor={id}>{label}</label>
 			{children}
+		</div>
+	);
+}
+
+// Ask for the layer images, then a slider through them (the picture itself is in the left panel, see ResinLayerPane).
+function LayerControls({ job, layers }: { job: JobRecord; layers: ResinLayers }) {
+	const { preview, index, setIndex, open, setOpen, request } = layers;
+	const height = number(job, 'layer_height_mm');
+	if (preview.status === 'none' || preview.status === 'failed') {
+		return (
+			<div className="resin-layers">
+				<button type="button" className="preview-button" onClick={request}>
+					Preview layers
+				</button>
+				{preview.error && <div className="job-error">{preview.error}</div>}
+			</div>
+		);
+	}
+	if (preview.status === 'running') return <div className="job-hint">Preparing the layer preview…</div>;
+	const count = preview.layer_count ?? 0;
+	return (
+		<div className="resin-layers">
+			<div className="resin-layer-label">
+				Layer {(index + 1).toLocaleString()} of {count.toLocaleString()}
+				{height !== null && ` · ${((index + 1) * height).toFixed(2)} mm`}
+			</div>
+			<input
+				type="range"
+				aria-label="Layer"
+				min={0}
+				max={Math.max(0, count - 1)}
+				value={index}
+				onChange={(e) => {
+					setIndex(Number(e.target.value));
+					setOpen(true);
+				}}
+			/>
+			{!open && (
+				<button type="button" className="link-button" onClick={() => setOpen(true)}>
+					Show layer
+				</button>
+			)}
 		</div>
 	);
 }

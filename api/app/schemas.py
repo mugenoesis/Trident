@@ -702,3 +702,11 @@ class MyResinRequest(BaseModel):
     settings: dict[str, float]
     # A resin the values started from (its kind and colour are kept, and the note says so).
     based_on: str | None = None
+
+
+class LayerPreviewStatus(BaseModel):
+    """Where a resin job's layer preview stands: not asked for, being made, ready (with its layers) or failed."""
+
+    status: Literal["none", "running", "ready", "failed"]
+    layer_count: int | None = None
+    error: str | None = None

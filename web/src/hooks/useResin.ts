@@ -13,6 +13,7 @@ import {
 	valuesFromChoice,
 } from '../resinSettings';
 import type { JobRecord, PrinterRecord, ResinChoice, ResinInfo, ResinPrinterInfo } from '../types';
+import { useResinLayers } from './useResinLayers';
 
 export type Technology = 'fdm' | 'resin';
 
@@ -174,6 +175,8 @@ export function useResin(modelId: string | null) {
 			.catch((err: Error) => setSliceError(err.message));
 	}, [modelId, printerName, resinName, process, values, setJob, setSliceError]);
 
+	const layers = useResinLayers(job?.status === 'succeeded' ? job.id : null);
+
 	return {
 		technology,
 		setTechnology,
@@ -197,6 +200,7 @@ export function useResin(modelId: string | null) {
 		applySavedResinPrinter,
 		makeMyResin,
 		removeMyResin,
+		layers,
 	};
 }
 

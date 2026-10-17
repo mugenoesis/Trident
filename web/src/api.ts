@@ -9,6 +9,7 @@ import type {
 	ImportResult,
 	JobCreateRequest,
 	JobRecord,
+	LayerPreviewStatus,
 	MaterialProfileCreateRequest,
 	MaterialProfileRecord,
 	MaterialProfileUpdateRequest,
@@ -277,6 +278,19 @@ export function listResinPrinters(): Promise<ResinPrinterInfo[]> {
 
 export function listResins(): Promise<ResinInfo[]> {
 	return request('/resin/resins');
+}
+
+export function startLayerPreview(jobId: string): Promise<LayerPreviewStatus> {
+	return request(`/jobs/${jobId}/layer-preview`, { method: 'POST' });
+}
+
+export function getLayerPreview(jobId: string): Promise<LayerPreviewStatus> {
+	return request(`/jobs/${jobId}/layer-preview`);
+}
+
+// Layer `index` (from 0) of a job's preview, as the printer would expose it.
+export function layerImageUrl(jobId: string, index: number): string {
+	return `${API_BASE}/jobs/${jobId}/layers/${index}.png`;
 }
 
 export function saveMyResin(body: MyResinRequest): Promise<ResinInfo> {
