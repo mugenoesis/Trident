@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import math
 import shutil
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, threemf_objects
+from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, resin_runner, threemf_objects
+from .. import resin as resin_module
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
 from ..config import settings
@@ -247,6 +249,19 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
         shutil.rmtree(out_dir / "realigned", ignore_errors=True)
 
 
+def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest):
+    """Slice for a resin printer: the printer's own file instead of G-code (see resin_runner)."""
+    return resin_runner.run_resin_slice(
+        model_path=source_path,
+        output_dir=_job_output_dir(job_id),
+        printer_name=request.printer_profile,
+        resin_name=request.filament_profiles[0] if request.filament_profiles else None,
+        setting_overrides=request.setting_overrides,
+        on_progress=lambda p: store.update_progress(job_id, p),
+        timeout_s=1800.0,
+    )
+
+
 def _slice_job(job_id: str, source_path: Path, request: JobCreateRequest, user_id: str | None):
     """Slice the job's model, retrying the ways a slice is known to fail for reasons that can be worked around."""
     model_path, plate_index, arrange, keep_positions = _prepare_model(job_id, source_path, request, user_id)
@@ -303,6 +318,21 @@ def _slice_job(job_id: str, source_path: Path, request: JobCreateRequest, user_i
     return result
 
 
+def _resin_result(result_json: dict) -> dict:
+    """The slicer writes its figures as text (result.json: "layer_count": "400"); the API hands them out as numbers."""
+    out = dict(result_json)
+    for key, kind in (
+        ("layer_count", int),
+        ("layer_height_mm", float),
+        ("estimated_print_time_s", float),
+        ("resin_used_ml", float),
+    ):
+        if key in out:
+            with contextlib.suppress(TypeError, ValueError):
+                out[key] = kind(float(out[key]))
+    return out
+
+
 def _record_outcome(job_id: str, request: JobCreateRequest, result) -> None:
     if not result.succeeded:
         error = result.result_json.get("error_string") if result.result_json else result.stderr
@@ -312,6 +342,9 @@ def _record_outcome(job_id: str, request: JobCreateRequest, result) -> None:
             result=result.result_json,
             error=error or f"exit code {result.return_code}",
         )
+        return
+    if request.technology == "resin":
+        store.finish(job_id, status=JobStatus.SUCCEEDED, result=_resin_result(result.result_json or {}))
         return
     if request.preview_image_base64:
         gcode_thumbnail.embed_preview(_job_output_dir(job_id), request.preview_image_base64)
@@ -329,7 +362,11 @@ def _record_outcome(job_id: str, request: JobCreateRequest, result) -> None:
 def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: str | None = None) -> None:
     store.set_status(job_id, JobStatus.RUNNING)
     try:
-        result = _slice_job(job_id, model_path, request, user_id)
+        result = (
+            _slice_resin_job(job_id, model_path, request)
+            if request.technology == "resin"
+            else _slice_job(job_id, model_path, request, user_id)
+        )
     except Exception as exc:
         store.finish(job_id, status=JobStatus.FAILED, error=str(exc))
         return
@@ -361,11 +398,44 @@ def _check_object_selection(request: JobCreateRequest, model_path: Path) -> None
         raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
 
 
+def _check_resin_request(request: JobCreateRequest) -> None:
+    """Refuse a resin job that cannot be honoured before it is queued."""
+    printer = resin_module.catalog.get_printer(request.printer_profile)
+    if printer is None:
+        raise HTTPException(status_code=400, detail=f"Unknown resin printer: {request.printer_profile!r}")
+    if not printer["supported"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{printer['name']} reads {printer['format']} files, which the slicer cannot write yet",
+        )
+    if len(request.filament_profiles) > 1:
+        raise HTTPException(status_code=400, detail="A resin job uses at most one resin")
+    if request.filament_profiles and resin_module.catalog.resin_path(request.filament_profiles[0]) is None:
+        raise HTTPException(status_code=400, detail=f"Unknown resin: {request.filament_profiles[0]!r}")
+    if (
+        request.copies != 1
+        or request.excluded_objects
+        or request.belt_layout
+        or request.placement
+        or request.plate_index
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Copies, plates, object selection and placement are not available for resin printers",
+        )
+    try:
+        resin_runner.check_overrides(request.setting_overrides)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("", response_model=JobRecord)
 def create_job(
     request: JobCreateRequest, background_tasks: BackgroundTasks, current: User = Depends(require_user)
 ) -> JobRecord:
-    rejected = blocked_keys(request.setting_overrides)
+    if request.technology == "resin":
+        _check_resin_request(request)
+    rejected = blocked_keys(request.setting_overrides) if request.technology == "fdm" else set()
     if rejected:
         raise HTTPException(
             status_code=400,
@@ -380,9 +450,10 @@ def create_job(
     if owner is not None and owner != current.id:
         raise HTTPException(status_code=404, detail="model_id not found")
 
-    if request.placement and request.belt_layout:
-        raise HTTPException(status_code=400, detail="placement and belt_layout cannot be combined")
-    _check_object_selection(request, model_path)
+    if request.technology == "fdm":
+        if request.placement and request.belt_layout:
+            raise HTTPException(status_code=400, detail="placement and belt_layout cannot be combined")
+        _check_object_selection(request, model_path)
 
     job = store.create(
         user_id=current.id,
@@ -456,6 +527,29 @@ def get_job_gcode(job_id: str, current: User = Depends(require_user)) -> FileRes
     # .gcode. application/octet-stream is the standard fix -- it doesn't map
     # to any particular extension, so the filename's own .gcode is left alone.
     return FileResponse(gcode_path, media_type="application/octet-stream", filename=download_name)
+
+
+def resolve_job_archive_path(job_id: str) -> Path:
+    """The printer file (.ctb, .goo, ...) a resin job wrote: result.json names it, or it is the one file that is not a log."""
+    out = _job_output_dir(job_id)
+    job = store.get(job_id)
+    named = ((job.result or {}).get("archive_file") if job else None) or ""
+    if named and (out / Path(named).name).is_file():
+        return out / Path(named).name
+    matches = sorted(p for p in out.glob("plate_*.*") if p.suffix != ".json")
+    if not matches:
+        raise HTTPException(status_code=404, detail="No printer file produced (yet) for this job")
+    return matches[0]
+
+
+@router.get("/{job_id}/archive")
+def get_job_archive(job_id: str, current: User = Depends(require_user)) -> FileResponse:
+    """A resin job's printer file, named after the uploaded model."""
+    job = _get_owned_job(job_id, current)
+    path = resolve_job_archive_path(job_id)
+    original_name = resolve_model_original_name(job.model_id)
+    download_name = f"{Path(original_name).stem}{path.suffix}" if original_name else path.name
+    return FileResponse(path, media_type="application/octet-stream", filename=download_name)
 
 
 @router.delete("/{job_id}")

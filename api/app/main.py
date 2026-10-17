@@ -8,14 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import profiles as profiles_module
+from . import resin as resin_module
 from .cleanup import run_cleanup_loop
 from .config import settings
-from .routers import auth, jobs, models, printers, profiles, sample_models, source
+from .routers import auth, jobs, models, printers, profiles, resin, sample_models, source
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     profiles_module.catalog.load()
+    resin_module.catalog.load()
     cleanup_task = asyncio.create_task(run_cleanup_loop())
     try:
         yield
@@ -49,6 +51,7 @@ app.include_router(auth.router)
 app.include_router(models.router)
 app.include_router(sample_models.router)
 app.include_router(profiles.router)
+app.include_router(resin.router)
 app.include_router(jobs.router)
 app.include_router(printers.router)
 app.include_router(source.router)
