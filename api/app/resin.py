@@ -65,6 +65,14 @@ def _printer_score(entry: str, names: list[str]) -> int:
     return 0
 
 
+def _row_score(row: dict[str, Any], printer_names: list[str]) -> int:
+    """How well a row's printer list fits the printer: 3, 2, 1 as in _printer_score, 0 for no fit; a row naming no printers fits any."""
+    printers = row.get("printers")
+    if not isinstance(printers, list):
+        return 1
+    return max((_printer_score(p, printer_names) for p in printers if isinstance(p, str)), default=0)
+
+
 def choose_row(material: dict[str, Any], printer_names: list[str], layer_height: float) -> dict[str, Any] | None:
     """The best settings row of `material`, or None when no row fits the printer.
 
@@ -76,12 +84,7 @@ def choose_row(material: dict[str, Any], printer_names: list[str], layer_height:
     for row in material.get("settings", []):
         if not isinstance(row, dict) or "layer_height" not in row:
             continue
-        printers = row.get("printers")
-        score = (
-            max((_printer_score(p, printer_names) for p in printers if isinstance(p, str)), default=0)
-            if isinstance(printers, list)
-            else 1
-        )
+        score = _row_score(row, printer_names)
         if score == 0:
             continue
         gap = abs(float(row["layer_height"]) - layer_height)
