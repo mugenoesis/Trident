@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -73,20 +75,36 @@ def _png_names(archive: zipfile.ZipFile) -> list[str]:
     return sorted(n for n in archive.namelist() if n.lower().endswith(".png"))
 
 
-def measure(archive_path: Path, display_mm: tuple[float, float]) -> tuple[int, int, float]:
-    """(layer count, index of the largest layer, its area in cm2) of an SL1 archive on a screen of this size in mm."""
-    peak_layer, peak_mm2 = 0, 0.0
-    with zipfile.ZipFile(archive_path) as archive:
+def _cured_mm2(png: bytes, display_mm: tuple[float, float]) -> float:
+    """The area of cured resin (white pixels) in one layer image, on a screen of this size in mm."""
+    with Image.open(io.BytesIO(png)) as image:
+        gray = image.convert("L")
+        width, height = gray.size
+        cured = sum(gray.histogram()[128:])
+    return cured * (display_mm[0] / width) * (display_mm[1] / height)
+
+
+# Layers are read from the zip a batch at a time (one thread reads it), then decoded by several threads: Pillow lets go of the
+# interpreter lock while it decodes, so the threads really run side by side.
+_BATCH = 64
+
+
+def measure(archive_path: Path, display_mm: tuple[float, float], workers: int | None = None) -> tuple[int, int, float]:
+    """(layer count, index of the largest layer, its area in cm2) of an SL1 archive on a screen of this size in mm.
+
+    The first of equally large layers is the largest, whatever the number of workers (default: the cores, up to 8).
+    """
+    workers = max(1, workers or min(8, os.cpu_count() or 1))
+    areas_mm2: list[float] = []
+    with zipfile.ZipFile(archive_path) as archive, ThreadPoolExecutor(max_workers=workers) as pool:
         names = _png_names(archive)
-        for index, name in enumerate(names):
-            with Image.open(io.BytesIO(archive.read(name))) as image:
-                gray = image.convert("L")
-                width, height = gray.size
-                cured = sum(gray.histogram()[128:])
-            area = cured * (display_mm[0] / width) * (display_mm[1] / height)
-            if area > peak_mm2:
-                peak_layer, peak_mm2 = index, area
-    return len(names), peak_layer, peak_mm2 / 100
+        for start in range(0, len(names), _BATCH):
+            batch = [archive.read(name) for name in names[start : start + _BATCH]]
+            areas_mm2.extend(pool.map(lambda png: _cured_mm2(png, display_mm), batch))
+    if not areas_mm2:
+        return 0, 0, 0.0
+    peak = max(range(len(areas_mm2)), key=lambda i: areas_mm2[i])
+    return len(areas_mm2), peak, areas_mm2[peak] / 100
 
 
 def generate(
