@@ -7,9 +7,11 @@ args.json so the tests can look at them; a process profile with hollowing_min_th
 """
 
 import argparse
+import base64
 import json
 import pathlib
 import sys
+import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--slice")
@@ -41,14 +43,30 @@ material = json.loads(pathlib.Path(args.load_filaments).read_text()) if args.loa
 
 print("sla 10% Slicing", flush=True)
 print("sla 80% Writing the archive", flush=True)
+# A layer-preview run (the printer's format swapped for SL1) fails when asked to, to test a preview that fails.
+if printer.get("sla_archive_format") == "SL1" and process.get("elefant_foot_compensation") == "98":
+    (out / "result.json").write_text(json.dumps({"return_code": -22, "error_string": "preview failed"}))
+    print("resin slicing failed: preview failed", file=sys.stderr)
+    sys.exit(-22 & 0xFF)
 if process.get("hollowing_min_thickness") == "99":
     (out / "result.json").write_text(json.dumps({"return_code": -21, "error_string": "does not fit"}))
     print("resin slicing failed: does not fit", file=sys.stderr)
     sys.exit(-21 & 0xFF)
 
+if printer.get("sla_archive_format") == "SL1":
+    # an SL1 archive: settings text and one PNG per layer (three here)
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
+    )
+    sl1 = out / "plate_1.sl1"
+    with zipfile.ZipFile(sl1, "w") as z:
+        z.writestr("config.ini", "action = print\n")
+        for i in range(3):
+            z.writestr(f"fake{i:05d}.png", png)
 ext = {"CTB": "ctb", "CTBENCRYPTED": "ctb", "GOO": "goo"}.get(printer.get("sla_archive_format", ""), "sl1")
 archive = out / f"plate_1.{ext}"
-archive.write_bytes(b"fake printer file")
+if printer.get("sla_archive_format") != "SL1":
+    archive.write_bytes(b"fake printer file")
 (out / "result.json").write_text(
     json.dumps(
         {

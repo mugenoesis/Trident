@@ -99,3 +99,33 @@ def test_a_resin_with_no_row_for_the_printer_fails_with_a_clear_message(client):
     job = _wait(client, client.post("/jobs", json=body).json()["id"])
     assert job["status"] == "failed"
     assert "no settings for this printer" in (job["error"] or "")
+
+
+def test_a_layer_preview_is_the_real_slice_as_png_layers(client):
+    model_id = _upload(client)
+    body = {
+        "technology": "resin",
+        "model_id": model_id,
+        "printer_profile": "Elegoo Mars 3",
+        "filament_profiles": ["Siraya Tech Easy Grey"],
+        "setting_overrides": {
+            "layer_height": 0.1,
+            "supports_enable": False,
+            "pad_enable": False,
+            "hollowing_enable": False,
+        },
+    }
+    job = _wait(client, client.post("/jobs", json=body).json()["id"])
+    assert job["status"] == "succeeded"
+    assert client.post(f"/jobs/{job['id']}/layer-preview").status_code == 200
+    preview: dict = {}
+    for _ in range(600):
+        preview = client.get(f"/jobs/{job['id']}/layer-preview").json()
+        if preview["status"] != "running":
+            break
+        time.sleep(0.5)
+    assert preview["status"] == "ready", preview
+    assert preview["layer_count"] == job["result"]["layer_count"]
+    layer = client.get(f"/jobs/{job['id']}/layers/{preview['layer_count'] // 2}.png")
+    assert layer.status_code == 200
+    assert layer.content.startswith(b"\x89PNG")

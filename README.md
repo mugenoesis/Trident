@@ -47,7 +47,7 @@ machine that has no slicer installed.
   several copies.
 - **Mesh check.** STL files are checked on upload for the defects the slicer repairs, and holes it cannot repair are
   flagged before they become a bad print.
-- **Resin (MSLA) printers.** Switch to **Resin** to slice for resin printers: pick one of the 150+ in the catalogue (Elegoo, Anycubic, Creality, Phrozen, FlashForge, UniFormation and more), pick a resin from the built-in library of published exposure and lift settings (each with its source), adjust them, set supports, pad and hollowing, and download the file your printer reads (.ctb, .goo, .pwmb, ...). Save the exposure and lift values on screen as a resin of your own (listed under "My resins", private to your account). Save a resin setup (printer, resin and slice settings) as a saved printer; saved printers are listed in FDM and Resin groups. The slicer can write most of those formats; printers whose format it cannot write yet are listed and marked. None of the formats has been checked on a real printer yet, so please report what works.
+- **Resin (MSLA) printers.** Switch to **Resin** to slice for resin printers: pick one of the 150+ in the catalogue (Elegoo, Anycubic, Creality, Phrozen, FlashForge, UniFormation and more), pick a resin from the built-in library of published exposure and lift settings (each with its source), adjust them, set supports, pad and hollowing, and download the file your printer reads (.ctb, .goo, .pwmb, ...). Look at the layers as the printer will expose them (a slider through the sliced layers). Save the exposure and lift values on screen as a resin of your own (listed under "My resins", private to your account). Save a resin setup (printer, resin and slice settings) as a saved printer; saved printers are listed in FDM and Resin groups. The slicer can write most of those formats; printers whose format it cannot write yet are listed and marked. None of the formats has been checked on a real printer yet, so please report what works.
 - **Send to your printer.** Upload the G-code to a Moonraker (Klipper, Mainsail, Fluidd) or OctoPrint printer.
 - **Every setting is reachable.** The common ones (layer height, infill, walls, seam, brim, supports, build plate) are
   up front, and all 800+ OrcaSlicer settings are under Advanced. Saved printers and settings profiles keep your setups.
@@ -149,6 +149,8 @@ The web app lives in [`web/`](web/README.md). The design is in [`docs/ARCHITECTU
 
 AI coding sessions: read [`AGENTS.md`](AGENTS.md) first.
 
+
+The real-slicer API tests run in an engine image with `scripts/slicer-tests.sh <image>`.
 
 One gate runs everything CI runs: `scripts/check.sh` (or `scripts/check.sh web` / `api`). A host with no Python can run the
 Python tools through `scripts/py.sh`, a throwaway container, for example `scripts/py.sh ruff check app`.
