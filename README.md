@@ -147,6 +147,9 @@ The web app lives in [`web/`](web/README.md). The design is in [`docs/ARCHITECTU
 
 ### Code quality checks
 
+AI coding sessions: read [`AGENTS.md`](AGENTS.md) first.
+
+
 One gate runs everything CI runs: `scripts/check.sh` (or `scripts/check.sh web` / `api`). A host with no Python can run the
 Python tools through `scripts/py.sh`, a throwaway container, for example `scripts/py.sh ruff check app`.
 
