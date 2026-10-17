@@ -147,13 +147,13 @@ def _run(
     timer = threading.Timer(timeout_s, kill) if timeout_s else None
     if timer:
         timer.start()
+    stdout, stderr_pipe = proc.stdout, proc.stderr
+    if stdout is None or stderr_pipe is None:
+        raise RuntimeError("the slicer was started without its output pipes")
     stderr_parts: list[str] = []
-    stderr_thread = threading.Thread(target=lambda: stderr_parts.append(proc.stderr.read()), daemon=True)
+    stderr_thread = threading.Thread(target=lambda: stderr_parts.append(stderr_pipe.read()), daemon=True)
     stderr_thread.start()
     stdout_lines: list[str] = []
-    stdout = proc.stdout
-    if stdout is None:
-        raise RuntimeError("the slicer was started without a stdout pipe")
     try:
         for line in stdout:
             stdout_lines.append(line)

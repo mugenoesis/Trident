@@ -2156,3 +2156,132 @@
 		flex: none;
 	}
 }
+
+.technology-toggle {
+	display: flex;
+	gap: 0;
+	border: 1px solid var(--panel-border);
+	border-radius: 8px;
+	padding: 0;
+	overflow: hidden;
+	width: fit-content;
+}
+
+.technology-toggle button {
+	background: transparent;
+	color: var(--text-dim);
+	border: 0;
+	border-radius: 0;
+	padding: 0.4rem 1.2rem;
+}
+
+.technology-toggle button.selected {
+	background: var(--accent);
+	color: var(--on-accent);
+	font-weight: 600;
+}
+
+.tech-badge {
+	font-size: 0.7rem;
+	font-weight: 500;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	padding: 0 0.5rem;
+	margin-left: 0.4rem;
+}
+
+.tech-badge.resin {
+	color: #6cb6ff;
+}
+
+.resin-facts p {
+	margin: 0.2rem 0;
+}
+
+.resin-note {
+	font-size: 0.85rem;
+	border: 1px solid var(--panel-border);
+	border-radius: 6px;
+	padding: 0.5rem 0.7rem;
+	margin: 0.4rem 0;
+}
+
+.resin-note.good {
+	border-color: #3b6b3b;
+	background: rgba(60, 110, 60, 0.15);
+}
+
+.resin-values {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.5rem 0.8rem;
+	margin-top: 0.5rem;
+}
+
+.resin-value-input {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.resin-value-input input {
+	flex: 1;
+	min-width: 0;
+}
+
+.resin-unit {
+	color: var(--text-dim);
+	font-size: 0.75rem;
+	white-space: nowrap;
+}
+
+.resin-values > * {
+	min-width: 0;
+}
+
+.resin-check {
+	display: flex !important;
+	flex-direction: row !important;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.6rem;
+	color: var(--text) !important;
+}
+
+.resin-check input[type="number"] {
+	width: 4.5rem;
+}
+
+.resin-result h3 {
+	margin: 0.8rem 0 0.4rem;
+}
+
+.resin-result h3 small {
+	font-weight: 400;
+	color: var(--text-dim);
+	font-size: 0.8rem;
+}
+
+.resin-stats {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.5rem;
+	margin-bottom: 0.8rem;
+}
+
+.resin-stat {
+	background: var(--panel-border);
+	border-radius: 6px;
+	padding: 0.5rem 0.7rem;
+	display: flex;
+	flex-direction: column;
+}
+
+.resin-stat-label {
+	font-size: 0.75rem;
+	color: var(--text-dim);
+}
+
+.resin-result .job-hint {
+	margin-top: 0.6rem;
+}

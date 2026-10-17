@@ -213,3 +213,29 @@ def test_the_choice_endpoint_rejects_unknown_names_and_printers_without_a_row(cl
     r = client.get("/resin/choice", params={**base, "resin": "Test resin", "printer": "Elegoo Mars 3"})
     assert r.status_code == 404
     assert "no settings" in r.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("format_id", "extension"),
+    [
+        ("CTB", "ctb"),
+        ("CTBENCRYPTED", "ctb"),
+        ("CTBGKTWO", "ctb"),
+        ("CBDDLP", "cbddlp"),
+        ("GOO", "goo"),
+        ("CXDLP", "cxdlp"),
+        ("SVGX", "svgx"),
+        ("PHROZENZIP", "zip"),
+        ("CHITUBOXZIP", "zip"),
+        ("TINYMAKER", "zip"),
+        ("pwmb", "pwmb"),
+        ("px6s", "px6s"),
+    ],
+)
+def test_the_file_ending_of_a_format(format_id, extension):
+    assert resin_module.file_extension(format_id) == extension
+
+
+def test_the_catalogue_says_which_file_ending_a_printer_writes(resin_dir):
+    mars = next(p for p in resin_module.catalog.printers() if p["name"] == "Elegoo Mars 3")
+    assert mars["extension"] == "ctb"

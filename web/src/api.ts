@@ -21,6 +21,9 @@ import type {
 	PrinterUpdateRequest,
 	ProfileDetail,
 	ProfileSummary,
+	ResinChoice,
+	ResinInfo,
+	ResinPrinterInfo,
 	SampleModelSummary,
 	SettingsProfileCreateRequest,
 	SettingsProfileRecord,
@@ -265,6 +268,24 @@ export function deleteJob(id: string): Promise<{ ok: boolean }> {
 
 export function gcodeDownloadUrl(id: string): string {
 	return `${API_BASE}/jobs/${id}/gcode`;
+}
+
+export function listResinPrinters(): Promise<ResinPrinterInfo[]> {
+	return request('/resin/printers');
+}
+
+export function listResins(): Promise<ResinInfo[]> {
+	return request('/resin/resins');
+}
+
+export function getResinChoice(resin: string, printer: string, layerHeight: number): Promise<ResinChoice> {
+	const query = new URLSearchParams({ resin, printer, layer_height: String(layerHeight) });
+	return request(`/resin/choice?${query}`);
+}
+
+// The printer's own file (.ctb, .goo, ...) of a finished resin job.
+export function archiveDownloadUrl(id: string): string {
+	return `${API_BASE}/jobs/${id}/archive`;
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {

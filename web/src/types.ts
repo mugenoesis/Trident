@@ -94,7 +94,9 @@ export interface JobRecord {
 export interface JobCreateRequest {
 	model_id: string;
 	printer_profile: string;
-	process_profile: string;
+	// Resin jobs name no process profile: their settings are all in setting_overrides.
+	technology?: 'fdm' | 'resin';
+	process_profile?: string;
 	filament_profiles: string[];
 	setting_overrides: Record<string, unknown>;
 	plate_index?: number | null;
@@ -423,4 +425,43 @@ export interface PrinterForm {
 export interface ExportItem {
 	kind: 'machine' | 'filament' | 'process';
 	name: string;
+}
+
+// A resin (MSLA) printer of the engine's catalogue.
+export interface ResinPrinterInfo {
+	name: string;
+	vendor: string;
+	model: string;
+	format: string;
+	// The ending of the file it writes, without the dot.
+	extension: string;
+	supported: boolean;
+	nonsquare_pixels: boolean;
+	display_width_mm: number | null;
+	display_height_mm: number | null;
+	pixels_x: number | null;
+	pixels_y: number | null;
+	pixel_size_mm: number | null;
+	build_height_mm: number | null;
+}
+
+export interface ResinInfo {
+	name: string;
+	vendor: string;
+	family: string;
+	color: string;
+	resin_type: string;
+}
+
+// The settings of a resin for a printer and layer height: what the slicer will use.
+export interface ResinChoice {
+	resin: string;
+	printer: string;
+	layer_height: number;
+	match: 'exact' | 'vendor' | 'any';
+	exact_layer_height: boolean;
+	settings: Record<string, number>;
+	source: string;
+	retrieved: string;
+	notes: string;
 }
