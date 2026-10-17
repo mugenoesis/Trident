@@ -155,6 +155,7 @@ class ResinCatalog:
             info = dict(p)
             data = self.printer_preset(p["name"]) or {}
             info.update(_display_facts(data))
+            info["extension"] = file_extension(info["format"])
             info.pop("file", None)
             out.append(info)
         return out
@@ -195,6 +196,25 @@ def _num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# The ending of the file each non-Anycubic format writes (the engine's registry); an Anycubic format id is its own ending.
+_FORMAT_EXTENSIONS = {
+    "CTB": "ctb",
+    "CTBENCRYPTED": "ctb",
+    "CTBGKTWO": "ctb",
+    "CBDDLP": "cbddlp",
+    "GOO": "goo",
+    "CXDLP": "cxdlp",
+    "SVGX": "svgx",
+    "PHROZENZIP": "zip",
+    "CHITUBOXZIP": "zip",
+    "TINYMAKER": "zip",
+}
+
+
+def file_extension(format_id: str) -> str:
+    return _FORMAT_EXTENSIONS.get(format_id, format_id.lower())
 
 
 def _display_facts(preset: dict[str, Any]) -> dict[str, Any]:

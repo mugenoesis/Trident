@@ -7,10 +7,24 @@ import FilamentSelect from './FilamentSelect';
 import JobPanel from './JobPanel';
 import PrinterSelect from './PrinterSelect';
 import QuickSettings, { QUICK_SETTING_KEYS } from './QuickSettings';
+import ResinPanel from './ResinPanel';
 import SavedPrinters from './SavedPrinters';
 import SavedProfilePicker from './SavedProfilePicker';
+import TechnologyToggle from './TechnologyToggle';
 
+// The right-hand panel: a switch between filament and resin printers, then the settings of the one chosen.
 export default function MainSettingsPanel({ c }: { c: AppCtx }) {
+	const { resin } = c;
+	return (
+		<section className="panel panel-settings">
+			<h2>Printer, material &amp; settings</h2>
+			<TechnologyToggle technology={resin.technology} onChange={resin.setTechnology} />
+			{resin.technology === 'resin' ? <ResinPanel r={resin} fileName={c.file?.name ?? ''} /> : <FdmSettings c={c} />}
+		</section>
+	);
+}
+
+function FdmSettings({ c }: { c: AppCtx }) {
 	const {
 		printers,
 		selectedPrinterId,
@@ -94,8 +108,7 @@ export default function MainSettingsPanel({ c }: { c: AppCtx }) {
 		handleDeleteJob,
 	} = c;
 	return (
-		<section className="panel panel-settings">
-			<h2>Printer, material &amp; settings</h2>
+		<>
 			<SavedPrinters
 				printers={printers}
 				selectedPrinterId={selectedPrinterId}
@@ -316,6 +329,6 @@ export default function MainSettingsPanel({ c }: { c: AppCtx }) {
 				onPreview={viewJobGcode}
 				onDelete={handleDeleteJob}
 			/>
-		</section>
+		</>
 	);
 }

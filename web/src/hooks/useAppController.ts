@@ -22,6 +22,7 @@ import { useProfileApply } from './useProfileApply';
 import { useProfileHandlers } from './useProfileHandlers';
 import { useProfileLists } from './useProfileLists';
 import { useResetOnNewFile } from './useResetOnNewFile';
+import { useResin } from './useResin';
 import { useRestore } from './useRestore';
 import { useRoles } from './useRoles';
 import { useSavedPrinterApply } from './useSavedPrinterApply';
@@ -39,6 +40,7 @@ import { useViewedJob } from './useViewedJob';
 // Calls the hooks that work on the main screen's state, in the order their effects have to run, and hands back everything they made.
 export function useAppController(props: MainAppProps) {
 	const state = useAppState(props);
+	const resin = useResin(state.modelId);
 	useResetOnNewFile({ ...props, ...state });
 	const primeTower = usePrimeTower({ ...props, ...state });
 	const viewedJob = useViewedJob({ ...props, ...state });
@@ -78,6 +80,7 @@ export function useAppController(props: MainAppProps) {
 	return {
 		...props,
 		...state,
+		resin,
 		...primeTower,
 		...viewedJob,
 		...selection,

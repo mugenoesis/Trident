@@ -649,6 +649,8 @@ class ResinPrinterInfo(BaseModel):
     # The file format the printer reads, and whether the engine can write it yet.
     format: str
     supported: bool
+    # The ending of the file it writes, without the dot (ctb, goo, zip, ...).
+    extension: str = ""
     # Some 12K/16K panels have rectangular pixels (the catalogue says which).
     nonsquare_pixels: bool = False
     display_width_mm: float | None = None
