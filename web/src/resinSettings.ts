@@ -36,6 +36,9 @@ export const RESIN_VALUE_FIELDS = [
 	{ key: 'faded_layers', label: 'Transition layers', unit: '' },
 	{ key: 'lift_distance', label: 'Lift distance', unit: 'mm' },
 	{ key: 'lift_speed', label: 'Lift speed', unit: 'mm/min' },
+	// What a bottle cost and holds: with the resin used, the cost of a print. Left empty, no cost is shown.
+	{ key: 'bottle_cost', label: 'Bottle price', unit: '' },
+	{ key: 'bottle_volume', label: 'Bottle size', unit: 'ml' },
 ] as const;
 
 type ResinValueKey = (typeof RESIN_VALUE_FIELDS)[number]['key'];
@@ -66,6 +69,8 @@ export const EMPTY_RESIN_VALUES: ResinValues = {
 	faded_layers: '',
 	lift_distance: '',
 	lift_speed: '',
+	bottle_cost: '',
+	bottle_volume: '',
 };
 
 // The text of a resin's values as the inputs show them.
@@ -126,6 +131,18 @@ export function formatDuration(seconds: number): string {
 	return h > 0 ? `${h} h ${minutes % 60} min` : `${minutes} min`;
 }
 
+// The cost of the resin a job used at the bottle price and size it was sliced with, or null when it was not given both.
+export function resinCost(usedMl: number | null, overrides: Record<string, unknown>): number | null {
+	const price = Number(overrides.bottle_cost);
+	const size = Number(overrides.bottle_volume);
+	if (usedMl === null || !(price > 0) || !(size > 0)) return null;
+	return (usedMl * price) / size;
+}
+
+export function formatCost(cost: number): string {
+	return cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export function formatMl(ml: number): string {
 	return `${ml.toFixed(1)} ml`;
 }
@@ -142,6 +159,16 @@ export function choiceNote(choice: ResinChoice, vendor: string, printer: ResinPr
 				? ` They have no row for the ${printer.model}, so the row for another ${printer.vendor} printer is used.`
 				: ` They have no row for the ${printer.model}, so their general row is used.`;
 	return `Using ${vendor}'s published settings ${layerPart}.${printerPart}`;
+}
+
+// The bottle price and size are about the bottle in the user's hand, not the printer or layer height: they stay when the resin's own values are
+// reloaded for another layer height (unless the resin itself says what a bottle holds and costs).
+export function keepBottle(next: ResinValues, previous: ResinValues, choice: ResinChoice): ResinValues {
+	const kept = { ...next };
+	for (const key of ['bottle_cost', 'bottle_volume'] as const) {
+		if (choice.settings[key] === undefined) kept[key] = previous[key];
+	}
+	return kept;
 }
 
 // A saved resin printer keeps the slice settings as {process, values}; what was saved by an older or newer version is read as far as it fits.

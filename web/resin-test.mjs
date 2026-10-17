@@ -66,6 +66,15 @@ check(await panel.getByText('Layers', { exact: true }).isVisible(), 'the layer c
 check(await panel.getByText('Print time', { exact: true }).isVisible(), 'the print time is shown');
 check(await panel.getByText('Resin', { exact: true }).last().isVisible(), 'the resin used is shown');
 await panel.screenshot({ path: 'smoke-resin-result.png' });
+check((await panel.getByText('Cost', { exact: true }).count()) === 0, 'without a bottle price there is no cost');
+await panel.getByLabel('Bottle price').fill('30');
+await panel.getByLabel('Bottle size').fill('1000');
+await panel.getByRole('button', { name: 'Slice' }).click();
+const cost = panel.locator('.resin-stat', { hasText: 'Cost' });
+await cost.waitFor({ timeout: 120000 });
+const usedMl = Number.parseFloat(await panel.locator('.resin-stat', { hasText: 'Resin' }).locator('strong').textContent());
+const costValue = Number.parseFloat(await cost.locator('strong').textContent());
+check(Math.abs(costValue - (usedMl * 30) / 1000) < 0.01, `the cost is the resin used (${usedMl} ml) at the bottle price (${costValue})`);
 
 console.log("[6/13] Downloading the printer's file ...");
 const link = panel.getByRole('link', { name: /^Download .*\.ctb$/ });
@@ -104,6 +113,9 @@ await panel.getByRole('button', { name: 'Slice' }).click();
 const warning = panel.locator('.resin-warning');
 await warning.waitFor({ timeout: 120000 });
 check(/large cross-section \(2\d\.\d cm²\)/.test(await warning.textContent()), 'the warning gives the area of the largest layer');
+check((await panel.getByLabel('Bottle price').inputValue()) === '30', 'the bottle price stays when the layer height changes');
+await panel.locator('.resin-stat', { hasText: 'Cost' }).waitFor();
+check(true, 'so the next print has a cost too');
 await panel.screenshot({ path: 'smoke-resin-peel.png' });
 
 console.log('[7/13] Back to FDM ...');
