@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createJob, getJob, getResinChoice, listResinPrinters, listResins } from '../api';
+import { createJob, deleteMyResin, getJob, getResinChoice, listResinPrinters, listResins, saveMyResin } from '../api';
 import { ACTIVE_STATUSES, POLL_INTERVAL_MS } from '../appHelpers';
 import {
 	DEFAULT_RESIN_PROCESS,
 	EMPTY_RESIN_VALUES,
+	numericValues,
 	packResinSettings,
 	type ResinProcess,
 	type ResinValues,
@@ -41,7 +42,8 @@ function useResinCatalog(active: boolean) {
 			})
 			.catch((err: Error) => setCatalogError(err.message));
 	}, [active]);
-	return { printers, resins, catalogError };
+	const reloadResins = useCallback(() => listResins().then(setResins), []);
+	return { printers, resins, catalogError, reloadResins };
 }
 
 // The resin's own values for the printer and layer height chosen, fetched when any of them changes (and so replacing edits made to the old ones).
@@ -115,6 +117,28 @@ export function useResin(modelId: string | null) {
 	const printer = useMemo(() => catalog.printers.find((p) => p.name === printerName) ?? null, [catalog.printers, printerName]);
 	const canSlice = Boolean(modelId && printer?.supported && !(job && ACTIVE_STATUSES.includes(job.status)));
 
+	// Saves the values on screen as a resin of the user's own, and chooses it.
+	const makeMyResin = useCallback(
+		(name: string) =>
+			saveMyResin({
+				name,
+				printer: printerName,
+				layer_height: Number(process.layerHeight),
+				settings: numericValues(values),
+				based_on: resinName || null,
+			}).then(async (info) => {
+				await catalog.reloadResins();
+				setResinName(info.name);
+			}),
+		[printerName, process.layerHeight, values, resinName, catalog],
+	);
+
+	const removeMyResin = useCallback(async () => {
+		await deleteMyResin(resinName);
+		await catalog.reloadResins();
+		setResinName('');
+	}, [resinName, catalog]);
+
 	// What a saved resin printer keeps: the printer, its resin, and the slice settings as they are now.
 	const settingsToSave = useCallback(() => packResinSettings(process, values), [process, values]);
 
@@ -171,6 +195,8 @@ export function useResin(modelId: string | null) {
 		slice,
 		settingsToSave,
 		applySavedResinPrinter,
+		makeMyResin,
+		removeMyResin,
 	};
 }
 

@@ -249,7 +249,7 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
         shutil.rmtree(out_dir / "realigned", ignore_errors=True)
 
 
-def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest):
+def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest, user_id: str | None = None):
     """Slice for a resin printer: the printer's own file instead of G-code (see resin_runner)."""
     return resin_runner.run_resin_slice(
         model_path=source_path,
@@ -259,6 +259,7 @@ def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest):
         setting_overrides=request.setting_overrides,
         on_progress=lambda p: store.update_progress(job_id, p),
         timeout_s=1800.0,
+        user_id=user_id,
     )
 
 
@@ -363,7 +364,7 @@ def _run_job(job_id: str, model_path: Path, request: JobCreateRequest, user_id: 
     store.set_status(job_id, JobStatus.RUNNING)
     try:
         result = (
-            _slice_resin_job(job_id, model_path, request)
+            _slice_resin_job(job_id, model_path, request, user_id)
             if request.technology == "resin"
             else _slice_job(job_id, model_path, request, user_id)
         )
@@ -398,10 +399,10 @@ def _check_object_selection(request: JobCreateRequest, model_path: Path) -> None
         raise HTTPException(status_code=400, detail="Every object on the chosen plate is excluded")
 
 
-def _check_resin_request(request: JobCreateRequest) -> None:
+def _check_resin_request(request: JobCreateRequest, user_id: str) -> None:
     """Refuse a resin job that cannot be honoured before it is queued."""
     try:
-        resin_module.check_printer_and_resins(request.printer_profile, request.filament_profiles)
+        resin_module.check_printer_and_resins(request.printer_profile, request.filament_profiles, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if (
@@ -426,7 +427,7 @@ def create_job(
     request: JobCreateRequest, background_tasks: BackgroundTasks, current: User = Depends(require_user)
 ) -> JobRecord:
     if request.technology == "resin":
-        _check_resin_request(request)
+        _check_resin_request(request, current.id)
     rejected = blocked_keys(request.setting_overrides) if request.technology == "fdm" else set()
     if rejected:
         raise HTTPException(

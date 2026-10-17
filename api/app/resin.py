@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .resin_user import user_resins
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def _row_score(row: dict[str, Any], printer_names: list[str]) -> int:
     return max((_printer_score(p, printer_names) for p in printers if isinstance(p, str)), default=0)
 
 
-def check_printer_and_resins(printer_name: str, resin_names: list[str]) -> None:
+def check_printer_and_resins(printer_name: str, resin_names: list[str], user_id: str | None = None) -> None:
     """Raise ValueError saying why a resin printer with these resins cannot be sliced for."""
     printer = catalog.get_printer(printer_name)
     if printer is None:
@@ -82,7 +83,7 @@ def check_printer_and_resins(printer_name: str, resin_names: list[str]) -> None:
         raise ValueError(f"{printer['name']} reads {printer['format']} files, which the slicer cannot write yet")
     if len(resin_names) > 1:
         raise ValueError("A resin printer uses at most one resin")
-    if resin_names and catalog.resin_path(resin_names[0]) is None:
+    if resin_names and catalog.resin_path(resin_names[0], user_id) is None:
         raise ValueError(f"Unknown resin: {resin_names[0]!r}")
 
 
@@ -190,21 +191,28 @@ class ResinCatalog:
             return None
 
     # ---- resins
-    def resins(self) -> list[dict[str, Any]]:
-        return [{k: v for k, v in m.items() if k != "file"} for m in self._materials]
+    def resins(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        """The built-in resins, then the user's own."""
+        mine = user_resins.list(user_id) if user_id else []
+        return [{k: v for k, v in m.items() if k != "file"} for m in self._materials] + mine
 
-    def get_resin(self, name: str) -> dict[str, Any] | None:
+    def get_resin(self, name: str, user_id: str | None = None) -> dict[str, Any] | None:
         entry = self._materials_by_name.get(name)
         if entry is None:
-            return None
+            return user_resins.get(user_id, name) if user_id else None
         try:
             return _read_json(self._dir / entry["file"])
         except (OSError, ValueError):
             return None
 
-    def resin_path(self, name: str) -> Path | None:
+    def resin_path(self, name: str, user_id: str | None = None) -> Path | None:
         entry = self._materials_by_name.get(name)
-        return self._dir / entry["file"] if entry else None
+        if entry is None:
+            return user_resins.path(user_id, name) if user_id else None
+        return self._dir / entry["file"]
+
+    def is_built_in(self, name: str) -> bool:
+        return name in self._materials_by_name
 
 
 def _num(value: Any) -> float | None:

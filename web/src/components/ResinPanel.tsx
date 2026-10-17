@@ -5,6 +5,7 @@ import {
 	choiceNote,
 	formatDuration,
 	formatMl,
+	MY_RESINS,
 	PAD_MODES,
 	type PadMode,
 	RESIN_LAYER_HEIGHTS,
@@ -15,6 +16,7 @@ import {
 	uniqueVendors,
 } from '../resinSettings';
 import type { JobRecord } from '../types';
+import MyResinForm from './MyResinForm';
 
 function PrinterSection({ r }: { r: ResinState }) {
 	const { printers, printer, printerName, setPrinterName, catalogError } = r;
@@ -116,7 +118,7 @@ function ResinSection({ r }: { r: ResinState }) {
 			{choice && printer && (
 				<div className={`resin-note${choice.match === 'exact' && choice.exact_layer_height ? ' good' : ''}`}>
 					{choiceNote(choice, vendor, printer)}{' '}
-					{choice.source && (
+					{choice.source.startsWith('http') && (
 						<a href={choice.source} target="_blank" rel="noreferrer">
 							Source
 						</a>
@@ -142,6 +144,14 @@ function ResinSection({ r }: { r: ResinState }) {
 						</div>
 					))}
 				</div>
+			)}
+			{current && (
+				<MyResinForm
+					chosenIsMine={current.vendor === MY_RESINS}
+					canSave={Boolean(printer)}
+					onSave={r.makeMyResin}
+					onDelete={r.removeMyResin}
+				/>
 			)}
 		</details>
 	);

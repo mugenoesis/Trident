@@ -42,7 +42,7 @@ def list_printers(current: User = Depends(require_user)) -> list[PrinterRecord]:
 def create_printer(body: PrinterCreateRequest, current: User = Depends(require_user)) -> PrinterRecord:
     if body.technology == "resin":
         try:
-            resin_module.check_printer_and_resins(body.machine_profile, body.filament_profiles)
+            resin_module.check_printer_and_resins(body.machine_profile, body.filament_profiles, current.id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return store.create_printer(user_id=current.id, **body.model_dump())

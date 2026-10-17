@@ -1,5 +1,8 @@
 import type { ResinChoice, ResinInfo, ResinPrinterInfo } from './types';
 
+// The vendor the user's own resins are listed under (the API puts them there).
+export const MY_RESINS = 'My resins';
+
 export const RESIN_LAYER_HEIGHTS = ['0.025', '0.03', '0.05', '0.1'];
 
 export type SupportLevel = 'none' | 'light' | 'medium' | 'heavy';
@@ -80,6 +83,16 @@ function numberOrNull(text: string): number | null {
 	return text.trim() !== '' && Number.isFinite(n) ? n : null;
 }
 
+// The resin values on screen that have a number in them, by setting.
+export function numericValues(values: ResinValues): Record<string, number> {
+	const out: Record<string, number> = {};
+	for (const { key } of RESIN_VALUE_FIELDS) {
+		const n = numberOrNull(values[key]);
+		if (n !== null) out[key] = n;
+	}
+	return out;
+}
+
 // What the slicer is told besides the resin's own file: the process, and every value the screen shows that has a number in it.
 export function resinOverrides(process: ResinProcess, values: ResinValues): Record<string, unknown> {
 	const overrides: Record<string, unknown> = {
@@ -96,11 +109,7 @@ export function resinOverrides(process: ResinProcess, values: ResinValues): Reco
 	if (process.pad !== 'off') overrides.pad_zero_elevation = process.pad === 'model';
 	const wall = numberOrNull(process.wallThickness);
 	if (process.hollow && wall !== null) overrides.hollowing_min_thickness = wall;
-	for (const { key } of RESIN_VALUE_FIELDS) {
-		const n = numberOrNull(values[key]);
-		if (n !== null) overrides[key] = n;
-	}
-	return overrides;
+	return { ...overrides, ...numericValues(values) };
 }
 
 export function resinDisplayName(resin: ResinInfo): string {
@@ -123,6 +132,7 @@ export function formatMl(ml: number): string {
 
 // "Using Siraya Tech's published settings for 0.05 mm layers. ..." -- what a resin's row is for.
 export function choiceNote(choice: ResinChoice, vendor: string, printer: ResinPrinterInfo): string {
+	if (vendor === MY_RESINS) return `Using your own values for ${choice.layer_height} mm layers.`;
 	const layers = `${choice.layer_height} mm layers`;
 	const layerPart = choice.exact_layer_height ? `for ${layers}` : `for ${layers} (the nearest to the layer height chosen)`;
 	const printerPart =
