@@ -266,6 +266,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 				{seconds !== null && <Stat label="Print time" value={formatDuration(seconds)} />}
 				{ml !== null && <Stat label="Resin" value={formatMl(ml)} />}
 			</div>
+			<PeelWarning layers={layers} />
 			<LayerControls job={job} layers={layers} />
 			<a className="download-button" href={archiveDownloadUrl(job.id)} download>
 				Download {archiveName}
@@ -304,6 +305,29 @@ function Field({ label, id, children }: { label: string; id: string; children: R
 		<div className="field-group">
 			<label htmlFor={id}>{label}</label>
 			{children}
+		</div>
+	);
+}
+
+// The warning for a layer that will be hard to peel off the film, which jumps to that layer.
+function PeelWarning({ layers }: { layers: ResinLayers }) {
+	const { preview, setIndex, setOpen } = layers;
+	if (!preview.peel_warning || preview.peak_layer === null || preview.peak_area_cm2 === null) return null;
+	const peak = preview.peak_layer;
+	return (
+		<div className="resin-warning">
+			Layer {(peak + 1).toLocaleString()} has a large cross-section ({preview.peak_area_cm2.toFixed(1)} cm²): the peel force may be high.
+			Consider tilting the model so its layers are smaller.{' '}
+			<button
+				type="button"
+				className="link-button"
+				onClick={() => {
+					setIndex(peak);
+					setOpen(true);
+				}}
+			>
+				Show it
+			</button>
 		</div>
 	);
 }

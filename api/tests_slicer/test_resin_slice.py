@@ -126,6 +126,9 @@ def test_a_layer_preview_is_the_real_slice_as_png_layers(client):
         time.sleep(0.5)
     assert preview["status"] == "ready", preview
     assert preview["layer_count"] == job["result"]["layer_count"]
+    # a 5 mm cube: its largest layer is 5 x 5 mm = 0.25 cm2, nowhere near a hard peel
+    assert 0.15 < preview["peak_area_cm2"] < 0.35
+    assert preview["peel_warning"] is False
     layer = client.get(f"/jobs/{job['id']}/layers/{preview['layer_count'] // 2}.png")
     assert layer.status_code == 200
     assert layer.content.startswith(b"\x89PNG")

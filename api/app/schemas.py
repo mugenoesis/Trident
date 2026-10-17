@@ -710,3 +710,8 @@ class LayerPreviewStatus(BaseModel):
     status: Literal["none", "running", "ready", "failed"]
     layer_count: int | None = None
     error: str | None = None
+    # Once ready: the largest layer (index from 0), its area, and whether it is over the limit for a safe peel.
+    peak_layer: int | None = None
+    peak_area_cm2: float | None = None
+    peel_warning: bool = False
+    peel_warning_cm2: float | None = None

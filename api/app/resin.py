@@ -180,6 +180,11 @@ class ResinCatalog:
     def get_printer(self, name: str) -> dict[str, Any] | None:
         return next((p for p in self._printers if p["name"] == name), None)
 
+    def screen_mm(self, name: str) -> tuple[float, float]:
+        """The width and height in mm of the printer's screen (0, 0 when the catalogue does not say)."""
+        preset = self.printer_preset(name) or {}
+        return (_num(preset.get("display_width")) or 0.0, _num(preset.get("display_height")) or 0.0)
+
     def printer_preset(self, name: str) -> dict[str, Any] | None:
         """The printer's machine preset (flat key/value JSON as the slicer's --load-settings takes it)."""
         printer = self.get_printer(name)

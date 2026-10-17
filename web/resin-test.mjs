@@ -9,6 +9,7 @@
 
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { goodCube } from './stl-fixtures.mjs';
 
 const BASE_URL = process.env.SMOKE_BASE_URL ?? 'http://localhost:8000';
 const fail = (message) => {
@@ -75,7 +76,6 @@ const bytes = await res.body();
 check(bytes.length > 1000, `the file has content (${bytes.length} bytes)`);
 
 console.log('[6b/13] Looking at the layers ...');
-await panel.getByRole('button', { name: 'Preview layers' }).click();
 const slider = panel.getByLabel('Layer', { exact: true });
 await slider.waitFor({ timeout: 60000 });
 const layerImage = page.locator('.resin-layer-view img');
@@ -94,6 +94,18 @@ await page.getByRole('button', { name: 'Back to model' }).click();
 await page.waitForSelector('.viewer canvas');
 check((await page.locator('.resin-layer-view').count()) === 0, 'Back to model returns to the model');
 
+console.log('[6c/13] A layer too big to peel easily gets a warning ...');
+check((await page.locator('.resin-warning').count()) === 0, 'a small model has no peel warning');
+// a 50 mm cube: its largest layer is 5 x 5 cm = 25 cm2, over the limit
+await page.locator('input[type="file"]').setInputFiles({ name: 'big.stl', mimeType: 'model/stl', buffer: goodCube(50) });
+await page.waitForSelector('text=Ready to slice', { timeout: 15000 });
+await panel.getByLabel('Layer height').selectOption({ label: '0.1 mm' });
+await panel.getByRole('button', { name: 'Slice' }).click();
+const warning = panel.locator('.resin-warning');
+await warning.waitFor({ timeout: 120000 });
+check(/large cross-section \(2\d\.\d cm²\)/.test(await warning.textContent()), 'the warning gives the area of the largest layer');
+await panel.screenshot({ path: 'smoke-resin-peel.png' });
+
 console.log('[7/13] Back to FDM ...');
 await panel.getByRole('button', { name: 'FDM', exact: true }).click();
 await panel.getByText('Nozzle diameter').first().waitFor();
@@ -101,6 +113,8 @@ check(true, 'the FDM settings are back');
 
 console.log('[8/13] Saving the resin setup as a printer ...');
 await panel.getByRole('button', { name: 'Resin', exact: true }).click();
+// (the layer height was changed above, which brought back the resin's own exposure)
+await panel.getByLabel('Exposure', { exact: true }).fill('2.5');
 const saved = panel.locator('.saved-printers .field-group select');
 await panel.getByRole('button', { name: 'Save current setup as printer…' }).click();
 await panel.locator('.saved-printers form input').first().fill('Resin corner');
