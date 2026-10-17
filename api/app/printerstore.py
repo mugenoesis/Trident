@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS printers (
     printhost_apikey TEXT,
     printhost_user TEXT,
     printhost_password TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    technology TEXT NOT NULL DEFAULT 'fdm',
+    resin_settings TEXT
 );
 CREATE TABLE IF NOT EXISTS material_profiles (
     id TEXT PRIMARY KEY,
@@ -109,6 +111,9 @@ class PrinterStore:
     @staticmethod
     def _migrate_filament_arrays(conn: sqlite3.Connection) -> None:
         printer_columns = {row["name"] for row in conn.execute("PRAGMA table_info(printers)")}
+        if "technology" not in printer_columns:
+            conn.execute("ALTER TABLE printers ADD COLUMN technology TEXT NOT NULL DEFAULT 'fdm'")
+            conn.execute("ALTER TABLE printers ADD COLUMN resin_settings TEXT")
         if "filament_profiles" not in printer_columns:
             conn.execute("ALTER TABLE printers ADD COLUMN filament_profiles TEXT")
             conn.execute("ALTER TABLE printers ADD COLUMN filament_colors TEXT")
@@ -158,8 +163,8 @@ class PrinterStore:
                     filament_profile, filament_profiles, filament_colors,
                     bed_width, bed_depth, bed_height, host_type,
                     print_host, printhost_apikey, printhost_user, printhost_password,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, technology, resin_settings
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     printer_id,
                     user_id,
@@ -179,6 +184,8 @@ class PrinterStore:
                     fields.get("printhost_user"),
                     fields.get("printhost_password"),
                     now,
+                    fields.get("technology") or "fdm",
+                    json.dumps(fields.get("resin_settings") or {}),
                 ),
             )
         return self.get_printer(printer_id)  # type: ignore[return-value]
@@ -199,11 +206,21 @@ class PrinterStore:
     # same reasoning as skipping edit entirely in the first pass. This is
     # just for the connection details (+ name) added after the fact.
     _UPDATABLE_COLUMNS = frozenset(
-        {"name", "host_type", "print_host", "printhost_apikey", "printhost_user", "printhost_password"}
+        {
+            "name",
+            "host_type",
+            "print_host",
+            "printhost_apikey",
+            "printhost_user",
+            "printhost_password",
+            "resin_settings",
+        }
     )
 
     def update_printer(self, printer_id: str, **fields: Any) -> PrinterRecord | None:
         updates = {k: v for k, v in fields.items() if k in self._UPDATABLE_COLUMNS}
+        if "resin_settings" in updates:
+            updates["resin_settings"] = json.dumps(updates["resin_settings"] or {})
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             with self._connect() as conn:
@@ -252,6 +269,8 @@ class PrinterStore:
     def _row_to_printer(row: sqlite3.Row) -> PrinterRecord:
         return PrinterRecord(
             id=row["id"],
+            technology=row["technology"],
+            resin_settings=json.loads(row["resin_settings"] or "{}"),
             name=row["name"],
             vendor=row["vendor"],
             machine_profile=row["machine_profile"],

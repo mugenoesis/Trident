@@ -73,6 +73,19 @@ def _row_score(row: dict[str, Any], printer_names: list[str]) -> int:
     return max((_printer_score(p, printer_names) for p in printers if isinstance(p, str)), default=0)
 
 
+def check_printer_and_resins(printer_name: str, resin_names: list[str]) -> None:
+    """Raise ValueError saying why a resin printer with these resins cannot be sliced for."""
+    printer = catalog.get_printer(printer_name)
+    if printer is None:
+        raise ValueError(f"Unknown resin printer: {printer_name!r}")
+    if not printer["supported"]:
+        raise ValueError(f"{printer['name']} reads {printer['format']} files, which the slicer cannot write yet")
+    if len(resin_names) > 1:
+        raise ValueError("A resin printer uses at most one resin")
+    if resin_names and catalog.resin_path(resin_names[0]) is None:
+        raise ValueError(f"Unknown resin: {resin_names[0]!r}")
+
+
 def choose_row(material: dict[str, Any], printer_names: list[str], layer_height: float) -> dict[str, Any] | None:
     """The best settings row of `material`, or None when no row fits the printer.
 

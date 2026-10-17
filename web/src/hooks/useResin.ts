@@ -4,12 +4,14 @@ import { ACTIVE_STATUSES, POLL_INTERVAL_MS } from '../appHelpers';
 import {
 	DEFAULT_RESIN_PROCESS,
 	EMPTY_RESIN_VALUES,
+	packResinSettings,
 	type ResinProcess,
 	type ResinValues,
 	resinOverrides,
+	unpackResinSettings,
 	valuesFromChoice,
 } from '../resinSettings';
-import type { JobRecord, ResinChoice, ResinInfo, ResinPrinterInfo } from '../types';
+import type { JobRecord, PrinterRecord, ResinChoice, ResinInfo, ResinPrinterInfo } from '../types';
 
 export type Technology = 'fdm' | 'resin';
 
@@ -47,6 +49,8 @@ function useResinChoice(printerName: string, resinName: string, layerHeight: str
 	const [choice, setChoice] = useState<ResinChoice | null>(null);
 	const [choiceError, setChoiceError] = useState<string | null>(null);
 	const [values, setValues] = useState<ResinValues>(EMPTY_RESIN_VALUES);
+	// Values restored from a saved printer: they win over the resin's own the first time its choice loads.
+	const restored = useRef<ResinValues | null>(null);
 	useEffect(() => {
 		setChoice(null);
 		setChoiceError(null);
@@ -56,7 +60,8 @@ function useResinChoice(printerName: string, resinName: string, layerHeight: str
 			.then((c) => {
 				if (stale) return;
 				setChoice(c);
-				setValues(valuesFromChoice(c));
+				setValues(restored.current ?? valuesFromChoice(c));
+				restored.current = null;
 			})
 			.catch((err: Error) => {
 				if (!stale) setChoiceError(err.message);
@@ -65,7 +70,7 @@ function useResinChoice(printerName: string, resinName: string, layerHeight: str
 			stale = true;
 		};
 	}, [printerName, resinName, layerHeight]);
-	return { choice, choiceError, values, setValues };
+	return { choice, choiceError, values, setValues, restored };
 }
 
 function useResinJob() {
@@ -95,7 +100,7 @@ export function useResin(modelId: string | null) {
 	const [printerName, setPrinterName] = useState('');
 	const [resinName, setResinName] = useState('');
 	const [process, setProcess] = useState<ResinProcess>(DEFAULT_RESIN_PROCESS);
-	const { choice, choiceError, values, setValues } = useResinChoice(printerName, resinName, process.layerHeight);
+	const { choice, choiceError, values, setValues, restored } = useResinChoice(printerName, resinName, process.layerHeight);
 	const { job, setJob, sliceError, setSliceError } = useResinJob();
 
 	const setTechnology = useCallback((t: Technology) => {
@@ -109,6 +114,27 @@ export function useResin(modelId: string | null) {
 
 	const printer = useMemo(() => catalog.printers.find((p) => p.name === printerName) ?? null, [catalog.printers, printerName]);
 	const canSlice = Boolean(modelId && printer?.supported && !(job && ACTIVE_STATUSES.includes(job.status)));
+
+	// What a saved resin printer keeps: the printer, its resin, and the slice settings as they are now.
+	const settingsToSave = useCallback(() => packResinSettings(process, values), [process, values]);
+
+	// Brings a saved resin printer back: switches to resin mode and restores its printer, resin and settings.
+	const applySavedResinPrinter = useCallback(
+		(saved: PrinterRecord) => {
+			const { process: savedProcess, values: savedValues } = unpackResinSettings(saved.resin_settings);
+			const resin = saved.filament_profiles[0] ?? '';
+			const refetches = saved.machine_profile !== printerName || resin !== resinName || savedProcess.layerHeight !== process.layerHeight;
+			if (savedValues) {
+				setValues(savedValues);
+				restored.current = refetches ? savedValues : null;
+			}
+			setTechnology('resin');
+			setPrinterName(saved.machine_profile);
+			setResinName(resin);
+			setProcess(savedProcess);
+		},
+		[printerName, resinName, process.layerHeight, setValues, restored, setTechnology],
+	);
 
 	const slice = useCallback(() => {
 		if (!modelId || !printerName) return;
@@ -143,6 +169,8 @@ export function useResin(modelId: string | null) {
 		sliceError,
 		canSlice,
 		slice,
+		settingsToSave,
+		applySavedResinPrinter,
 	};
 }
 

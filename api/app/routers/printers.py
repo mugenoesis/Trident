@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import printhost
+from .. import resin as resin_module
 from ..auth import require_user
 from ..jobstore import store as job_store
 from ..printerstore import store
@@ -39,6 +40,11 @@ def list_printers(current: User = Depends(require_user)) -> list[PrinterRecord]:
 
 @router.post("", response_model=PrinterRecord)
 def create_printer(body: PrinterCreateRequest, current: User = Depends(require_user)) -> PrinterRecord:
+    if body.technology == "resin":
+        try:
+            resin_module.check_printer_and_resins(body.machine_profile, body.filament_profiles)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return store.create_printer(user_id=current.id, **body.model_dump())
 
 

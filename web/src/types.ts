@@ -235,6 +235,10 @@ export interface PrinterConnection {
 
 export interface PrinterRecord extends PrinterConnection {
 	id: string;
+	// A resin printer is one of the resin catalogue: machine_profile is its name, filament_profiles has its resin, and
+	// resin_settings the slice settings saved with it.
+	technology: 'fdm' | 'resin';
+	resin_settings: Record<string, unknown>;
 	name: string;
 	vendor: string;
 	machine_profile: string;
@@ -252,6 +256,8 @@ export interface PrinterRecord extends PrinterConnection {
 }
 
 export interface PrinterCreateRequest extends PrinterConnection {
+	technology?: 'fdm' | 'resin';
+	resin_settings?: Record<string, unknown>;
 	name: string;
 	vendor: string;
 	machine_profile: string;

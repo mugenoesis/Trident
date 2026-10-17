@@ -18,24 +18,34 @@ export default function MainSettingsPanel({ c }: { c: AppCtx }) {
 	return (
 		<section className="panel panel-settings">
 			<h2>Printer, material &amp; settings</h2>
-			<TechnologyToggle technology={resin.technology} onChange={resin.setTechnology} />
+			<TechnologyToggle technology={resin.technology} onChange={c.switchTechnology} />
+			<SavedPrinters
+				printers={c.printers}
+				selectedPrinterId={c.selectedPrinterId}
+				onSelectPrinter={c.applySavedPrinter}
+				canSaveCurrent={canSaveCurrent(c)}
+				onSavePrinter={c.handleSavePrinter}
+				onUpdatePrinter={c.handleUpdatePrinter}
+				onDeletePrinter={c.handleDeletePrinter}
+				technology={resin.technology}
+			/>
 			{resin.technology === 'resin' ? <ResinPanel r={resin} fileName={c.file?.name ?? ''} /> : <FdmSettings c={c} />}
 		</section>
 	);
 }
 
+// Whether the current setup can be saved as a printer: a resin printer is enough in resin mode, a filament one needs its profiles.
+function canSaveCurrent(c: AppCtx): boolean {
+	if (c.resin.technology === 'resin') return Boolean(c.resin.printerName);
+	return Boolean(c.vendor && c.printerName && c.processName && c.filamentSlotsFilled);
+}
+
 function FdmSettings({ c }: { c: AppCtx }) {
 	const {
-		printers,
 		selectedPrinterId,
-		applySavedPrinter,
 		vendor,
 		printerName,
 		processName,
-		filamentSlotsFilled,
-		handleSavePrinter,
-		handleUpdatePrinter,
-		handleDeletePrinter,
 		printerSettingsOpen,
 		setPrinterSettingsOpen,
 		selectedPrinter,
@@ -109,15 +119,6 @@ function FdmSettings({ c }: { c: AppCtx }) {
 	} = c;
 	return (
 		<>
-			<SavedPrinters
-				printers={printers}
-				selectedPrinterId={selectedPrinterId}
-				onSelectPrinter={applySavedPrinter}
-				canSaveCurrent={Boolean(vendor && printerName && processName && filamentSlotsFilled)}
-				onSavePrinter={handleSavePrinter}
-				onUpdatePrinter={handleUpdatePrinter}
-				onDeletePrinter={handleDeletePrinter}
-			/>
 			<details className="settings-collapsible" open={printerSettingsOpen} onToggle={(e) => setPrinterSettingsOpen(e.currentTarget.open)}>
 				<summary>Printer settings{selectedPrinter ? ` (${selectedPrinter.name})` : ''}</summary>
 				<PrinterSelect

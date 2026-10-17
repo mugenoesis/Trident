@@ -450,6 +450,10 @@ class SettingsProfileRecord(BaseModel):
 
 
 class PrinterCreateRequest(BaseModel):
+    # A resin (MSLA) printer is one of the resin catalogue: machine_profile is its name, filament_profiles holds its one
+    # resin (or none) and resin_settings the slice settings saved with it. process_profile is empty.
+    technology: Literal["fdm", "resin"] = "fdm"
+    resin_settings: dict[str, Any] = Field(default_factory=dict)
     name: str
     vendor: str
     machine_profile: str
@@ -484,10 +488,14 @@ class PrinterUpdateRequest(BaseModel):
     printhost_apikey: str | None = None
     printhost_user: str | None = None
     printhost_password: str | None = None
+    # Resin printers only: the saved slice settings.
+    resin_settings: dict[str, Any] | None = None
 
 
 class PrinterRecord(BaseModel):
     id: str
+    technology: Literal["fdm", "resin"] = "fdm"
+    resin_settings: dict[str, Any] = Field(default_factory=dict)
     name: str
     vendor: str
     machine_profile: str

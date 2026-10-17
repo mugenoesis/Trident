@@ -4,9 +4,13 @@ import { buildFilamentSlots, defaultSlotColor, parsedNozzleDiameters, parsedNozz
 import { parseBedSize } from '../dimensions';
 import type { PrinterRecord } from '../types';
 import type { AppState, MainAppProps } from './useAppState';
+import type { ResinState, Technology } from './useResin';
 
-export function useSavedPrinterApply(c: AppState & Pick<MainAppProps, never>) {
+export function useSavedPrinterApply(c: AppState & Pick<MainAppProps, never> & { resin: ResinState }) {
 	const {
+		resin,
+		printers,
+		selectedPrinterId,
 		setSelectedPrinterId,
 		setVendor,
 		setPrinterName,
@@ -25,7 +29,7 @@ export function useSavedPrinterApply(c: AppState & Pick<MainAppProps, never>) {
 	// synchronously (App.tsx already has every piece of state a saved
 	// printer snapshots), no network round-trip needed unlike picking a
 	// printer fresh via PrinterSelect (handlePrinterChange, above).
-	const applySavedPrinter = useCallback(
+	const applySavedFdmPrinter = useCallback(
 		(printer: PrinterRecord) => {
 			setSelectedPrinterId(printer.id);
 			setVendor(printer.vendor);
@@ -112,5 +116,31 @@ export function useSavedPrinterApply(c: AppState & Pick<MainAppProps, never>) {
 			setFilamentSlots,
 		],
 	);
-	return { applySavedPrinter };
+
+	const { applySavedResinPrinter, setTechnology } = resin;
+	// A saved printer is a filament printer or a resin one; choosing it brings its mode with it.
+	const applySavedPrinter = useCallback(
+		(printer: PrinterRecord) => {
+			if (printer.technology === 'resin') {
+				setSelectedPrinterId(printer.id);
+				applySavedResinPrinter(printer);
+				return;
+			}
+			setTechnology('fdm');
+			applySavedFdmPrinter(printer);
+		},
+		[applySavedFdmPrinter, applySavedResinPrinter, setTechnology, setSelectedPrinterId],
+	);
+
+	// The FDM / Resin switch: a saved printer of the other kind stops being the selected one.
+	const switchTechnology = useCallback(
+		(technology: Technology) => {
+			setTechnology(technology);
+			const selected = printers.find((p) => p.id === selectedPrinterId);
+			if (selected && selected.technology !== technology) setSelectedPrinterId(null);
+		},
+		[setTechnology, printers, selectedPrinterId, setSelectedPrinterId],
+	);
+
+	return { applySavedPrinter, switchTechnology };
 }
