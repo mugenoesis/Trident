@@ -182,7 +182,7 @@ function paintMesh(mesh: THREE.Mesh, baseColorHex: string | null, triangleColors
 	}
 	mesh.geometry = paintedGeometry(geometry, triangleColors, baseColorHex ?? '#ffffff');
 	geometry.dispose();
-	mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55 });
+	mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide });
 }
 
 // How far the model sits from the middle of the bed: where the user placed it, or the default a belt printer gives.
@@ -440,10 +440,13 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		// against the dark viewport at any lighting angle. Shared across every
 		// mesh in a .3mf's group too -- this is a geometry-only preview, not a
 		// render of the file's own embedded per-object colors/materials.
+		// DoubleSide: the file as uploaded is what is drawn, and a mesh with faces wound inward (which the slicer repairs
+		// by itself) would otherwise show holes where those faces are culled.
 		const material = new THREE.MeshStandardMaterial({
 			color: 0xff6f2c,
 			metalness: 0.05,
 			roughness: 0.55,
+			side: THREE.DoubleSide,
 		});
 
 		// Auto-frame the model at the origin, size the reference plate/ceiling,
@@ -581,7 +584,7 @@ const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 		const materialForColor = (hex: string) => {
 			const existing = coloredMaterials.get(hex);
 			if (existing) return existing;
-			const created = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.05, roughness: 0.55 });
+			const created = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide });
 			coloredMaterials.set(hex, created);
 			return created;
 		};
