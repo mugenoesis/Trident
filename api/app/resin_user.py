@@ -67,12 +67,15 @@ class UserResins:
         layer_height: float,
         values: dict[str, float],
         based_on: dict[str, Any] | None,
+        *,
+        resin_type: str | None = None,
+        source: str = SOURCE,
     ) -> dict[str, Any]:
         material = self.get(user_id, name) or {
             "type": "material",
             "name": name,
             "vendor": VENDOR,
-            "resin_type": (based_on or {}).get("resin_type", ""),
+            "resin_type": resin_type if resin_type is not None else (based_on or {}).get("resin_type", ""),
             "family": (based_on or {}).get("family", ""),
             "color": (based_on or {}).get("color", ""),
             "settings": [],
@@ -81,7 +84,7 @@ class UserResins:
             "printers": [printer],
             "layer_height": layer_height,
             **values,
-            "source": SOURCE,
+            "source": source,
             "retrieved": date.today().isoformat(),
             "notes": f"Started from {based_on['name']}." if based_on else "",
         }
