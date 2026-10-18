@@ -164,6 +164,20 @@ function ResinSection({ r }: { r: ResinState }) {
 	);
 }
 
+// Offered when the model came with support points placed by hand (in Holecraft): print with those, or let the slicer place its own.
+function HandPlacedSupports({ r }: { r: ResinState }) {
+	const { count, use, setUse } = r.handPlaced;
+	if (!count || r.process.supports === 'none') return null;
+	const label = `Use the ${count} support ${count === 1 ? 'point' : 'points'} placed in Holecraft`;
+	return (
+		<div className="field-group">
+			<label>
+				<input type="checkbox" checked={use} onChange={(e) => setUse(e.target.checked)} /> {label}
+			</label>
+		</div>
+	);
+}
+
 function SettingsSection({ r }: { r: ResinState }) {
 	const { process, setProcess } = r;
 	const summary = `${process.layerHeight} mm, ${process.supports === 'none' ? 'no supports' : `${process.supports} supports`}${
@@ -204,6 +218,7 @@ function SettingsSection({ r }: { r: ResinState }) {
 						))}
 					</select>
 				</Field>
+				<HandPlacedSupports r={r} />
 				<Field label="Touchpoint size" id="resin-touchpoint-size">
 					<input
 						id="resin-touchpoint-size"
@@ -262,6 +277,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 	const layerCount = number(job, 'layer_count');
 	const seconds = number(job, 'estimated_print_time_s');
 	const ml = number(job, 'resin_used_ml');
+	const points = number(job, 'support_point_count');
 	const cost = resinCost(ml, job.setting_overrides);
 	return (
 		<div className="resin-result">
@@ -272,6 +288,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 				{layerCount !== null && <Stat label="Layers" value={layerCount.toLocaleString()} />}
 				{seconds !== null && <Stat label="Print time" value={formatDuration(seconds)} />}
 				{ml !== null && <Stat label="Resin" value={formatMl(ml)} />}
+				{points !== null && points > 0 && <Stat label="Support points" value={points.toLocaleString()} />}
 				{cost !== null && <Stat label="Cost" value={formatCost(cost)} />}
 			</div>
 			<PeelWarning layers={layers} />

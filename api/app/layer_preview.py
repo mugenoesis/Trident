@@ -115,6 +115,7 @@ def generate(
     resin_name: str | None,
     overrides: dict[str, Any],
     user_id: str | None,
+    support_points: dict[str, Any] | None = None,
 ) -> None:
     """Make the preview of a job whose state was just marked running by begin(); never raises."""
     try:
@@ -127,6 +128,7 @@ def generate(
             timeout_s=1800.0,
             user_id=user_id,
             archive_format=ARCHIVE_FORMAT,
+            support_points=support_points,
         )
         if not result.succeeded:
             error = (result.result_json or {}).get("error_string") or result.stderr

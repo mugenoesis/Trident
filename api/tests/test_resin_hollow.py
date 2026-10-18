@@ -80,10 +80,10 @@ def test_an_empty_file_is_refused(client):
 
 
 def test_a_key_that_may_hollow_can_upload_and_hollow_and_nothing_else(client):
-    made = client.post("/auth/keys", json={"name": "Holecraft", "scope": "hollow"})
+    made = client.post("/auth/keys", json={"name": "Holecraft", "scope": "resin"})
     assert made.status_code == 200, made.text
     auth = {"Authorization": f"Bearer {made.json()['key']}"}
-    assert client.get("/auth/keys").json()[0]["scope"] == "hollow"
+    assert client.get("/auth/keys").json()[0]["scope"] == "resin"
     files = {"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
     assert client.post("/resin/hollow", files=files, headers=auth).status_code == 200
     assert (
@@ -93,7 +93,7 @@ def test_a_key_that_may_hollow_can_upload_and_hollow_and_nothing_else(client):
         == 200
     )
     assert client.get("/jobs", headers=auth).status_code == 403
-    assert client.get("/resin/printers", headers=auth).status_code == 403
+    assert client.get("/resin/resins", headers=auth).status_code == 403
 
 
 def test_an_upload_only_key_cannot_hollow(client):

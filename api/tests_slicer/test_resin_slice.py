@@ -200,3 +200,41 @@ def test_a_model_too_thin_to_hollow_is_refused_by_the_real_slicer(client):
     resp = client.post("/resin/hollow", files=files, data={"wall_thickness": "2"})
     assert resp.status_code == 422
     assert "thin" in resp.json()["detail"]
+
+
+def test_support_points_are_generated_edited_and_used_by_the_real_slicer(client):
+    files = {"file": ("cube.stl", io.BytesIO(_cube_stl(20.0)), "model/stl")}
+    resp = client.post("/resin/supports", files=files, data={"printer": "Elegoo Mars 3"})
+    assert resp.status_code == 200, resp.text
+    generated = resp.json()["objects"][0]["points"]
+    assert len(generated) >= 4
+    for p in generated:  # on the cube, in the coordinates of the file
+        assert min(p["x"], p["y"], p["z"]) >= -0.3 and max(p["x"], p["y"], p["z"]) <= 20.3
+
+    # three points of the user's own, sent back with the model
+    mine = {
+        "objects": [
+            {
+                "points": [
+                    {"x": 5, "y": 5, "z": 0, "radius": 0.4},
+                    {"x": 15, "y": 5, "z": 0, "radius": 0.4},
+                    {"x": 10, "y": 15, "z": 0, "radius": 0.5},
+                ]
+            }
+        ]
+    }
+    upload = client.post("/models", files={"file": ("cube.stl", io.BytesIO(_cube_stl(20.0)), "model/stl")})
+    assert upload.status_code == 200, upload.text
+    stored = client.put(f"/models/{upload.json()['model_id']}/support-points", json=mine)
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["support_point_count"] == 3
+    body = {
+        "technology": "resin",
+        "printer_profile": "Elegoo Mars 3",
+        "model_id": upload.json()["model_id"],
+        "filament_profiles": ["Siraya Tech Easy Grey"],
+        "setting_overrides": {"layer_height": 0.1, "initial_layer_height": 0.1, "supports_enable": True},
+    }
+    job = _wait(client, client.post("/jobs", json=body).json()["id"])
+    assert job["status"] == "succeeded", job.get("error")
+    assert job["result"]["support_point_count"] == 3

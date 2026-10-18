@@ -3,7 +3,7 @@
 
 Like the real one it takes --load-settings "printer;process", an optional --load-filaments (the resin) and a model, prints
 "sla N% text" progress lines, writes plate_1.<ext> and result.json into --outputdir. The arguments it was given are written to
-args.json so the tests can look at them; a process profile with hollowing_min_thickness 99 makes it fail the way the real one does.
+args.json (with the support points file it was given, if any) so the tests can look at them; a process profile with hollowing_min_thickness 99 makes it fail the way the real one does.
 """
 
 import argparse
@@ -36,6 +36,8 @@ parser.add_argument("--load-settings")
 parser.add_argument("--load-filaments")
 parser.add_argument("--allow-newer-file")
 parser.add_argument("--sla-hollow-output")
+parser.add_argument("--sla-support-points-input")
+parser.add_argument("--sla-support-points-output")
 parser.add_argument("model", nargs="?")
 args, _unknown = parser.parse_known_args()
 
@@ -45,9 +47,13 @@ printer_file, process_file = args.load_settings.split(";")
 printer = json.loads(pathlib.Path(printer_file).read_text())
 process = json.loads(pathlib.Path(process_file).read_text())
 material = json.loads(pathlib.Path(args.load_filaments).read_text()) if args.load_filaments else None
+points_input = (
+    json.loads(pathlib.Path(args.sla_support_points_input).read_text()) if args.sla_support_points_input else None
+)
 (out / "args.json").write_text(
     json.dumps(
         {
+            "support_points_input": points_input,
             "printer": printer,
             "process": process,
             "material": material,
@@ -88,6 +94,48 @@ if args.sla_hollow_output:
     )
     sys.exit(0)
 
+if args.sla_support_points_output:
+    # support points instead of slicing: those given back, or three made up (the first carries the display width and the density it was
+    # given, to show they arrived); a wall of 99 is "does not fit" (to test a refusal)
+    print("sla 10% Placing support points", flush=True)
+    if process.get("hollowing_min_thickness") == "99":
+        (out / "result.json").write_text(json.dumps({"return_code": -21, "error_string": "does not fit"}))
+        print("support points failed: does not fit", file=sys.stderr)
+        sys.exit(-21 & 0xFF)
+    made = points_input or {
+        "objects": [
+            {
+                "points": [
+                    {
+                        "x": float(printer["display_width"]),
+                        "y": float(process.get("support_points_density_relative", 0)),
+                        "z": 0,
+                        "radius": 0.4,
+                        "type": "island",
+                    },
+                    {"x": 1, "y": 1, "z": 0, "radius": 0.4, "type": "slope"},
+                    {"x": 2, "y": 2, "z": 0, "radius": 0.4, "type": "slope"},
+                ]
+            }
+        ]
+    }
+    target = pathlib.Path(args.sla_support_points_output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(made))
+    count = sum(len(o["points"]) for o in made["objects"])
+    (out / "result.json").write_text(
+        json.dumps(
+            {
+                "return_code": 0,
+                "error_string": "",
+                "printer_technology": "SLA",
+                "support_points_file": str(target),
+                "support_point_count": str(count),
+            }
+        )
+    )
+    sys.exit(0)
+
 print("sla 10% Slicing", flush=True)
 print("sla 80% Writing the archive", flush=True)
 # A layer-preview run (the printer's format swapped for SL1) fails when asked to, to test a preview that fails.
@@ -123,6 +171,7 @@ if printer.get("sla_archive_format") != "SL1":
             "layer_height_mm": f"{float(process.get('layer_height', 0.05)):.6f}",
             "estimated_print_time_s": "5000.000000",
             "resin_used_ml": "8.000000",
+            "support_point_count": str(sum(len(o["points"]) for o in points_input["objects"]) if points_input else 12),
         }
     )
 )

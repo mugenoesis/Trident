@@ -22,6 +22,7 @@ from .models import (
     resolve_model_owner,
     resolve_model_path,
     resolve_model_plates,
+    resolve_model_support_points,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -249,6 +250,11 @@ def _align_to_purge_line(job_id: str, request: JobCreateRequest, user_id: str | 
         shutil.rmtree(out_dir / "realigned", ignore_errors=True)
 
 
+def _hand_placed_points(request: JobCreateRequest) -> dict | None:
+    """The hand-placed support points stored with the job's model, unless the job asks for generated ones."""
+    return resolve_model_support_points(request.model_id) if request.hand_placed_supports else None
+
+
 def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest, user_id: str | None = None):
     """Slice for a resin printer: the printer's own file instead of G-code (see resin_runner)."""
     return resin_runner.run_resin_slice(
@@ -260,6 +266,7 @@ def _slice_resin_job(job_id: str, source_path: Path, request: JobCreateRequest, 
         on_progress=lambda p: store.update_progress(job_id, p),
         timeout_s=1800.0,
         user_id=user_id,
+        support_points=_hand_placed_points(request),
     )
 
 
@@ -327,6 +334,7 @@ def _resin_result(result_json: dict) -> dict:
         ("layer_height_mm", float),
         ("estimated_print_time_s", float),
         ("resin_used_ml", float),
+        ("support_point_count", int),
     ):
         if key in out:
             with contextlib.suppress(TypeError, ValueError):
@@ -371,6 +379,7 @@ def _make_layer_preview(job_id: str, model_path: Path, request: JobCreateRequest
             resin_name=request.filament_profiles[0] if request.filament_profiles else None,
             overrides=request.setting_overrides,
             user_id=user_id,
+            support_points=_hand_placed_points(request),
         )
 
 

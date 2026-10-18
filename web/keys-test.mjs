@@ -77,29 +77,33 @@ await page.goto(`${BASE_URL}/?model=nosuchmodel`, { waitUntil: 'networkidle' });
 await page.waitForSelector('text=TridentSlicer');
 check(!page.url().includes('model='), 'a model that cannot be found still clears the address');
 
-console.log("[7/7] A key that may also hollow models (Holecraft's Hollow button) ...");
+console.log("[7/7] A key for Holecraft's resin tools (hollow, supports) ...");
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: 'Settings' }).click();
 await page.getByRole('button', { name: 'API keys…' }).click();
 const third = page.locator('.settings-panel');
-await third.getByLabel('Name', { exact: true }).fill('Holecraft hollow');
-await third.locator('select').selectOption({ label: 'Holecraft: upload models and hollow them' });
+await third.getByLabel('Name', { exact: true }).fill('Holecraft resin tools');
+await third.locator('select').selectOption({ label: 'Holecraft resin tools: upload models, hollow them, place supports' });
 await third.getByRole('button', { name: 'Make key' }).click();
 const hollowKey = await third.getByLabel('The new API key').inputValue();
 check(
-	await third.getByText('Access: uploads models and hollows them. It cannot read, slice or delete anything.').isVisible(),
-	'it says what a hollow key can do',
+	await third
+		.getByText(
+			'Access: uploads models, hollows them, places supports on them and lists the resin printers. It cannot slice or delete anything.',
+		)
+		.isVisible(),
+	'it says what a resin-tools key can do',
 );
 await third.getByRole('button', { name: 'Done' }).click();
-await third.getByText('Uploads and hollows models').waitFor();
-check(await third.getByText('Uploads and hollows models').isVisible(), 'the list shows its access');
+await third.getByText('Uploads models, hollows them and places supports').waitFor();
+check(await third.getByText('Uploads models, hollows them and places supports').isVisible(), 'the list shows its access');
 const hollowJobs = await page.request.get(`${BASE_URL}/jobs`, { headers: { Authorization: `Bearer ${hollowKey}` } });
-check(hollowJobs.status() === 403, 'a hollow key may not list jobs');
+check(hollowJobs.status() === 403, 'a resin-tools key may not list jobs');
 const hollowUpload = await page.request.post(`${BASE_URL}/models`, {
 	headers: { Authorization: `Bearer ${hollowKey}` },
 	multipart: { file: { name: 'cube.stl', mimeType: 'model/stl', buffer: readFileSync(path.resolve('fixtures/test-cube.stl')) } },
 });
-check(hollowUpload.ok(), 'a hollow key uploads a model');
+check(hollowUpload.ok(), 'a resin-tools key uploads a model');
 
 await browser.close();
 console.log('API keys check passed');

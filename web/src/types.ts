@@ -40,9 +40,11 @@ export interface ModelUploadResponse {
 	model_id: string;
 	filename: string;
 	mesh_report?: MeshReport | null;
+	// How many support points were sent with the model (null: none, the slicer places them).
+	support_point_count?: number | null;
 }
 
-export type ApiKeyScope = 'upload' | 'hollow' | 'full';
+export type ApiKeyScope = 'upload' | 'resin' | 'full';
 
 // A key another program uses instead of a login (see api/app/auth.py). The secret is only in ApiKeyCreated.
 export interface ApiKeyInfo {
@@ -114,6 +116,8 @@ export interface JobCreateRequest {
 	// never renders one itself. Omitted entirely when nothing was loaded to
 	// capture.
 	preview_image_base64?: string;
+	// A resin job: print with the support points stored with the model (when it has some). False has the slicer place its own.
+	hand_placed_supports?: boolean;
 }
 
 export interface PlateInfo {
