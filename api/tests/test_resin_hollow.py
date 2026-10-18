@@ -93,7 +93,7 @@ def test_a_key_that_may_hollow_can_upload_and_hollow_and_nothing_else(client):
         == 200
     )
     assert client.get("/jobs", headers=auth).status_code == 403
-    assert client.get("/resin/printers", headers=auth).status_code == 403
+    assert client.get("/resin/resins", headers=auth).status_code == 403
 
 
 def test_an_upload_only_key_cannot_hollow(client):

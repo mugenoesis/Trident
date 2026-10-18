@@ -88,7 +88,9 @@ await third.getByRole('button', { name: 'Make key' }).click();
 const hollowKey = await third.getByLabel('The new API key').inputValue();
 check(
 	await third
-		.getByText('Access: uploads models, hollows them and places supports on them. It cannot read, slice or delete anything.')
+		.getByText(
+			'Access: uploads models, hollows them, places supports on them and lists the resin printers. It cannot slice or delete anything.',
+		)
 		.isVisible(),
 	'it says what a resin-tools key can do',
 );

@@ -209,7 +209,7 @@ def test_support_points_are_generated_edited_and_used_by_the_real_slicer(client)
     generated = resp.json()["objects"][0]["points"]
     assert len(generated) >= 4
     for p in generated:  # on the cube, in the coordinates of the file
-        assert -0.3 <= min(p["x"], p["y"], p["z"]) and max(p["x"], p["y"], p["z"]) <= 20.3
+        assert min(p["x"], p["y"], p["z"]) >= -0.3 and max(p["x"], p["y"], p["z"]) <= 20.3
 
     # three points of the user's own, sent back with the model
     mine = {

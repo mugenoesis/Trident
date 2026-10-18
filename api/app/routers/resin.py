@@ -31,7 +31,7 @@ router = APIRouter(prefix="/resin", tags=["resin"])
 
 
 @router.get("/printers", response_model=list[ResinPrinterInfo])
-def list_resin_printers(current: User = Depends(require_user)) -> list[ResinPrinterInfo]:
+def list_resin_printers(current: User = Depends(require_resin_tools_user)) -> list[ResinPrinterInfo]:
     return [ResinPrinterInfo(**p) for p in resin_module.catalog.printers(current.id)]
 
 

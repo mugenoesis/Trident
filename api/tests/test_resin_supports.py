@@ -57,7 +57,9 @@ def _upload(client, points=None, name="cube.stl"):
 def _put_points(client, model_id, points, headers=None):
     body = points if isinstance(points, str) else json.dumps(points)
     return client.put(
-        f"/models/{model_id}/support-points", content=body, headers={"content-type": "application/json", **(headers or {})}
+        f"/models/{model_id}/support-points",
+        content=body,
+        headers={"content-type": "application/json", **(headers or {})},
     )
 
 
@@ -137,7 +139,12 @@ def test_a_model_uploaded_without_support_points_has_none(client):
 
 @pytest.mark.parametrize(
     "points",
-    ["not json", {"objects": 3}, {"objects": [{"points": [{"x": 1}]}]}, {"objects": [{"points": [{"x": 1, "y": 2, "z": 3, "radius": 0}]}]}],
+    [
+        "not json",
+        {"objects": 3},
+        {"objects": [{"points": [{"x": 1}]}]},
+        {"objects": [{"points": [{"x": 1, "y": 2, "z": 3, "radius": 0}]}]},
+    ],
 )
 def test_support_points_that_are_not_usable_are_refused(client, points):
     assert _upload(client, points).status_code == 422
@@ -166,13 +173,15 @@ def test_a_model_without_support_points_gets_generated_ones(client, tmp_path):
     assert _job_args(tmp_path, job["id"])["support_points_input"] is None
 
 
-def test_a_resin_key_may_upload_hollow_and_place_supports_and_nothing_else(client):
+def test_a_resin_key_may_upload_hollow_place_supports_and_see_the_printers_and_nothing_else(client):
     made = client.post("/auth/keys", json={"name": "Holecraft", "scope": "resin"})
     assert made.status_code == 200, made.text
     auth = {"Authorization": f"Bearer {made.json()['key']}"}
     assert client.get("/auth/keys").json()[0]["scope"] == "resin"
     files = {"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    assert client.post("/resin/supports", files=files, data={"printer": "Elegoo Mars 3"}, headers=auth).status_code == 200
+    assert (
+        client.post("/resin/supports", files=files, data={"printer": "Elegoo Mars 3"}, headers=auth).status_code == 200
+    )
     files = {"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
     assert client.post("/resin/hollow", files=files, headers=auth).status_code == 200
     files = {"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
@@ -180,16 +189,24 @@ def test_a_resin_key_may_upload_hollow_and_place_supports_and_nothing_else(clien
     assert stored.status_code == 200
     assert _put_points(client, stored.json()["model_id"], POINTS, headers=auth).status_code == 200
     assert client.get("/jobs", headers=auth).status_code == 403
-    assert client.get("/resin/printers", headers=auth).status_code == 403
+    # the printers: Holecraft offers them to place the points for
+    printers = client.get("/resin/printers", headers=auth)
+    assert printers.status_code == 200
+    assert "Elegoo Mars 3" in [p["name"] for p in printers.json()]
+    assert client.get("/resin/resins", headers=auth).status_code == 403
 
 
 def test_an_upload_only_key_cannot_place_supports(client):
     made = client.post("/auth/keys", json={"name": "Holecraft", "scope": "upload"})
     auth = {"Authorization": f"Bearer {made.json()['key']}"}
-    stored = client.post("/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}, headers=auth)
+    stored = client.post(
+        "/models", files={"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}, headers=auth
+    )
     assert _put_points(client, stored.json()["model_id"], POINTS, headers=auth).status_code == 403
     files = {"file": ("cube.stl", io.BytesIO(b"fake stl bytes"), "model/stl")}
-    assert client.post("/resin/supports", files=files, data={"printer": "Elegoo Mars 3"}, headers=auth).status_code == 403
+    assert (
+        client.post("/resin/supports", files=files, data={"printer": "Elegoo Mars 3"}, headers=auth).status_code == 403
+    )
 
 
 def test_the_layer_preview_is_made_with_the_same_support_points(client, tmp_path):

@@ -22,7 +22,7 @@ function accessSummary(scope: ApiKeyScope): string {
 export function accessNote(scope: ApiKeyScope): string {
 	if (scope === 'upload') return 'Access: uploads models only. It cannot read, slice or delete anything.';
 	if (scope === 'resin')
-		return 'Access: uploads models, hollows them and places supports on them. It cannot read, slice or delete anything.';
+		return 'Access: uploads models, hollows them, places supports on them and lists the resin printers. It cannot slice or delete anything.';
 	return 'Access: every API except making keys. Keep it as private as a password.';
 }
 

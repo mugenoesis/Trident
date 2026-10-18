@@ -47,7 +47,9 @@ printer_file, process_file = args.load_settings.split(";")
 printer = json.loads(pathlib.Path(printer_file).read_text())
 process = json.loads(pathlib.Path(process_file).read_text())
 material = json.loads(pathlib.Path(args.load_filaments).read_text()) if args.load_filaments else None
-points_input = json.loads(pathlib.Path(args.sla_support_points_input).read_text()) if args.sla_support_points_input else None
+points_input = (
+    json.loads(pathlib.Path(args.sla_support_points_input).read_text()) if args.sla_support_points_input else None
+)
 (out / "args.json").write_text(
     json.dumps(
         {
@@ -104,7 +106,13 @@ if args.sla_support_points_output:
         "objects": [
             {
                 "points": [
-                    {"x": float(printer["display_width"]), "y": float(process.get("support_points_density_relative", 0)), "z": 0, "radius": 0.4, "type": "island"},
+                    {
+                        "x": float(printer["display_width"]),
+                        "y": float(process.get("support_points_density_relative", 0)),
+                        "z": 0,
+                        "radius": 0.4,
+                        "type": "island",
+                    },
                     {"x": 1, "y": 1, "z": 0, "radius": 0.4, "type": "slope"},
                     {"x": 2, "y": 2, "z": 0, "radius": 0.4, "type": "slope"},
                 ]
