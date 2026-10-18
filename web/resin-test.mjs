@@ -27,13 +27,13 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
 const pageErrors = [];
 page.on('pageerror', (err) => pageErrors.push(String(err)));
 
-console.log(`[1/17] Loading ${BASE_URL} ...`);
+console.log(`[1/18] Loading ${BASE_URL} ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible()) await justMe.click();
 await page.waitForSelector('text=TridentSlicer');
 
-console.log('[2/17] Uploading a model, then switching to Resin ...');
+console.log('[2/18] Uploading a model, then switching to Resin ...');
 await page.locator(MODEL_INPUT).setInputFiles(path.resolve('fixtures/test-cube.stl'));
 await page.waitForSelector('text=Ready to slice', { timeout: 15000 });
 const panel = page.locator('.panel-settings');
@@ -42,7 +42,7 @@ await panel.getByRole('button', { name: 'Resin', exact: true }).click();
 check((await panel.getByRole('button', { name: 'Resin', exact: true }).getAttribute('aria-pressed')) === 'true', 'Resin mode is on');
 check((await panel.getByText('Nozzle diameter').count()) === 0, 'the FDM settings are gone');
 
-console.log('[3/17] Choosing a printer ...');
+console.log('[3/18] Choosing a printer ...');
 await panel.getByLabel('Printer vendor').selectOption({ label: 'Elegoo' });
 await panel.getByLabel('Printer', { exact: true }).selectOption({ label: 'Mars 3' });
 await panel.getByText('Writes').waitFor();
@@ -50,7 +50,7 @@ check(await panel.getByText(/Screen\s+\d+ × \d+ px over/).isVisible(), 'the scr
 check(await panel.getByText(/Build height\s+\d+(\.\d+)? mm/).isVisible(), 'the build height is shown');
 check(await panel.getByText(/Writes\s+\.ctb for the/).isVisible(), 'the file type is shown');
 
-console.log('[4/17] Choosing a resin and reading its settings ...');
+console.log('[4/18] Choosing a resin and reading its settings ...');
 await panel.getByLabel('Resin vendor').selectOption({ label: 'Siraya Tech' });
 await panel.getByLabel('Resin', { exact: true }).selectOption({ label: 'Easy Grey' });
 await panel.getByText(/published settings for 0\.05 mm layers/).waitFor();
@@ -59,7 +59,7 @@ check((await panel.getByLabel('Exposure', { exact: true }).inputValue()) === '2'
 check((await panel.getByLabel('Bottom exposure').inputValue()) === '20', "the resin's bottom exposure fills in");
 await panel.getByLabel('Exposure', { exact: true }).fill('2.5');
 
-console.log('[5/17] Slicing ...');
+console.log('[5/18] Slicing ...');
 await panel.getByLabel('Supports', { exact: true }).selectOption({ label: 'None' });
 await panel.getByLabel('Pad', { exact: true }).selectOption({ label: 'Off: model sits on supports' });
 await panel.getByRole('button', { name: 'Slice' }).click();
@@ -78,7 +78,7 @@ const usedMl = Number.parseFloat(await panel.locator('.resin-stat', { hasText: '
 const costValue = Number.parseFloat(await cost.locator('strong').textContent());
 check(Math.abs(costValue - (usedMl * 30) / 1000) < 0.01, `the cost is the resin used (${usedMl} ml) at the bottle price (${costValue})`);
 
-console.log("[6/17] Downloading the printer's file ...");
+console.log("[6/18] Downloading the printer's file ...");
 const link = panel.getByRole('link', { name: /^Download .*\.ctb$/ });
 const href = await link.getAttribute('href');
 const res = await page.request.get(new URL(href, BASE_URL).toString());
@@ -86,7 +86,7 @@ check(res.ok(), 'the download works');
 const bytes = await res.body();
 check(bytes.length > 1000, `the file has content (${bytes.length} bytes)`);
 
-console.log('[6b/17] Looking at the layers ...');
+console.log('[6b/18] Looking at the layers ...');
 const slider = panel.getByLabel('Layer', { exact: true });
 await slider.waitFor({ timeout: 60000 });
 const layerImage = page.locator('.resin-layer-view img');
@@ -105,7 +105,7 @@ await page.getByRole('button', { name: 'Back to model' }).click();
 await page.waitForSelector('.viewer canvas');
 check((await page.locator('.resin-layer-view').count()) === 0, 'Back to model returns to the model');
 
-console.log('[6c/17] A layer too big to peel easily gets a warning ...');
+console.log('[6c/18] A layer too big to peel easily gets a warning ...');
 check((await page.locator('.resin-warning').count()) === 0, 'a small model has no peel warning');
 // a 50 mm cube: its largest layer is 5 x 5 cm = 25 cm2, over the limit
 await page.locator(MODEL_INPUT).setInputFiles({ name: 'big.stl', mimeType: 'model/stl', buffer: goodCube(50) });
@@ -120,12 +120,12 @@ await panel.locator('.resin-stat', { hasText: 'Cost' }).waitFor();
 check(true, 'so the next print has a cost too');
 await panel.screenshot({ path: 'smoke-resin-peel.png' });
 
-console.log('[7/17] Back to FDM ...');
+console.log('[7/18] Back to FDM ...');
 await panel.getByRole('button', { name: 'FDM', exact: true }).click();
 await panel.getByText('Nozzle diameter').first().waitFor();
 check(true, 'the FDM settings are back');
 
-console.log('[8/17] Saving the resin setup as a printer ...');
+console.log('[8/18] Saving the resin setup as a printer ...');
 await panel.getByRole('button', { name: 'Resin', exact: true }).click();
 // (the layer height was changed above, which brought back the resin's own exposure)
 await panel.getByLabel('Exposure', { exact: true }).fill('2.5');
@@ -137,7 +137,7 @@ await panel.getByRole('button', { name: 'Save printer' }).click();
 await saved.locator('optgroup[label="Resin"] option', { hasText: 'Resin corner · Resin' }).waitFor({ state: 'attached' });
 check(true, 'it is listed under Resin');
 
-console.log('[9/17] Choosing it again brings the saved values back ...');
+console.log('[9/18] Choosing it again brings the saved values back ...');
 await panel.getByLabel('Exposure', { exact: true }).fill('9');
 // each change is remembered by its own request; let the first land before the second is made, as it would for a person
 const cleared = page.waitForResponse(
@@ -160,7 +160,7 @@ check((await panel.getByLabel('Printer', { exact: true }).inputValue()).length >
 await page.waitForFunction(() => document.querySelector('#resin-exposure_time')?.value === '2.5');
 check(true, 'its saved exposure is back (2.5, not the 9 typed after saving)');
 
-console.log('[10/17] After a reload ...');
+console.log('[10/18] After a reload ...');
 await remembered;
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForSelector('text=TridentSlicer');
@@ -169,7 +169,7 @@ await panel.getByLabel('Printer', { exact: true }).waitFor();
 await page.waitForFunction(() => document.querySelector('#resin-printer option:checked')?.textContent === 'Mars 3');
 check(true, 'the saved resin printer is selected again');
 
-console.log('[11/17] Deleting it ...');
+console.log('[11/18] Deleting it ...');
 await panel.getByText('Manage saved printers').click();
 await panel.getByRole('button', { name: 'Delete' }).first().click();
 await page.waitForFunction(
@@ -177,7 +177,7 @@ await page.waitForFunction(
 );
 check(true, 'it is gone from the list');
 
-console.log('[12/17] Making my own resin from the values on screen ...');
+console.log('[12/18] Making my own resin from the values on screen ...');
 await panel.getByLabel('Printer vendor').selectOption({ label: 'Elegoo' });
 await panel.getByLabel('Printer', { exact: true }).selectOption({ label: 'Mars 3' });
 await panel.getByLabel('Resin vendor').selectOption({ label: 'Siraya Tech' });
@@ -192,12 +192,12 @@ check((await panel.getByLabel('Resin vendor').inputValue()) === 'My resins', 'it
 await panel.getByText(/Using your own values/).waitFor();
 check((await panel.getByLabel('Exposure', { exact: true }).inputValue()) === '3.7', 'it has the values that were on screen');
 
-console.log('[13/17] Deleting it ...');
+console.log('[13/18] Deleting it ...');
 await panel.getByRole('button', { name: 'Delete my resin' }).click();
 await page.waitForFunction(() => ![...document.querySelectorAll('#resin-resin-vendor option')].some((o) => o.textContent === 'My resins'));
 check(true, 'it is gone from the list');
 
-console.log('[14/17] Making a printer of my own from the Mars 3 ...');
+console.log('[14/18] Making a printer of my own from the Mars 3 ...');
 await panel.getByLabel('Printer vendor').selectOption({ label: 'Elegoo' });
 await panel.getByLabel('Printer', { exact: true }).selectOption({ label: 'Mars 3' });
 await panel.getByRole('button', { name: 'Copy as a custom printer…' }).click();
@@ -232,7 +232,7 @@ await panel.getByRole('button', { name: 'Slice' }).click();
 await panel.getByRole('link', { name: /^Download .*\.ctb$/ }).waitFor({ timeout: 180000 });
 check(true, 'it slices for the new printer and offers its file');
 
-console.log('[15/17] Changing it, then deleting it ...');
+console.log('[15/18] Changing it, then deleting it ...');
 await panel.getByRole('button', { name: 'Edit my printer…' }).click();
 await form.getByLabel('Build height').fill('260');
 await form.getByRole('button', { name: 'Save printer' }).click();
@@ -244,7 +244,7 @@ await page.waitForFunction(
 );
 check(true, 'it is gone from the list');
 
-console.log('[16/17] Importing a Chitubox resin profile ...');
+console.log('[16/18] Importing a Chitubox resin profile ...');
 const profile = [
 	'currProfile:Test Blu 50um',
 	'__resin:tough',
@@ -270,13 +270,58 @@ check((await panel.getByLabel('Resin vendor').inputValue()) === 'My resins', 'th
 check((await panel.getByLabel('Exposure', { exact: true }).inputValue()) === '15', 'it has the exposure of the profile');
 check((await panel.getByLabel('Bottle price').inputValue()) === '30', 'and its price per litre as a bottle of 1000 ml');
 
-console.log('[17/17] A file that is not a resin profile ...');
+console.log('[17/18] A file that is not a resin profile ...');
 await page
 	.locator('input[type="file"][accept=".cfg,.ini"]')
 	.setInputFiles({ name: 'notes.cfg', mimeType: 'text/plain', buffer: Buffer.from('hello') });
 await panel.getByText(/does not look like a Chitubox/).waitFor();
 check(true, 'it says why it was not imported');
 await panel.getByRole('button', { name: 'Delete my resin' }).click();
+
+console.log('[18/18] A model sent with support points of its own ...');
+const sent = await page.request.post(`${BASE_URL}/models`, {
+	multipart: { file: { name: 'cube.stl', mimeType: 'model/stl', buffer: goodCube(20) } },
+});
+const sentId = (await sent.json()).model_id;
+const stored = await page.request.put(`${BASE_URL}/models/${sentId}/support-points`, {
+	data: {
+		objects: [
+			{
+				points: [
+					{ x: 5, y: 5, z: 0, radius: 0.4 },
+					{ x: 15, y: 5, z: 0, radius: 0.4 },
+					{ x: 10, y: 15, z: 0, radius: 0.5 },
+				],
+			},
+		],
+	},
+});
+check(stored.ok(), 'a model is stored with its support points');
+await page.goto(`${BASE_URL}/?model=${sentId}`, { waitUntil: 'networkidle' });
+await page.waitForSelector('text=Ready to slice', { timeout: 15000 });
+await panel.getByLabel('Printer vendor').selectOption({ label: 'Elegoo' });
+await panel.getByLabel('Printer', { exact: true }).selectOption({ label: 'Mars 3' });
+await panel.getByLabel('Resin vendor').selectOption({ label: 'Siraya Tech' });
+await panel.getByLabel('Resin', { exact: true }).selectOption({ label: 'Easy Grey' });
+await panel.getByText(/published settings for 0\.05 mm layers/).waitFor();
+const handPlaced = panel.getByLabel('Use the 3 support points placed in Holecraft');
+check(await handPlaced.isChecked(), 'it offers the 3 points, on by default');
+await panel.getByRole('button', { name: 'Slice' }).click();
+const pointStat = panel.locator('.resin-stat', { hasText: 'Support points' });
+await pointStat.waitFor({ timeout: 180000 });
+check((await pointStat.locator('strong').textContent()) === '3', 'the print was supported at exactly those 3 points');
+await handPlaced.uncheck();
+await panel.getByRole('button', { name: 'Slice' }).click();
+await page.waitForFunction(
+	() => {
+		return Array.from(document.querySelectorAll('.resin-stat')).some(
+			(s) => s.textContent?.includes('Support points') && s.querySelector('strong')?.textContent !== '3',
+		);
+	},
+	null,
+	{ timeout: 180000 },
+);
+check(true, 'with the box unticked the slicer places its own points');
 
 await browser.close();
 if (pageErrors.length) fail(`page errors: ${pageErrors.join('; ')}`);

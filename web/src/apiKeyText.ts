@@ -2,26 +2,27 @@ import type { ApiKeyInfo, ApiKeyScope } from './types';
 
 // How the API keys panel words a key (kept apart from the component so it is plain functions).
 
-export const SCOPES: readonly ApiKeyScope[] = ['upload', 'hollow', 'full'];
+export const SCOPES: readonly ApiKeyScope[] = ['upload', 'resin', 'full'];
 
 /** What a key may do, as shown when choosing one. */
 export function accessChoice(scope: ApiKeyScope): string {
 	if (scope === 'upload') return 'Holecraft: upload models only';
-	if (scope === 'hollow') return 'Holecraft: upload models and hollow them';
+	if (scope === 'resin') return 'Holecraft resin tools: upload models, hollow them, place supports';
 	return 'Full access: every API';
 }
 
 /** What a key may do, as shown in the list. */
 function accessSummary(scope: ApiKeyScope): string {
 	if (scope === 'upload') return 'Uploads models only';
-	if (scope === 'hollow') return 'Uploads and hollows models';
+	if (scope === 'resin') return 'Uploads models, hollows them and places supports';
 	return 'Full access';
 }
 
 /** What a key made for a scope can and cannot do, said once it has been made. */
 export function accessNote(scope: ApiKeyScope): string {
 	if (scope === 'upload') return 'Access: uploads models only. It cannot read, slice or delete anything.';
-	if (scope === 'hollow') return 'Access: uploads models and hollows them. It cannot read, slice or delete anything.';
+	if (scope === 'resin')
+		return 'Access: uploads models, hollows them and places supports on them. It cannot read, slice or delete anything.';
 	return 'Access: every API except making keys. Keep it as private as a password.';
 }
 

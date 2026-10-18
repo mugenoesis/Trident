@@ -27,6 +27,7 @@ import {
 	valuesFromChoice,
 } from '../resinSettings';
 import type { JobRecord, MyResinPrinterRequest, PrinterRecord, ResinChoice, ResinFormat, ResinInfo, ResinPrinterInfo } from '../types';
+import { useHandPlacedSupports } from './useHandPlacedSupports';
 import { useResinLayers } from './useResinLayers';
 
 export type Technology = 'fdm' | 'resin';
@@ -127,6 +128,7 @@ export function useResin(modelId: string | null) {
 	const [process, setProcess] = useState<ResinProcess>(DEFAULT_RESIN_PROCESS);
 	const { choice, choiceError, values, setValues, restored } = useResinChoice(printerName, resinName, process.layerHeight);
 	const { job, setJob, sliceError, setSliceError } = useResinJob();
+	const handPlaced = useHandPlacedSupports(modelId, technology === 'resin');
 
 	const setTechnology = useCallback((t: Technology) => {
 		setTechnologyState(t);
@@ -219,10 +221,11 @@ export function useResin(modelId: string | null) {
 			printer_profile: printerName,
 			filament_profiles: resinName ? [resinName] : [],
 			setting_overrides: resinOverrides(process, values),
+			hand_placed_supports: handPlaced.use,
 		})
 			.then(setJob)
 			.catch((err: Error) => setSliceError(err.message));
-	}, [modelId, printerName, resinName, process, values, setJob, setSliceError]);
+	}, [modelId, printerName, resinName, process, values, handPlaced.use, setJob, setSliceError]);
 
 	const layers = useResinLayers(job?.status === 'succeeded' ? job.id : null);
 
@@ -253,6 +256,7 @@ export function useResin(modelId: string | null) {
 		saveMyPrinter,
 		removeMyPrinter,
 		layers,
+		handPlaced,
 	};
 }
 

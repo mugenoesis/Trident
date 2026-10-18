@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from .. import resin as resin_module
 from .. import resin_import, resin_runner
-from ..auth import require_hollow_user, require_user
+from ..auth import require_resin_tools_user, require_user
 from ..resin_printers_user import build_preset, user_resin_printers
 from ..resin_user import user_resins
 from ..schemas import (
@@ -22,6 +23,7 @@ from ..schemas import (
     ResinImportSkipped,
     ResinInfo,
     ResinPrinterInfo,
+    SupportPointsDocument,
 )
 from ..userstore import User
 
@@ -255,34 +257,40 @@ _HOLLOW_SUFFIXES = {".stl", ".3mf", ".obj"}
 _MAX_HOLLOW_BYTES = 200 * 1024 * 1024
 
 
-@router.post("/hollow")
-async def hollow_model(
-    file: UploadFile = File(...),
-    wall_thickness: float = Form(2.0, ge=0.5, le=20.0),
-    quality: float = Form(0.5, gt=0, le=1.0),
-    current: User = Depends(require_hollow_user),
-) -> Response:
-    """The model with a cavity in it, as an STL in the place the model is: a wall of `wall_thickness` mm, at `quality` (0 to 1).
-
-    A hollow model uses a fraction of the resin; it needs drain holes (the model's maker adds them) to be printed.
-    """
+async def _save_upload(file: UploadFile, scratch: Path) -> Path:
+    """Write an uploaded model (an STL, 3MF or OBJ, not empty, not huge) into `scratch` and return its path."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _HOLLOW_SUFFIXES:
         raise HTTPException(
             status_code=400, detail=f"Send an STL, 3MF or OBJ file, not {suffix or 'a file with no type'!r}"
         )
+    source = scratch / f"model{suffix}"
+    size = 0
+    with source.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > _MAX_HOLLOW_BYTES:
+                raise HTTPException(status_code=413, detail="File too large")
+            out.write(chunk)
+    if size == 0:
+        raise HTTPException(status_code=400, detail="The file is empty")
+    return source
+
+
+@router.post("/hollow")
+async def hollow_model(
+    file: UploadFile = File(...),
+    wall_thickness: float = Form(2.0, ge=0.5, le=20.0),
+    quality: float = Form(0.5, gt=0, le=1.0),
+    current: User = Depends(require_resin_tools_user),
+) -> Response:
+    """The model with a cavity in it, as an STL in the place the model is: a wall of `wall_thickness` mm, at `quality` (0 to 1).
+
+    A hollow model uses a fraction of the resin; it needs drain holes (the model's maker adds them) to be printed.
+    """
     scratch = Path(tempfile.mkdtemp(prefix="headless-orca-hollow-in-"))
     try:
-        source = scratch / f"model{suffix}"
-        size = 0
-        with source.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                if size > _MAX_HOLLOW_BYTES:
-                    raise HTTPException(status_code=413, detail="File too large")
-                out.write(chunk)
-        if size == 0:
-            raise HTTPException(status_code=400, detail="The file is empty")
+        source = await _save_upload(file, scratch)
         target = scratch / "hollow.stl"
         try:
             result = await run_in_threadpool(
@@ -304,5 +312,56 @@ async def hollow_model(
                 "X-Volume-After-Mm3": str(result.volume_after_mm3),
             },
         )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _settings_form(text: str) -> dict[str, Any]:
+    """The `settings` form field: a JSON object of resin settings (empty means none)."""
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="settings is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="settings must be a JSON object")
+    return value
+
+
+@router.post("/supports", response_model=SupportPointsDocument)
+async def place_supports(
+    file: UploadFile = File(...),
+    printer: str = Form(...),
+    resin: str = Form(""),
+    settings: str = Form(""),
+    current: User = Depends(require_resin_tools_user),
+) -> SupportPointsDocument:
+    """The support points the slicer would build supports for on this model, for `printer` (and `resin`, `settings`).
+
+    The points are in the coordinates of the file sent. They can be moved, added to and removed, then sent back with the model
+    (`POST /models` with `support_points`) to print with exactly those.
+    """
+    overrides = _settings_form(settings)
+    printer_info = resin_module.catalog.get_printer(printer, current.id)
+    if printer_info is None:
+        raise HTTPException(status_code=404, detail="Unknown resin printer")
+    scratch = Path(tempfile.mkdtemp(prefix="headless-orca-points-in-"))
+    try:
+        source = await _save_upload(file, scratch)
+        try:
+            points = await run_in_threadpool(
+                resin_runner.run_support_points,
+                model_path=source,
+                printer_name=printer_info["name"],
+                resin_name=resin or None,
+                setting_overrides=overrides,
+                user_id=current.id,
+            )
+        except resin_runner.ResinJobError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except resin_runner.SupportPointsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return SupportPointsDocument(**points)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

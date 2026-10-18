@@ -61,12 +61,34 @@ class MeshReport(BaseModel):
         ]
 
 
+class SupportPointIn(BaseModel):
+    """One support point, in the coordinates of the model file: where its tip touches the model and how wide the tip is (mm)."""
+
+    x: float
+    y: float
+    z: float
+    radius: float = Field(gt=0, le=10)
+    type: Literal["manual", "island", "slope"] = "manual"
+
+
+class SupportObjectPoints(BaseModel):
+    points: list[SupportPointIn]
+
+
+class SupportPointsDocument(BaseModel):
+    """The support points of a model, per object in the order the slicer loads them (what /resin/supports answers)."""
+
+    objects: list[SupportObjectPoints] = Field(max_length=100)
+
+
 class ModelUploadResponse(BaseModel):
     model_id: str
     filename: str
     # Set only for an STL with something to report; None when it is clean,
     # not an STL, or could not be analysed.
     mesh_report: MeshReport | None = None
+    # How many hand-placed support points were sent with the model (None: none, the slicer generates them).
+    support_point_count: int | None = None
 
 
 class SampleModelSummary(BaseModel):
@@ -207,6 +229,8 @@ class JobCreateRequest(BaseModel):
     # nothing loaded to capture -- the job still slices normally, just
     # without a preview.
     preview_image_base64: str | None = None
+    # A resin job builds supports for the hand-placed points stored with its model (when it has some); false generates them instead.
+    hand_placed_supports: bool = True
 
     @model_validator(mode="after")
     def _fdm_needs_a_process(self) -> JobCreateRequest:
@@ -342,13 +366,13 @@ class AuthStatus(BaseModel):
 
 class ApiKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    scope: Literal["upload", "hollow", "full"]
+    scope: Literal["upload", "resin", "full"]
 
 
 class ApiKeyInfo(BaseModel):
     id: str
     name: str
-    scope: Literal["upload", "hollow", "full"]
+    scope: Literal["upload", "resin", "full"]
     created_at: str
     last_used_at: str | None = None
 

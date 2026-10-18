@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import cli_runner, meshcheck, threemf, threemf_objects
-from ..auth import require_upload_user, require_user
+from ..auth import require_resin_tools_user, require_upload_user, require_user
 from ..config import settings
 from ..schemas import (
     ColorNode,
@@ -24,6 +24,7 @@ from ..schemas import (
     ObjectInfo,
     ObjectsTransformRequest,
     PlateInfo,
+    SupportPointsDocument,
     ThreeMfInspection,
     TransformRequest,
 )
@@ -246,6 +247,7 @@ def get_model(model_id: str, current: User = Depends(require_user)) -> ModelUplo
         model_id=model_id,
         filename=resolve_model_original_name(model_id) or resolve_model_path(model_id).name,
         mesh_report=MeshReport(**report) if report else None,
+        support_point_count=_support_point_count(meta.get("support_points")),
     )
 
 
@@ -377,3 +379,49 @@ def resolve_model_uploaded_at(model_id: str) -> datetime | None:
         return datetime.fromisoformat(raw)
     except ValueError:
         return None
+
+
+def _support_point_count(points: dict[str, Any] | None) -> int | None:
+    """How many hand-placed support points a model has (0 means "no supports"), or None when it has none stored."""
+    if points is None:
+        return None
+    return sum(len(o["points"]) for o in points["objects"])
+
+
+def resolve_model_support_points(model_id: str) -> dict[str, Any] | None:
+    """The hand-placed support points stored with a model, or None when it has none."""
+    return (_read_meta(model_id) or {}).get("support_points")
+
+
+def _store_support_points(model_id: str, current: User, points: dict[str, Any] | None) -> ModelUploadResponse:
+    resolve_model_path(model_id)  # 404s on unknown/invalid model_id
+    owner = resolve_model_owner(model_id)
+    if owner is not None and owner != current.id:
+        raise HTTPException(status_code=404, detail="model_id not found")
+    meta = _read_meta(model_id) or {}
+    if points is None:
+        meta.pop("support_points", None)
+    else:
+        meta["support_points"] = points
+    meta_file = _meta_path(model_id)
+    meta_file.parent.mkdir(parents=True, exist_ok=True)
+    meta_file.write_text(json.dumps(meta))
+    return ModelUploadResponse(
+        model_id=model_id,
+        filename=resolve_model_original_name(model_id) or resolve_model_path(model_id).name,
+        support_point_count=_support_point_count(points),
+    )
+
+
+@router.put("/{model_id}/support-points", response_model=ModelUploadResponse)
+def put_support_points(
+    model_id: str, body: SupportPointsDocument, current: User = Depends(require_resin_tools_user)
+) -> ModelUploadResponse:
+    """Store hand-placed support points (in the coordinates of the model's file) for a resin print of the model, replacing any before."""
+    return _store_support_points(model_id, current, body.model_dump())
+
+
+@router.delete("/{model_id}/support-points", response_model=ModelUploadResponse)
+def delete_support_points(model_id: str, current: User = Depends(require_resin_tools_user)) -> ModelUploadResponse:
+    """Forget the hand-placed support points of a model: a resin print places its own again."""
+    return _store_support_points(model_id, current, None)

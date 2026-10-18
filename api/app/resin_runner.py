@@ -96,6 +96,18 @@ def _material_file_for(
     return path
 
 
+def _support_point_args(scratch: Path, support_points: dict[str, Any] | None, points_output: Path | None) -> list[str]:
+    """The slicer's options for hand-placed support points (a file of them to use) and for writing the points it ends up with."""
+    args: list[str] = []
+    if support_points is not None:
+        points_path = scratch / "support_points.json"
+        points_path.write_text(json.dumps(support_points))
+        args += ["--sla-support-points-input", str(points_path)]
+    if points_output is not None:
+        args += ["--sla-support-points-output", str(points_output)]
+    return args
+
+
 def run_resin_slice(
     *,
     model_path: Path,
@@ -107,6 +119,8 @@ def run_resin_slice(
     timeout_s: float | None = None,
     user_id: str | None = None,
     archive_format: str | None = None,
+    support_points: dict[str, Any] | None = None,
+    points_output: Path | None = None,
 ) -> SliceResult:
     printer = resin_module.catalog.get_printer(printer_name, user_id)
     preset = resin_module.catalog.printer_preset(printer_name, user_id)
@@ -147,6 +161,7 @@ def run_resin_slice(
         ]
         if material_file is not None:
             cmd += ["--load-filaments", str(material_file)]
+        cmd += _support_point_args(scratch, support_points, points_output)
         if model_path.suffix.lower() == ".3mf":
             cmd.append("--allow-newer-file=1")
         cmd.append(str(model_path))
@@ -275,5 +290,47 @@ def run_hollow(
             float(info.get("volume_after_mm3", 0)),
             int(float(info.get("triangle_count", 0))),
         )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+class SupportPointsError(ValueError):
+    """A model the slicer could not place support points on, with the reason in words the user can act on."""
+
+
+def run_support_points(
+    *,
+    model_path: Path,
+    printer_name: str,
+    resin_name: str | None,
+    setting_overrides: dict[str, Any],
+    user_id: str | None = None,
+    support_points: dict[str, Any] | None = None,
+    timeout_s: float = 600.0,
+) -> dict[str, Any]:
+    """The support points the slicer would build supports for (generated, or `support_points` given back), without slicing.
+
+    The points are in the coordinates the model file has: {"objects": [{"points": [{"x", "y", "z", "radius", "type"}]}]}.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix="headless-orca-points-"))
+    try:
+        target = scratch / "points.json"
+        result = run_resin_slice(
+            model_path=model_path,
+            output_dir=scratch / "out",
+            printer_name=printer_name,
+            resin_name=resin_name,
+            setting_overrides=setting_overrides,
+            timeout_s=timeout_s,
+            user_id=user_id,
+            support_points=support_points,
+            points_output=target,
+        )
+        if not result.succeeded or not target.is_file():
+            info = result.result_json or {}
+            raise SupportPointsError(
+                str(info.get("error_string") or result.stderr.strip() or f"exit code {result.return_code}")
+            )
+        return json.loads(target.read_text())
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
