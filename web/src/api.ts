@@ -279,8 +279,9 @@ export function listResinPrinters(): Promise<ResinPrinterInfo[]> {
 	return request('/resin/printers');
 }
 
-export function listResins(): Promise<ResinInfo[]> {
-	return request('/resin/resins');
+/** The resins; with a printer, only those that have settings for it. */
+export function listResins(printer?: string): Promise<ResinInfo[]> {
+	return request(printer ? `/resin/resins?printer=${encodeURIComponent(printer)}` : '/resin/resins');
 }
 
 export function startLayerPreview(jobId: string): Promise<LayerPreviewStatus> {

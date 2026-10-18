@@ -142,9 +142,11 @@ class ResinCatalog:
         self._printers: list[dict[str, Any]] = []
         self._materials: list[dict[str, Any]] = []
         self._materials_by_name: dict[str, dict[str, Any]] = {}
+        self._rows_of: dict[str, list[dict[str, Any]]] = {}
 
     def load(self) -> None:
         self._printers, self._materials, self._materials_by_name = [], [], {}
+        self._rows_of = {}
         index = self._dir / "index.json"
         if index.is_file():
             try:
@@ -240,10 +242,24 @@ class ResinCatalog:
             return None
 
     # ---- resins
-    def resins(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        """The built-in resins, then the user's own."""
+    def resins(self, user_id: str | None = None, printer: str | None = None) -> list[dict[str, Any]]:
+        """The built-in resins, then the user's own; with `printer`, only those with a row of settings that fits it."""
         mine = user_resins.list(user_id) if user_id else []
-        return [{k: v for k, v in m.items() if k != "file"} for m in self._materials] + mine
+        listed = [{k: v for k, v in m.items() if k != "file"} for m in self._materials] + mine
+        if printer is None:
+            return listed
+        names = self.settings_names(printer, user_id)
+        return [r for r in listed if any(_row_score(row, names) > 0 for row in self._rows(r["name"], user_id))]
+
+    def _rows(self, name: str, user_id: str | None) -> list[dict[str, Any]]:
+        """The settings rows of a resin (those of a built-in one are read once)."""
+        if name in self._materials_by_name and name in self._rows_of:
+            return self._rows_of[name]
+        material = self.get_resin(name, user_id) or {}
+        rows = [r for r in material.get("settings", []) if isinstance(r, dict)]
+        if name in self._materials_by_name:
+            self._rows_of[name] = rows
+        return rows
 
     def get_resin(self, name: str, user_id: str | None = None) -> dict[str, Any] | None:
         entry = self._materials_by_name.get(name)
