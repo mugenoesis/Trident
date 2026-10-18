@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from .. import resin as resin_module
-from .. import resin_import
-from ..auth import require_user
+from .. import resin_import, resin_runner
+from ..auth import require_hollow_user, require_user
 from ..resin_printers_user import build_preset, user_resin_printers
 from ..resin_user import user_resins
 from ..schemas import (
@@ -245,3 +249,60 @@ async def import_my_resins(
         )
         imported.append(ResinInfo(**saved))
     return ResinImportResult(imported=imported, skipped=skipped)
+
+
+_HOLLOW_SUFFIXES = {".stl", ".3mf", ".obj"}
+_MAX_HOLLOW_BYTES = 200 * 1024 * 1024
+
+
+@router.post("/hollow")
+async def hollow_model(
+    file: UploadFile = File(...),
+    wall_thickness: float = Form(2.0, ge=0.5, le=20.0),
+    quality: float = Form(0.5, gt=0, le=1.0),
+    current: User = Depends(require_hollow_user),
+) -> Response:
+    """The model with a cavity in it, as an STL in the place the model is: a wall of `wall_thickness` mm, at `quality` (0 to 1).
+
+    A hollow model uses a fraction of the resin; it needs drain holes (the model's maker adds them) to be printed.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _HOLLOW_SUFFIXES:
+        raise HTTPException(
+            status_code=400, detail=f"Send an STL, 3MF or OBJ file, not {suffix or 'a file with no type'!r}"
+        )
+    scratch = Path(tempfile.mkdtemp(prefix="headless-orca-hollow-in-"))
+    try:
+        source = scratch / f"model{suffix}"
+        size = 0
+        with source.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > _MAX_HOLLOW_BYTES:
+                    raise HTTPException(status_code=413, detail="File too large")
+                out.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="The file is empty")
+        target = scratch / "hollow.stl"
+        try:
+            result = await run_in_threadpool(
+                resin_runner.run_hollow,
+                model_path=source,
+                output_path=target,
+                wall_thickness=wall_thickness,
+                quality=quality,
+            )
+        except resin_runner.HollowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        stem = Path(file.filename or "model").stem
+        return Response(
+            content=target.read_bytes(),
+            media_type="model/stl",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}-hollow.stl"',
+                "X-Volume-Before-Mm3": str(result.volume_before_mm3),
+                "X-Volume-After-Mm3": str(result.volume_after_mm3),
+            },
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

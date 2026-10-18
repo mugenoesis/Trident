@@ -169,3 +169,34 @@ def test_a_printer_made_by_the_user_is_sliced_for_by_the_real_slicer(client):
     assert archive.status_code == 200
     assert archive.headers["content-disposition"].endswith('.goo"')
     assert client.delete("/resin/my-printers/My test printer").status_code == 200
+
+
+def _stl_volume(data: bytes) -> tuple[float, int]:
+    """The volume and triangle count of a binary STL."""
+    import struct
+
+    (count,) = struct.unpack_from("<I", data, 80)
+    assert 84 + 50 * count == len(data), "not a binary STL"
+    total = 0.0
+    for i in range(count):
+        ax, ay, az, bx, by, bz, cx, cy, cz = struct.unpack_from("<9f", data, 84 + 50 * i + 12)
+        total += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6
+    return total, count
+
+
+def test_a_model_is_hollowed_by_the_real_slicer(client):
+    files = {"file": ("cube.stl", io.BytesIO(_cube_stl(20.0)), "model/stl")}
+    resp = client.post("/resin/hollow", files=files, data={"wall_thickness": "2"})
+    assert resp.status_code == 200, resp.text
+    volume, triangles = _stl_volume(resp.content)
+    assert 3000 < volume < 5000  # the walls of a 20 mm cube with a 16 mm cavity: about 3900 of 8000
+    assert triangles > 12
+    assert float(resp.headers["x-volume-before-mm3"]) == pytest.approx(8000, rel=0.01)
+    assert float(resp.headers["x-volume-after-mm3"]) == pytest.approx(volume, rel=0.01)
+
+
+def test_a_model_too_thin_to_hollow_is_refused_by_the_real_slicer(client):
+    files = {"file": ("tiny.stl", io.BytesIO(_cube_stl(3.0)), "model/stl")}
+    resp = client.post("/resin/hollow", files=files, data={"wall_thickness": "2"})
+    assert resp.status_code == 422
+    assert "thin" in resp.json()["detail"]

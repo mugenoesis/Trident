@@ -23,12 +23,12 @@ const check = (condition, message) => {
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
-console.log(`[1/6] Loading ${BASE_URL} and choosing single-user mode ...`);
+console.log(`[1/7] Loading ${BASE_URL} and choosing single-user mode ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: 'Just me (no login)' }).click();
 await page.waitForSelector('text=TridentSlicer');
 
-console.log('[2/6] Making an upload-only key ...');
+console.log('[2/7] Making an upload-only key ...');
 await page.getByRole('button', { name: 'Settings' }).click();
 await page.getByRole('button', { name: 'API keys…' }).click();
 const panel = page.locator('.settings-panel');
@@ -43,7 +43,7 @@ await panel.getByText('Uploads models only').waitFor();
 check(await panel.getByText('Uploads models only').isVisible(), 'the list shows the key with its access');
 check(!(await page.content()).includes(secret), 'the list does not show the secret again');
 
-console.log('[3/6] Uploading with the key, and nothing else ...');
+console.log('[3/7] Uploading with the key, and nothing else ...');
 const upload = await page.request.post(`${BASE_URL}/models`, {
 	headers: { Authorization: `Bearer ${secret}` },
 	multipart: { file: { name: 'cube.stl', mimeType: 'model/stl', buffer: readFileSync(path.resolve('fixtures/test-cube.stl')) } },
@@ -53,13 +53,13 @@ const modelId = (await upload.json()).model_id;
 const jobs = await page.request.get(`${BASE_URL}/jobs`, { headers: { Authorization: `Bearer ${secret}` } });
 check(jobs.status() === 403, 'the same key may not list jobs');
 
-console.log('[4/6] Opening the model from the address ...');
+console.log('[4/7] Opening the model from the address ...');
 await page.goto(`${BASE_URL}/?model=${modelId}`, { waitUntil: 'networkidle' });
 await page.waitForSelector('text=Ready to slice', { timeout: 15000 });
 check(!page.url().includes('model='), 'the address no longer asks for the model (a reload will not open it again)');
 check((await page.locator('.viewer canvas').count()) > 0, 'the model is in the viewer');
 
-console.log('[5/6] Revoking the key ...');
+console.log('[5/7] Revoking the key ...');
 await page.getByRole('button', { name: 'Settings' }).click();
 await page.getByRole('button', { name: 'API keys…' }).click();
 const second = page.locator('.settings-panel');
@@ -72,10 +72,34 @@ const after = await page.request.post(`${BASE_URL}/models`, {
 });
 check(after.status() === 401, 'a revoked key stops working at once');
 
-console.log('[6/6] A model that is not there ...');
+console.log('[6/7] A model that is not there ...');
 await page.goto(`${BASE_URL}/?model=nosuchmodel`, { waitUntil: 'networkidle' });
 await page.waitForSelector('text=TridentSlicer');
 check(!page.url().includes('model='), 'a model that cannot be found still clears the address');
+
+console.log("[7/7] A key that may also hollow models (Holecraft's Hollow button) ...");
+await page.goto(BASE_URL, { waitUntil: 'networkidle' });
+await page.getByRole('button', { name: 'Settings' }).click();
+await page.getByRole('button', { name: 'API keys…' }).click();
+const third = page.locator('.settings-panel');
+await third.getByLabel('Name', { exact: true }).fill('Holecraft hollow');
+await third.locator('select').selectOption({ label: 'Holecraft: upload models and hollow them' });
+await third.getByRole('button', { name: 'Make key' }).click();
+const hollowKey = await third.getByLabel('The new API key').inputValue();
+check(
+	await third.getByText('Access: uploads models and hollows them. It cannot read, slice or delete anything.').isVisible(),
+	'it says what a hollow key can do',
+);
+await third.getByRole('button', { name: 'Done' }).click();
+await third.getByText('Uploads and hollows models').waitFor();
+check(await third.getByText('Uploads and hollows models').isVisible(), 'the list shows its access');
+const hollowJobs = await page.request.get(`${BASE_URL}/jobs`, { headers: { Authorization: `Bearer ${hollowKey}` } });
+check(hollowJobs.status() === 403, 'a hollow key may not list jobs');
+const hollowUpload = await page.request.post(`${BASE_URL}/models`, {
+	headers: { Authorization: `Bearer ${hollowKey}` },
+	multipart: { file: { name: 'cube.stl', mimeType: 'model/stl', buffer: readFileSync(path.resolve('fixtures/test-cube.stl')) } },
+});
+check(hollowUpload.ok(), 'a hollow key uploads a model');
 
 await browser.close();
 console.log('API keys check passed');

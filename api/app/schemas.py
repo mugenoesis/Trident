@@ -342,13 +342,13 @@ class AuthStatus(BaseModel):
 
 class ApiKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    scope: Literal["upload", "full"]
+    scope: Literal["upload", "hollow", "full"]
 
 
 class ApiKeyInfo(BaseModel):
     id: str
     name: str
-    scope: Literal["upload", "full"]
+    scope: Literal["upload", "hollow", "full"]
     created_at: str
     last_used_at: str | None = None
 

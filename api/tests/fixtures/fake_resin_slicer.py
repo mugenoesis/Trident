@@ -35,6 +35,7 @@ parser.add_argument("--outputdir", required=True)
 parser.add_argument("--load-settings")
 parser.add_argument("--load-filaments")
 parser.add_argument("--allow-newer-file")
+parser.add_argument("--sla-hollow-output")
 parser.add_argument("model", nargs="?")
 args, _unknown = parser.parse_known_args()
 
@@ -55,6 +56,37 @@ material = json.loads(pathlib.Path(args.load_filaments).read_text()) if args.loa
         }
     )
 )
+
+if args.sla_hollow_output:
+    # hollowing instead of slicing: a wall of 13 is "too thin" (to test a refusal); otherwise the file names what it was asked for
+    wall = process.get("hollowing_min_thickness")
+    quality = process.get("hollowing_quality", "")
+    print("sla 10% Hollowing model", flush=True)
+    if wall == "13":
+        (out / "result.json").write_text(
+            json.dumps({"return_code": -51, "error_string": "The model is too thin for a wall of 13 mm"})
+        )
+        print("hollowing failed: The model is too thin for a wall of 13 mm", file=sys.stderr)
+        sys.exit(-51 & 0xFF)
+    target = pathlib.Path(args.sla_hollow_output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(
+        f"solid fake hollow wall={wall} quality={quality} model={pathlib.Path(args.model).suffix}\n".encode()
+    )
+    (out / "result.json").write_text(
+        json.dumps(
+            {
+                "return_code": 0,
+                "error_string": "",
+                "printer_technology": "SLA",
+                "hollow_file": str(target),
+                "triangle_count": "1234",
+                "volume_before_mm3": "8000.000000",
+                "volume_after_mm3": "3900.000000",
+            }
+        )
+    )
+    sys.exit(0)
 
 print("sla 10% Slicing", flush=True)
 print("sla 80% Writing the archive", flush=True)

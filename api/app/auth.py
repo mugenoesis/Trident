@@ -105,8 +105,13 @@ def require_user(request: Request) -> User:
 
 
 def require_upload_user(request: Request) -> User:
-    """Like require_user, and also accepts an upload-only API key (the one endpoint that key is for)."""
-    return _key_user(request, ("full", "upload")) or _session_user(request)
+    """Like require_user, and also accepts an upload-only API key (the endpoint that key is for) and a hollow key."""
+    return _key_user(request, ("full", "upload", "hollow")) or _session_user(request)
+
+
+def require_hollow_user(request: Request) -> User:
+    """Like require_user, and also accepts a hollow API key (Holecraft's Hollow button: it may upload a model and hollow it, nothing else)."""
+    return _key_user(request, ("full", "hollow")) or _session_user(request)
 
 
 def require_session_user(request: Request) -> User:

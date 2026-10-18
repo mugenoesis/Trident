@@ -2,23 +2,27 @@ import type { ApiKeyInfo, ApiKeyScope } from './types';
 
 // How the API keys panel words a key (kept apart from the component so it is plain functions).
 
-export const SCOPES: readonly ApiKeyScope[] = ['upload', 'full'];
+export const SCOPES: readonly ApiKeyScope[] = ['upload', 'hollow', 'full'];
 
 /** What a key may do, as shown when choosing one. */
 export function accessChoice(scope: ApiKeyScope): string {
-	return scope === 'upload' ? 'Holecraft: upload models only' : 'Full access: every API';
+	if (scope === 'upload') return 'Holecraft: upload models only';
+	if (scope === 'hollow') return 'Holecraft: upload models and hollow them';
+	return 'Full access: every API';
 }
 
 /** What a key may do, as shown in the list. */
 function accessSummary(scope: ApiKeyScope): string {
-	return scope === 'upload' ? 'Uploads models only' : 'Full access';
+	if (scope === 'upload') return 'Uploads models only';
+	if (scope === 'hollow') return 'Uploads and hollows models';
+	return 'Full access';
 }
 
 /** What a key made for a scope can and cannot do, said once it has been made. */
 export function accessNote(scope: ApiKeyScope): string {
-	return scope === 'upload'
-		? 'Access: uploads models only. It cannot read, slice or delete anything.'
-		: 'Access: every API except making keys. Keep it as private as a password.';
+	if (scope === 'upload') return 'Access: uploads models only. It cannot read, slice or delete anything.';
+	if (scope === 'hollow') return 'Access: uploads models and hollows them. It cannot read, slice or delete anything.';
+	return 'Access: every API except making keys. Keep it as private as a password.';
 }
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
