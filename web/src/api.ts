@@ -333,8 +333,10 @@ export function deleteMyResin(name: string): Promise<{ ok: boolean }> {
 	return request(`/resin/my-resins/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
-export function getResinChoice(resin: string, printer: string, layerHeight: number): Promise<ResinChoice> {
+/** The values of a resin for a printer; with `like`, a resin with no settings for it answers a starting point from another printer's row. */
+export function getResinChoice(resin: string, printer: string, layerHeight: number, like = false): Promise<ResinChoice> {
 	const query = new URLSearchParams({ resin, printer, layer_height: String(layerHeight) });
+	if (like) query.set('like', 'true');
 	return request(`/resin/choice?${query}`);
 }
 

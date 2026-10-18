@@ -715,6 +715,9 @@ class ResinChoice(BaseModel):
     # Whether the row is for the layer height asked, or the nearest one the resin has.
     exact_layer_height: bool
     settings: dict[str, Any]
+    # For a starting point (match "other"): the printer the row is for and its numbers, to show as a reference.
+    reference_printer: str | None = None
+    reference_settings: dict[str, Any] = Field(default_factory=dict)
     source: str = ""
     retrieved: str = ""
     notes: str = ""

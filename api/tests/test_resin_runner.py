@@ -110,3 +110,24 @@ def test_the_scratch_files_are_removed(tmp_path, resin_dir):
     before = set(Path(tempfile.gettempdir()).glob(pattern))
     _slice(tmp_path)
     assert set(Path(tempfile.gettempdir()).glob(pattern)) == before
+
+
+def test_a_resin_with_no_settings_for_the_printer_is_not_handed_to_the_slicer(tmp_path, resin_dir):
+    """The values typed for it are in the overrides; the slicer refuses a material that has nothing for the printer."""
+    other = {
+        "type": "material",
+        "name": "Other printer resin",
+        "vendor": "Test",
+        "settings": [
+            {"printers": ["Elegoo Old"], "layer_height": 0.05, "exposure_time": 8, "initial_exposure_time": 50}
+        ],
+    }
+    (resin_dir / "materials" / "Test" / "Other.json").write_text(json.dumps(other))
+    index = json.loads((resin_dir / "materials-index.json").read_text())
+    index["materials"].append({"name": "Other printer resin", "vendor": "Test", "file": "materials/Test/Other.json"})
+    (resin_dir / "materials-index.json").write_text(json.dumps(index))
+    resin_module.catalog.load()
+
+    _slice(tmp_path, resin_name="Other printer resin", setting_overrides={"layer_height": 0.05, "exposure_time": 3})
+    assert _args(tmp_path)["material"] is None
+    assert _args(tmp_path)["process"]["exposure_time"] == "3"

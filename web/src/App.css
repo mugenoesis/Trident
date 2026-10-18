@@ -2341,3 +2341,18 @@
 	text-align: left;
 	margin: 0;
 }
+
+/* A resin with no settings for the printer: its note is a heads-up, and the box that also lists such resins */
+.resin-note.starting {
+	background: #3a3320;
+	border: 1px solid #b8962e;
+	color: #f1e6c4;
+}
+.resin-show-all {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	margin: 8px 0;
+	color: var(--muted, #c9ced6);
+}

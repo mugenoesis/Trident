@@ -108,6 +108,19 @@ def _support_point_args(scratch: Path, support_points: dict[str, Any] | None, po
     return args
 
 
+def _material_fits(resin_name: str, printer_name: str, user_id: str | None, overrides: dict[str, Any]) -> bool:
+    """Whether the resin has a row of settings the slicer can use for the printer at the layer height of the job."""
+    catalog = resin_module.catalog
+    material = catalog.get_resin(resin_name, user_id)
+    if material is None:
+        return False
+    try:
+        height = float(overrides.get("layer_height", 0.05))
+    except (TypeError, ValueError):
+        height = 0.05
+    return resin_module.choose_row(material, catalog.settings_names(printer_name, user_id), height) is not None
+
+
 def run_resin_slice(
     *,
     model_path: Path,
@@ -142,6 +155,12 @@ def run_resin_slice(
     output_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="headless-orca-resin-"))
     try:
+        if (
+            resin_name
+            and material_file is not None
+            and not _material_fits(resin_name, printer_name, user_id, setting_overrides)
+        ):
+            material_file = None  # no row for this printer: the values typed for it are in the overrides, and the slicer refuses such a material
         if resin_name and material_file is not None:
             material_file = _material_file_for(material_file, resin_name, printer_name, user_id, scratch)
         printer_path = scratch / "printer.json"

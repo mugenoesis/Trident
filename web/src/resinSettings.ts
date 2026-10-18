@@ -148,7 +148,28 @@ export function formatMl(ml: number): string {
 }
 
 // "Using Siraya Tech's published settings for 0.05 mm layers. ..." -- what a resin's row is for.
+// What a resin with no settings for the printer offers: the resin's own values carried over, and the other printer's numbers as a reference.
+function startingPointNote(choice: ResinChoice, vendor: string, printer: ResinPrinterInfo): string {
+	const ref = choice.reference_settings;
+	const numbers =
+		ref.exposure_time !== undefined && ref.initial_exposure_time !== undefined
+			? ` (${choice.reference_printer} used ${ref.exposure_time} s and ${ref.initial_exposure_time} s)`
+			: '';
+	return `No settings for the ${printer.model} yet. Starting from ${choice.reference_printer}'s values for this ${vendor} resin at ${choice.layer_height} mm: the bottom and transition layers are carried over. Exposure depends on your printer's light, so it is yours to fill in${numbers}. Test it, then make your own resin based on this config to keep it for the ${printer.model}.`;
+}
+
+// What an empty value box hints at for a starting point: the other printer's number, or that the printer's own default is used.
+export function startingPointHint(choice: ResinChoice | null, key: string, unit: string): string | undefined {
+	if (choice?.match !== 'other') return undefined;
+	const value = choice.reference_settings[key];
+	if (key === 'exposure_time' || key === 'initial_exposure_time')
+		return value === undefined ? undefined : `${value} ${unit} on ${choice.reference_printer}`;
+	if (key === 'lift_distance' || key === 'lift_speed') return "printer's own";
+	return undefined;
+}
+
 export function choiceNote(choice: ResinChoice, vendor: string, printer: ResinPrinterInfo): string {
+	if (choice.match === 'other') return startingPointNote(choice, vendor, printer);
 	if (vendor === MY_RESINS) return `Using your own values for ${choice.layer_height} mm layers.`;
 	const layers = `${choice.layer_height} mm layers`;
 	const layerPart = choice.exact_layer_height ? `for ${layers}` : `for ${layers} (the nearest to the layer height chosen)`;
