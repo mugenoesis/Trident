@@ -56,7 +56,7 @@ machine that has no slicer installed.
 - **Single-user or multi-user.** Run it just for yourself with no login, or switch to accounts.
 - **API keys.** Another program can use Trident without a login: make a key in the settings menu (the cog, **API keys…**).
   A **Holecraft** key may only upload models, so a program such as [Holecraft](https://github.com/mugenoesis/holecraft) can
-  send a design here and open it (the page opens at `/?model=<id>`); a **full-access** key may use every API. A key is shown
+  send a design here and open it (the page opens at `/?model=<id>`); a **Holecraft hollow** key may also have models hollowed (`POST /resin/hollow`: a wall of 0.5 to 20 mm, answered with the hollow model as an STL), which is what Holecraft's Hollow button uses; a **full-access** key may use every API. A key is shown
   once when you make it, only a hash is stored, and it can be revoked at any time. Send it as `Authorization: Bearer <key>`.
 
 <p align="center">

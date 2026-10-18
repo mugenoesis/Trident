@@ -201,3 +201,79 @@ def _run(
         stderr=stderr,
         used_result_json=result_json is not None,
     )
+
+
+class HollowError(ValueError):
+    """A model that cannot be hollowed, with the reason in words the user can act on."""
+
+
+class HollowResult:
+    def __init__(self, volume_before_mm3: float, volume_after_mm3: float, triangles: int):
+        self.volume_before_mm3 = volume_before_mm3
+        self.volume_after_mm3 = volume_after_mm3
+        self.triangles = triangles
+
+
+# Hollowing needs no particular printer, but the slicer reaches it through the resin path, which wants a resin printer profile.
+_HOLLOW_PRINTER = {
+    "type": "machine",
+    "from": "user",
+    "name": "hollowing",
+    "printer_technology": "SLA",
+    "display_width": "120",
+    "display_height": "68",
+    "display_pixels_x": "2560",
+    "display_pixels_y": "1440",
+    "printable_height": "150",
+}
+
+
+def run_hollow(
+    *, model_path: Path, output_path: Path, wall_thickness: float, quality: float, timeout_s: float = 600.0
+) -> HollowResult:
+    """Hollow a model with the slicer: a copy with a cavity in it, written as a binary STL in the place the model is."""
+    scratch = Path(tempfile.mkdtemp(prefix="headless-orca-hollow-"))
+    try:
+        printer = scratch / "printer.json"
+        printer.write_text(json.dumps(_HOLLOW_PRINTER))
+        process = scratch / "process.json"
+        process.write_text(
+            json.dumps(
+                {
+                    "type": "process",
+                    "from": "user",
+                    "name": "hollowing",
+                    "hollowing_min_thickness": f"{wall_thickness:g}",
+                    "hollowing_quality": f"{quality:g}",
+                }
+            )
+        )
+        cmd = [
+            settings.orcaslicer_bin,
+            "--slice",
+            "0",
+            "--datadir",
+            str(settings.orcaslicer_datadir),
+            "--outputdir",
+            str(scratch / "out"),
+            "--load-settings",
+            f"{printer};{process}",
+            "--sla-hollow-output",
+            str(output_path),
+        ]
+        if model_path.suffix.lower() == ".3mf":
+            cmd.append("--allow-newer-file=1")
+        cmd.append(str(model_path))
+        result = _run(cmd, scratch / "out", None, timeout_s)
+        info = result.result_json or {}
+        if not result.succeeded or not output_path.is_file():
+            raise HollowError(
+                str(info.get("error_string") or result.stderr.strip() or f"exit code {result.return_code}")
+            )
+        return HollowResult(
+            float(info.get("volume_before_mm3", 0)),
+            float(info.get("volume_after_mm3", 0)),
+            int(float(info.get("triangle_count", 0))),
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

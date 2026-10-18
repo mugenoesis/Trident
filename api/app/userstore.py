@@ -79,7 +79,7 @@ class ApiKey:
     id: str
     user_id: str
     name: str
-    scope: str  # "upload" (may only upload a model) or "full" (every API except managing keys)
+    scope: str  # "upload" (may only upload a model), "hollow" (may upload and hollow a model) or "full" (every API except managing keys)
     created_at: str
     last_used_at: str | None = None
 
