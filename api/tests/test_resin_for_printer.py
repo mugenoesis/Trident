@@ -58,7 +58,9 @@ def test_a_row_for_a_makers_whole_range_fits_its_printers(client, tmp_path):
                 "type": "material",
                 "name": "Vendor resin",
                 "vendor": "Test",
-                "settings": [{"printers": ["Elegoo *"], "layer_height": 0.05, "exposure_time": 3, "initial_exposure_time": 30}],
+                "settings": [
+                    {"printers": ["Elegoo *"], "layer_height": 0.05, "exposure_time": 3, "initial_exposure_time": 30}
+                ],
             }
         )
     )
