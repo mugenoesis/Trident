@@ -42,27 +42,44 @@ function storedTechnology(): Technology {
 	}
 }
 
-// Loads the resin printers and resins once, the first time resin mode is on.
-function useResinCatalog(active: boolean) {
+// Loads the resin printers once, the first time resin mode is on, and the resins that have settings for the printer chosen (all of them while there is none).
+function useResinCatalog(active: boolean, printerName: string) {
 	const [printers, setPrinters] = useState<ResinPrinterInfo[]>([]);
 	const [resins, setResins] = useState<ResinInfo[]>([]);
 	const [formats, setFormats] = useState<ResinFormat[]>([]);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
+	// The printer the resins in the list are for, so a resin that is not in it is only dropped once its list has arrived.
+	const [resinsFor, setResinsFor] = useState<string | null>(null);
+	const printerRef = useRef(printerName);
+	printerRef.current = printerName;
 	const loaded = useRef(false);
 	useEffect(() => {
 		if (!active || loaded.current) return;
 		loaded.current = true;
-		Promise.all([listResinPrinters(), listResins(), listResinFormats()])
-			.then(([p, r, f]) => {
+		Promise.all([listResinPrinters(), listResinFormats()])
+			.then(([p, f]) => {
 				setPrinters(p);
-				setResins(r);
 				setFormats(f);
 			})
 			.catch((err: Error) => setCatalogError(err.message));
 	}, [active]);
-	const reloadResins = useCallback(() => listResins().then(setResins), []);
+	useEffect(() => {
+		if (!active) return;
+		let current = true;
+		listResins(printerName || undefined)
+			.then((r) => {
+				if (!current) return;
+				setResins(r);
+				setResinsFor(printerName);
+			})
+			.catch((err: Error) => current && setCatalogError(err.message));
+		return () => {
+			current = false;
+		};
+	}, [active, printerName]);
+	const reloadResins = useCallback(() => listResins(printerRef.current || undefined).then(setResins), []);
 	const reloadPrinters = useCallback(() => listResinPrinters().then(setPrinters), []);
-	return { printers, resins, formats, catalogError, reloadResins, reloadPrinters };
+	return { printers, resins, resinsFor, formats, catalogError, reloadResins, reloadPrinters };
 }
 
 // The resin's own values for the printer and layer height chosen, fetched when any of them changes (and so replacing edits made to the old ones).
@@ -122,9 +139,14 @@ function useResinJob() {
 // The resin side of the main screen: which printer and resin, the values to slice with, and the job that slices them.
 export function useResin(modelId: string | null) {
 	const [technology, setTechnologyState] = useState<Technology>(storedTechnology);
-	const catalog = useResinCatalog(technology === 'resin');
 	const [printerName, setPrinterName] = useState('');
+	const catalog = useResinCatalog(technology === 'resin', printerName);
 	const [resinName, setResinName] = useState('');
+	// a resin the chosen printer has no settings for is not kept chosen once the printer's list has arrived
+	const { resins: listed, resinsFor } = catalog;
+	useEffect(() => {
+		if (resinName && resinsFor === printerName && !listed.some((r) => r.name === resinName)) setResinName('');
+	}, [resinName, resinsFor, printerName, listed]);
 	const [process, setProcess] = useState<ResinProcess>(DEFAULT_RESIN_PROCESS);
 	const { choice, choiceError, values, setValues, restored } = useResinChoice(printerName, resinName, process.layerHeight);
 	const { job, setJob, sliceError, setSliceError } = useResinJob();

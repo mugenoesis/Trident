@@ -36,8 +36,13 @@ def list_resin_printers(current: User = Depends(require_resin_tools_user)) -> li
 
 
 @router.get("/resins", response_model=list[ResinInfo])
-def list_resins(current: User = Depends(require_user)) -> list[ResinInfo]:
-    return [ResinInfo(**r) for r in resin_module.catalog.resins(current.id)]
+def list_resins(
+    printer: str | None = Query(None, description="Only the resins that have settings for this printer"),
+    current: User = Depends(require_user),
+) -> list[ResinInfo]:
+    if printer is not None and resin_module.catalog.get_printer(printer, current.id) is None:
+        raise HTTPException(status_code=404, detail="Unknown resin printer")
+    return [ResinInfo(**r) for r in resin_module.catalog.resins(current.id, printer)]
 
 
 @router.get("/choice", response_model=ResinChoice)
