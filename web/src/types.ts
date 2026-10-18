@@ -516,3 +516,9 @@ export interface MyResinPrinterRequest {
 	mirror_y: boolean | null;
 	rectangular_pixels: boolean;
 }
+
+// What came of importing a resin profile file: the resins saved as the user's own, and any that could not be.
+export interface ResinImportResult {
+	imported: ResinInfo[];
+	skipped: { name: string; reason: string }[];
+}

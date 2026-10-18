@@ -2,13 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from .. import resin as resin_module
+from .. import resin_import
 from ..auth import require_user
 from ..resin_printers_user import build_preset, user_resin_printers
 from ..resin_user import user_resins
-from ..schemas import MyResinPrinterRequest, MyResinRequest, ResinChoice, ResinFormat, ResinInfo, ResinPrinterInfo
+from ..schemas import (
+    MyResinPrinterRequest,
+    MyResinRequest,
+    ResinChoice,
+    ResinFormat,
+    ResinImportResult,
+    ResinImportSkipped,
+    ResinInfo,
+    ResinPrinterInfo,
+)
 from ..userstore import User
 
 router = APIRouter(prefix="/resin", tags=["resin"])
@@ -167,3 +177,71 @@ def delete_my_printer(name: str, current: User = Depends(require_user)) -> dict[
     if not user_resin_printers.delete(current.id, name):
         raise HTTPException(status_code=404, detail="Not one of your printers")
     return {"ok": True}
+
+
+_MAX_IMPORT_BYTES = 1024 * 1024
+_CHITUBOX = "Chitubox resin profile"
+_PRUSASLICER = "PrusaSlicer material profile"
+
+
+def _parse_import(filename: str, text: str) -> tuple[list[dict[str, Any]], str]:
+    """The materials in a resin profile file and where they come from; the file's extension decides, else what is in it."""
+    lower = filename.lower()
+    if lower.endswith(".cfg") or (not lower.endswith(".ini") and "normalExposureTime" in text):
+        return [resin_import.from_chitubox_cfg(text)], _CHITUBOX
+    if lower.endswith(".ini") or "[sla_material:" in text:
+        return resin_import.from_prusaslicer_ini(text), _PRUSASLICER
+    raise resin_import.ImportProblem(
+        "I do not recognise this file: it should be a Chitubox resin profile (.cfg) or a PrusaSlicer profile (.ini)"
+    )
+
+
+@router.post("/my-resins/import", response_model=ResinImportResult)
+async def import_my_resins(
+    file: UploadFile = File(...),
+    printer: str = Form(""),
+    current: User = Depends(require_user),
+) -> ResinImportResult:
+    """Save the resin(s) of a Chitubox .cfg or PrusaSlicer .ini as resins of the user's own, for `printer` (any printer when left out)."""
+    raw = await file.read(_MAX_IMPORT_BYTES + 1)
+    if len(raw) > _MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="That file is too big to be a resin profile")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="That is not a text file") from exc
+    target = "*"
+    if printer:
+        info = resin_module.catalog.get_printer(printer, current.id)
+        if info is None:
+            raise HTTPException(status_code=400, detail=f"Unknown resin printer: {printer!r}")
+        target = info["name"]
+    try:
+        materials, source = _parse_import(file.filename or "", text)
+    except resin_import.ImportProblem as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    imported: list[ResinInfo] = []
+    skipped: list[ResinImportSkipped] = []
+    for material in materials:
+        name = material["name"]
+        if resin_module.catalog.is_built_in(name):
+            skipped.append(
+                ResinImportSkipped(
+                    name=name, reason=f"{name!r} is a built-in resin; rename it in the file to import it"
+                )
+            )
+            continue
+        row = dict(material["row"])
+        layer_height = row.pop("layer_height")
+        saved = user_resins.save(
+            current.id,
+            name,
+            target,
+            layer_height,
+            row,
+            None,
+            resin_type=material.get("resin_type"),
+            source=f"Imported from a {source}",
+        )
+        imported.append(ResinInfo(**saved))
+    return ResinImportResult(imported=imported, skipped=skipped)

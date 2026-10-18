@@ -6,6 +6,7 @@ import {
 	deleteMyResin,
 	getJob,
 	getResinChoice,
+	importMyResins,
 	listResinFormats,
 	listResinPrinters,
 	listResins,
@@ -171,6 +172,17 @@ export function useResin(modelId: string | null) {
 		setPrinterName('');
 	}, [printerName, catalog]);
 
+	// Imports the resins of a profile file made for another slicer, for the printer chosen, and chooses the first.
+	const importResinFile = useCallback(
+		(file: File) =>
+			importMyResins(file, printerName).then(async (result) => {
+				await catalog.reloadResins();
+				if (result.imported[0]) setResinName(result.imported[0].name);
+				return result;
+			}),
+		[printerName, catalog],
+	);
+
 	const removeMyResin = useCallback(async () => {
 		await deleteMyResin(resinName);
 		await catalog.reloadResins();
@@ -237,6 +249,7 @@ export function useResin(modelId: string | null) {
 		applySavedResinPrinter,
 		makeMyResin,
 		removeMyResin,
+		importResinFile,
 		saveMyPrinter,
 		removeMyPrinter,
 		layers,

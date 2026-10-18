@@ -26,6 +26,7 @@ import type {
 	ProfileSummary,
 	ResinChoice,
 	ResinFormat,
+	ResinImportResult,
 	ResinInfo,
 	ResinPrinterInfo,
 	SampleModelSummary,
@@ -313,6 +314,14 @@ export function changeMyPrinter(name: string, body: MyResinPrinterRequest): Prom
 
 export function deleteMyPrinter(name: string): Promise<{ ok: boolean }> {
 	return request(`/resin/my-printers/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+// Saves the resins of a Chitubox .cfg or PrusaSlicer .ini as resins of the user's own, for `printer` (any printer when empty).
+export async function importMyResins(file: File, printer: string): Promise<ResinImportResult> {
+	const form = new FormData();
+	form.append('file', file);
+	form.append('printer', printer);
+	return request('/resin/my-resins/import', { method: 'POST', body: form });
 }
 
 export function saveMyResin(body: MyResinRequest): Promise<ResinInfo> {

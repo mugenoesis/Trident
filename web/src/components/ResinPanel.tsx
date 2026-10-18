@@ -21,6 +21,7 @@ import {
 import type { JobRecord } from '../types';
 import MyPrinterControls from './MyPrinterControls';
 import MyResinForm from './MyResinForm';
+import ResinImport from './ResinImport';
 
 function PrinterSection({ r }: { r: ResinState }) {
 	const { printers, printer, printerName, setPrinterName, catalogError } = r;
@@ -119,6 +120,7 @@ function ResinSection({ r }: { r: ResinState }) {
 					))}
 				</select>
 			</Field>
+			<ResinImport printerName={r.printerName} onImport={r.importResinFile} />
 			{choiceError && <div className="job-error">{choiceError}</div>}
 			{choice && printer && (
 				<div className={`resin-note${choice.match === 'exact' && choice.exact_layer_height ? ' good' : ''}`}>

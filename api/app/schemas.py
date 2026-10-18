@@ -745,3 +745,15 @@ class MyResinPrinterRequest(BaseModel):
     mirror_y: bool | None = None
     # A few screens really have pixels that are not square; without this a width, height and pixel count that do not fit are refused.
     rectangular_pixels: bool = False
+
+
+class ResinImportSkipped(BaseModel):
+    name: str
+    reason: str
+
+
+class ResinImportResult(BaseModel):
+    """What came of importing a resin profile file: the resins saved as the user's own, and any that could not be."""
+
+    imported: list[ResinInfo]
+    skipped: list[ResinImportSkipped]
