@@ -8,7 +8,7 @@ interface MyResinFormProps {
 	onDelete: () => Promise<unknown>;
 }
 
-// "Make my own resin from these values…": names the values on screen and keeps them as a resin of the user's own.
+// "Make my own resin based on this config…": names the values on screen and keeps them as a resin of the user's own.
 export default function MyResinForm({ chosenIsMine, canSave, onSave, onDelete }: MyResinFormProps) {
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState('');
@@ -52,7 +52,7 @@ export default function MyResinForm({ chosenIsMine, canSave, onSave, onDelete }:
 				</form>
 			) : (
 				<button type="button" className="link-button" disabled={!canSave} onClick={() => setOpen(true)}>
-					Make my own resin from these values…
+					Make my own resin based on this config…
 				</button>
 			)}
 			{chosenIsMine && (

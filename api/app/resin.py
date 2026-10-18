@@ -43,6 +43,10 @@ ROW_KEYS = (
 )
 
 PRINTER_EXACT, PRINTER_VENDOR, PRINTER_ANY = "exact", "vendor", "any"
+# A row that is for another printer, offered as a starting point
+PRINTER_OTHER = "other"
+# What a starting point from another printer carries over: the resin's own needs, not the printer's light or lift
+CARRIED_KEYS = ("bottom_layer_count", "faded_layers")
 
 
 def _normalise(text: str) -> str:
@@ -125,6 +129,12 @@ def choose_row(material: dict[str, Any], printer_names: list[str], layer_height:
         if best_key is None or key < best_key:
             best, best_key = row, key
     return best
+
+
+def nearest_row(material: dict[str, Any], layer_height: float) -> dict[str, Any] | None:
+    """The row of `material` nearest the layer height, whatever printer it is for (None when it has no rows)."""
+    rows = [r for r in material.get("settings", []) if isinstance(r, dict) and "layer_height" in r]
+    return min(rows, key=lambda r: abs(float(r["layer_height"]) - layer_height), default=None)
 
 
 def match_kind(row: dict[str, Any], printer_names: list[str]) -> str:

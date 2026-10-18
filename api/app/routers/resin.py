@@ -45,14 +45,43 @@ def list_resins(
     return [ResinInfo(**r) for r in resin_module.catalog.resins(current.id, printer)]
 
 
+def _starting_point(resin: str, printer: str, material: dict, layer_height: float) -> ResinChoice:
+    """A resin's nearest row for another printer, as the starting point of settings for this one."""
+    row = resin_module.nearest_row(material, layer_height)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"{resin} has no settings to start from")
+    printers = [p for p in row.get("printers", []) if isinstance(p, str)]
+    return ResinChoice(
+        resin=resin,
+        printer=printer,
+        layer_height=float(row["layer_height"]),
+        match=resin_module.PRINTER_OTHER,
+        exact_layer_height=abs(float(row["layer_height"]) - layer_height) < 0.0005,
+        settings={k: row[k] for k in resin_module.CARRIED_KEYS if k in row},
+        reference_printer=printers[0] if printers else "another printer",
+        reference_settings={k: row[k] for k in resin_module.ROW_KEYS if k in row},
+        source=str(row.get("source", "")),
+        retrieved=str(row.get("retrieved", "")),
+        notes=str(row.get("notes", "")),
+    )
+
+
 @router.get("/choice", response_model=ResinChoice)
 def resin_choice(
     resin: str = Query(...),
     printer: str = Query(...),
     layer_height: float = Query(..., gt=0, le=1),
+    like: bool = Query(
+        False, description="With no settings for the printer, answer a starting point from another printer's row"
+    ),
     current: User = Depends(require_user),
 ) -> ResinChoice:
-    """The row of `resin` the slicer picks for `printer` at `layer_height`."""
+    """The row of `resin` the slicer picks for `printer` at `layer_height`.
+
+    A resin with no row for the printer is a 404, unless `like` asks for a starting point: the resin's own values (how many bottom
+    layers, how many to fade over) from its nearest row for another printer, with that row's numbers as a reference; the printer's
+    values (exposure, lift) are left for the user.
+    """
     material = resin_module.catalog.get_resin(resin, current.id)
     if material is None:
         raise HTTPException(status_code=404, detail="Unknown resin")
@@ -61,6 +90,8 @@ def resin_choice(
         raise HTTPException(status_code=404, detail="Unknown resin printer")
     names = resin_module.catalog.settings_names(printer_info["name"], current.id)
     row = resin_module.choose_row(material, names, layer_height)
+    if row is None and like:
+        return _starting_point(resin, printer, material, layer_height)
     if row is None:
         raise HTTPException(status_code=404, detail=f"{resin} has no settings for {printer}")
     return ResinChoice(

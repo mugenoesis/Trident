@@ -470,15 +470,18 @@ export interface ResinChoice {
 	resin: string;
 	printer: string;
 	layer_height: number;
-	match: 'exact' | 'vendor' | 'any';
+	match: 'exact' | 'vendor' | 'any' | 'other';
 	exact_layer_height: boolean;
 	settings: Record<string, number>;
+	// For a starting point (match 'other', a resin with no settings for the printer): the printer the numbers are from, and its numbers.
+	reference_printer?: string | null;
+	reference_settings: Record<string, number>;
 	source: string;
 	retrieved: string;
 	notes: string;
 }
 
-// "Make my own resin from these values": the resin's values for one printer and layer height, saved under a name.
+// "Make my own resin based on this config": the resin's values for one printer and layer height, saved under a name.
 export interface MyResinRequest {
 	name: string;
 	printer: string;

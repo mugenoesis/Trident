@@ -16,6 +16,7 @@ import {
 	resinDisplayName,
 	SUPPORT_LEVELS,
 	type SupportLevel,
+	startingPointHint,
 	uniqueVendors,
 } from '../resinSettings';
 import type { JobRecord } from '../types';
@@ -88,7 +89,7 @@ function PrinterFacts({ printer }: { printer: NonNullable<ResinState['printer']>
 }
 
 function ResinSection({ r }: { r: ResinState }) {
-	const { resins, resinName, setResinName, printer, choice, choiceError, values, setValues } = r;
+	const { resins, resinName, setResinName, printer, choice, choiceError, values, setValues, showAll, setShowAll } = r;
 	const current = resins.find((x) => x.name === resinName);
 	const vendor = current?.vendor ?? '';
 	const names = resins.filter((x) => x.vendor === vendor);
@@ -120,10 +121,16 @@ function ResinSection({ r }: { r: ResinState }) {
 					))}
 				</select>
 			</Field>
+			<label className="resin-show-all">
+				<input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Also show resins with no settings for
+				this printer
+			</label>
 			<ResinImport printerName={r.printerName} onImport={r.importResinFile} />
 			{choiceError && <div className="job-error">{choiceError}</div>}
 			{choice && printer && (
-				<div className={`resin-note${choice.match === 'exact' && choice.exact_layer_height ? ' good' : ''}`}>
+				<div
+					className={`resin-note${choice.match === 'exact' && choice.exact_layer_height ? ' good' : ''}${choice.match === 'other' ? ' starting' : ''}`}
+				>
 					{choiceNote(choice, vendor, printer)}{' '}
 					{choice.source.startsWith('http') && (
 						<a href={choice.source} target="_blank" rel="noreferrer">
@@ -144,6 +151,7 @@ function ResinSection({ r }: { r: ResinState }) {
 									min="0"
 									step="any"
 									value={values[key]}
+									placeholder={startingPointHint(choice, key, unit)}
 									onChange={(e) => setValues({ ...values, [key]: e.target.value })}
 								/>
 								<span className="resin-unit">{unit}</span>
