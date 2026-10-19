@@ -105,7 +105,9 @@ def test_extruders_with_different_nozzles_say_so():
 
 
 def test_a_bed_centred_on_the_origin_is_said_to_be_centred():
-    result = _cartesian(stepper_x={"position_min": -110, "position_max": 110}, stepper_y={"position_min": -110, "position_max": 110})
+    result = _cartesian(
+        stepper_x={"position_min": -110, "position_max": 110}, stepper_y={"position_min": -110, "position_max": 110}
+    )
     form = result["form"]
     assert (form["width"], form["depth"], form["origin_centre"]) == (220, 220, True)
 
@@ -137,7 +139,11 @@ def test_a_config_with_no_stepper_for_an_axis_is_refused_by_name():
     with pytest.raises(KlipperImportError, match="stepper_y"):
         import_from_klipper(
             {"state": "ready"},
-            {"printer": {"kinematics": "cartesian"}, "stepper_x": {"position_max": 200}, "stepper_z": {"position_max": 200}},
+            {
+                "printer": {"kinematics": "cartesian"},
+                "stepper_x": {"position_max": 200},
+                "stepper_z": {"position_max": 200},
+            },
             [],
         )
 
@@ -154,7 +160,9 @@ def test_a_start_macro_that_takes_temperatures_gets_a_start_line_that_passes_the
 
 
 def test_the_other_common_macro_name_and_spellings_of_the_parameters_are_found():
-    macro = "{% set b = params.BED|float %}{% set n = params.HOTEND_TEMP|float %}{% set c = params.CHAMBER_TEMP|float %}"
+    macro = (
+        "{% set b = params.BED|float %}{% set n = params.HOTEND_TEMP|float %}{% set c = params.CHAMBER_TEMP|float %}"
+    )
     result = _cartesian(**{"gcode_macro print_start": {"gcode": macro}})
     assert result["form"]["start_gcode"] == (
         "PRINT_START BED=[bed_temperature_initial_layer_single] HOTEND_TEMP=[nozzle_temperature_initial_layer] CHAMBER_TEMP=[chamber_temperature]"

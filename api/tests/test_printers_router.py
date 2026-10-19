@@ -426,14 +426,20 @@ def test_klipper_import_answers_a_filled_in_printer_form(client, monkeypatch):
         return _KLIPPER_SNAPSHOT
 
     monkeypatch.setattr(printhost, "read_klipper", fake_read)
-    response = client.post("/printers/klipper-import", json={"print_host": "http://voron.local", "printhost_apikey": "topsecret"})
+    response = client.post(
+        "/printers/klipper-import", json={"print_host": "http://voron.local", "printhost_apikey": "topsecret"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["form"]["name"] == "voron"
     assert (body["form"]["width"], body["form"]["depth"], body["form"]["height"]) == (235, 230, 250)
     assert body["findings"] and body["klipper"]["hostname"] == "voron"
     # it is asked as a Klipper printer, with the address and key as given, and the key never comes back
-    assert seen["host_type"] == "moonraker" and seen["print_host"] == "http://voron.local" and seen["printhost_apikey"] == "topsecret"
+    assert (
+        seen["host_type"] == "moonraker"
+        and seen["print_host"] == "http://voron.local"
+        and seen["printhost_apikey"] == "topsecret"
+    )
     assert "topsecret" not in response.text
 
 

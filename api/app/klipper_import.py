@@ -13,7 +13,16 @@ from typing import Any
 
 # Kinematics whose bed is the range of the x and y steppers; a delta's is a circle of its print radius.
 _RECTANGULAR = frozenset(
-    {"cartesian", "corexy", "corexz", "hybrid_corexy", "hybrid_corexz", "limited_cartesian", "limited_corexy", "limited_corexz"}
+    {
+        "cartesian",
+        "corexy",
+        "corexz",
+        "hybrid_corexy",
+        "hybrid_corexz",
+        "limited_cartesian",
+        "limited_corexy",
+        "limited_corexz",
+    }
 )
 # A bed mesh that covers less than this share of an axis's travel makes the travel look bigger than the bed.
 _MESH_COVERAGE = 0.85
@@ -25,7 +34,16 @@ _END_MACROS = ("end_print", "print_end")
 _PARAMETER_GROUPS = (
     (("BED_TEMP", "BED", "BED_TEMPERATURE", "TEMP_BED", "BED_TEMP_INITIAL"), "[bed_temperature_initial_layer_single]"),
     (
-        ("EXTRUDER_TEMP", "EXTRUDER", "EXTRUDER_TEMPERATURE", "HOTEND_TEMP", "HOTEND", "NOZZLE_TEMP", "NOZZLE", "TEMP_EXTRUDER"),
+        (
+            "EXTRUDER_TEMP",
+            "EXTRUDER",
+            "EXTRUDER_TEMPERATURE",
+            "HOTEND_TEMP",
+            "HOTEND",
+            "NOZZLE_TEMP",
+            "NOZZLE",
+            "TEMP_EXTRUDER",
+        ),
         "[nozzle_temperature_initial_layer]",
     ),
     (("CHAMBER_TEMP", "CHAMBER", "CHAMBER_TEMPERATURE"), "[chamber_temperature]"),
@@ -91,7 +109,9 @@ def _range(reading: _Reading, axis: str) -> tuple[float, float]:
     section = reading.settings.get(name)
     high = _number(section, "position_max")
     if high is None:
-        raise KlipperImportError(f"The printer's config has no {name} with a position_max, so its bed size cannot be read.")
+        raise KlipperImportError(
+            f"The printer's config has no {name} with a position_max, so its bed size cannot be read."
+        )
     return _number(section, "position_min") or 0.0, high
 
 
@@ -132,12 +152,16 @@ def _delta_bed(reading: _Reading) -> None:
     radius = _number(printer, "print_radius")
     height = _number(reading.settings.get("stepper_a"), "position_endstop")
     if radius is None or height is None:
-        raise KlipperImportError("The delta printer's config needs a print_radius and a stepper_a position_endstop to read its bed.")
+        raise KlipperImportError(
+            "The delta printer's config needs a print_radius and a stepper_a position_endstop to read its bed."
+        )
     reading.set("shape", "circle", "kinematics delta")
     reading.set("width", _clean(radius * 2), f"printer print_radius {_clean(radius)} (twice that)")
     reading.set("origin_centre", True, "a delta's bed is centred on its origin")
     reading.set("height", _clean(height), f"stepper_a position_endstop {_clean(height)}")
-    reading.notes.append("A delta's height is read from its endstop position: check it against the highest a print can be.")
+    reading.notes.append(
+        "A delta's height is read from its endstop position: check it against the highest a print can be."
+    )
 
 
 def _bed(reading: _Reading) -> None:
@@ -166,7 +190,9 @@ def _extruders(reading: _Reading) -> None:
             "a multi-material printer is better started from a similar printer in the list."
         )
     if len(set(known)) > 1:
-        reading.notes.append(f"Their nozzles differ ({', '.join(f'{n:g}' for n in known)} mm): the first, {known[0]:g} mm, is used.")
+        reading.notes.append(
+            f"Their nozzles differ ({', '.join(f'{n:g}' for n in known)} mm): the first, {known[0]:g} mm, is used."
+        )
 
 
 def _motion(reading: _Reading) -> None:
@@ -181,9 +207,15 @@ def _retraction(reading: _Reading) -> None:
     section = reading.settings.get("firmware_retraction")
     if section is None:
         return
-    reading.set("retraction_length", _clean(_number(section, "retract_length") or 0), "firmware_retraction retract_length")
-    reading.set("retraction_speed", _clean(_number(section, "retract_speed") or 20), "firmware_retraction retract_speed")
-    reading.advanced("use_firmware_retraction", "1", "the config has firmware_retraction, so the slicer asks for G10/G11")
+    reading.set(
+        "retraction_length", _clean(_number(section, "retract_length") or 0), "firmware_retraction retract_length"
+    )
+    reading.set(
+        "retraction_speed", _clean(_number(section, "retract_speed") or 20), "firmware_retraction retract_speed"
+    )
+    reading.advanced(
+        "use_firmware_retraction", "1", "the config has firmware_retraction, so the slicer asks for G10/G11"
+    )
 
 
 def _exclude_object(reading: _Reading) -> None:

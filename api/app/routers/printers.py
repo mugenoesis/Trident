@@ -66,7 +66,9 @@ async def test_connection_ad_hoc(body: TestConnectionRequest, current: User = De
 
 
 @router.post("/klipper-import", response_model=KlipperImportResult)
-async def import_from_klipper_printer(body: KlipperImportRequest, current: User = Depends(require_user)) -> dict[str, Any]:
+async def import_from_klipper_printer(
+    body: KlipperImportRequest, current: User = Depends(require_user)
+) -> dict[str, Any]:
     """Reads a Klipper printer's own config through Moonraker (read-only) and answers the New printer form it makes, with where
     each value was read and what to check. Nothing is saved and nothing on the printer is changed."""
     try:

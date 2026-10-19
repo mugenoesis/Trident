@@ -9,7 +9,14 @@ import pytest
 
 from app.printhost import PrintHostError, read_klipper
 
-INFO = {"result": {"state": "ready", "state_message": "Printer is ready", "hostname": "voron", "software_version": "v0.12.0"}}
+INFO = {
+    "result": {
+        "state": "ready",
+        "state_message": "Printer is ready",
+        "hostname": "voron",
+        "software_version": "v0.12.0",
+    }
+}
 CONFIG = {"result": {"status": {"configfile": {"settings": {"printer": {"kinematics": "corexy"}}}}}}
 OBJECTS = {"result": {"objects": ["extruder", "exclude_object", "heater_bed"]}}
 
@@ -104,7 +111,9 @@ def test_an_unreachable_printer_says_it_could_not_be_reached():
 def test_a_klipper_that_is_not_ready_gives_its_own_message():
     def handler(request):
         if request.url.path == "/printer/info":
-            return httpx.Response(200, json={"result": {"state": "shutdown", "state_message": "MCU 'mcu' shutdown: Timer too close"}})
+            return httpx.Response(
+                200, json={"result": {"state": "shutdown", "state_message": "MCU 'mcu' shutdown: Timer too close"}}
+            )
         return httpx.Response(503)
 
     with pytest.raises(PrintHostError, match="Timer too close"):

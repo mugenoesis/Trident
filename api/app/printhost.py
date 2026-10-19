@@ -134,9 +134,13 @@ async def _get_json(client: httpx.AsyncClient, url: str, printer: Printer) -> An
     except httpx.HTTPError as exc:
         raise PrintHostError(f"Couldn't reach the printer: {exc}") from exc
     if response.status_code in (401, 403):
-        raise PrintHostError("The printer refused the request. Check the API key (or the user and password) for Moonraker.")
+        raise PrintHostError(
+            "The printer refused the request. Check the API key (or the user and password) for Moonraker."
+        )
     if response.status_code == 404:
-        raise PrintHostError("That address does not look like Moonraker, Klipper's web API (it is usually port 7125 or the Mainsail/Fluidd address).")
+        raise PrintHostError(
+            "That address does not look like Moonraker, Klipper's web API (it is usually port 7125 or the Mainsail/Fluidd address)."
+        )
     if response.status_code >= 400:
         raise PrintHostError(f"Printer host returned {response.status_code}: {response.text[:200]}")
     try:
@@ -148,7 +152,9 @@ async def _get_json(client: httpx.AsyncClient, url: str, printer: Printer) -> An
 def _field(data: Any, *path: str) -> Any:
     for key in path:
         if not isinstance(data, Mapping) or key not in data:
-            raise PrintHostError("Moonraker's answer was not in the form expected: is that address Klipper's Moonraker?")
+            raise PrintHostError(
+                "Moonraker's answer was not in the form expected: is that address Klipper's Moonraker?"
+            )
         data = data[key]
     return data
 
@@ -168,7 +174,9 @@ async def read_klipper(printer: Printer, *, client: httpx.AsyncClient | None = N
         info = _field(await _get_json(client, f"{base}/printer/info", printer), "result")
         state = info.get("state") if isinstance(info, Mapping) else None
         if state != "ready":
-            raise PrintHostError(f"Klipper is not ready ({state}): {info.get('state_message', '') if isinstance(info, Mapping) else ''}")
+            raise PrintHostError(
+                f"Klipper is not ready ({state}): {info.get('state_message', '') if isinstance(info, Mapping) else ''}"
+            )
         config = await _get_json(client, f"{base}/printer/objects/query?configfile", printer)
         objects = await _get_json(client, f"{base}/printer/objects/list", printer)
     finally:
