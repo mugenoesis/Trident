@@ -2356,3 +2356,84 @@
 	margin: 8px 0;
 	color: var(--muted, #c9ced6);
 }
+
+/* Read a printer from Klipper (the New printer dialog) */
+.klipper-import {
+	border: 1px solid var(--panel-border);
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin: 14px 0;
+	background: rgba(255, 255, 255, 0.02);
+}
+.klipper-import h3.material-section {
+	margin-top: 0;
+	margin-bottom: 8px;
+}
+.klipper-row {
+	display: flex;
+	gap: 12px;
+	align-items: flex-end;
+	flex-wrap: wrap;
+}
+.klipper-row label {
+	flex: 1 1 220px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.klipper-row .klipper-key {
+	flex: 0 1 280px;
+}
+.klipper-ok,
+.klipper-warn {
+	border: 1px solid var(--success);
+	background: rgba(62, 207, 110, 0.12);
+	border-radius: 6px;
+	padding: 10px 12px;
+	margin-top: 10px;
+}
+.klipper-warn {
+	border-color: var(--warning);
+	background: rgba(232, 181, 58, 0.12);
+	margin-top: 8px;
+}
+.klipper-warn ul {
+	margin: 6px 0 0 18px;
+	padding: 0;
+}
+.klipper-warn li {
+	margin: 3px 0;
+}
+.klipper-sources {
+	margin-top: 8px;
+}
+.klipper-sources table {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: 13px;
+	margin-top: 6px;
+}
+.klipper-sources td {
+	padding: 3px 8px;
+	border-top: 1px solid var(--panel-border);
+	color: var(--text-dim);
+}
+.klipper-sources td:first-child {
+	color: var(--text);
+	white-space: nowrap;
+}
+.field-tag {
+	display: inline-block;
+	margin-left: 6px;
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: 9px;
+	border: 1px solid var(--success);
+	color: var(--success);
+	background: rgba(62, 207, 110, 0.15);
+}
+.field-tag[data-tag="check"] {
+	border-color: var(--warning);
+	color: var(--warning);
+	background: rgba(232, 181, 58, 0.15);
+}

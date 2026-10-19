@@ -197,7 +197,7 @@ def test_a_macros_own_code_is_never_sent_on():
     assert "FLOW_APPLY_CALIBRATE_K" not in text
 
 
-# ---- retraction and object exclusion ----
+# ---- retraction ----
 
 
 def test_firmware_retraction_is_read_and_switched_on():
@@ -213,6 +213,42 @@ def test_without_firmware_retraction_nothing_about_retraction_is_set():
     assert "use_firmware_retraction" not in form["advanced"]
 
 
-def test_a_printer_that_can_exclude_objects_gets_it_switched_on():
-    assert _u1()["form"]["advanced"]["exclude_object"] == "1"
-    assert "exclude_object" not in _cartesian()["form"]["advanced"]
+# ---- which values the user should look at ----
+
+
+def _checked(result):
+    return {f["field"] for f in result["findings"] if f.get("check")}
+
+
+def test_the_height_is_always_something_to_check():
+    # Klipper's z range is how far the toolhead can travel, not the highest a print can be
+    assert "height" in _checked(_cartesian())
+
+
+def test_an_axis_whose_travel_is_bigger_than_the_bed_mesh_is_marked_to_check():
+    checked = _checked(_u1())
+    assert "depth" in checked
+    assert "width" not in checked
+
+
+def test_only_what_is_in_doubt_is_marked():
+    checked = _checked(_cartesian(bed_mesh={"mesh_min": [10, 10], "mesh_max": [225, 220]}))
+    assert checked == {"height"}
+
+
+def test_a_delta_height_is_marked_to_check():
+    settings = {
+        "printer": {"kinematics": "delta", "print_radius": 120},
+        "stepper_a": {"position_endstop": 310},
+        "extruder": {"nozzle_diameter": 0.4},
+    }
+    assert "height" in _checked(import_from_klipper({"state": "ready"}, settings, []))
+
+
+def test_every_advanced_setting_it_adds_is_a_printer_setting_the_form_accepts():
+    # the printer form refuses a key that is not one of the slicer's printer settings (exclude_object, for one, is a process setting)
+    from app.printer_keys import PRINTER_KEYS
+
+    results = [_u1(), _cartesian(firmware_retraction={"retract_length": 1.0})]
+    for result in results:
+        assert set(result["form"]["advanced"]) <= PRINTER_KEYS

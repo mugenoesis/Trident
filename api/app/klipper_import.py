@@ -95,13 +95,19 @@ class _Reading:
         self.findings: list[dict[str, Any]] = []
         self.notes: list[str] = []
 
-    def set(self, field: str, value: Any, source: str) -> None:
+    def set(self, field: str, value: Any, source: str, *, check: bool = False) -> None:
         self.form[field] = value
-        self.findings.append({"field": field, "value": value, "source": source})
+        self.findings.append({"field": field, "value": value, "source": source, "check": check})
+
+    def flag(self, field: str) -> None:
+        """Mark a value already read as one to look at."""
+        for finding in self.findings:
+            if finding["field"] == field:
+                finding["check"] = True
 
     def advanced(self, key: str, value: str, source: str) -> None:
         self.form["advanced"][key] = value
-        self.findings.append({"field": f"advanced.{key}", "value": value, "source": source})
+        self.findings.append({"field": f"advanced.{key}", "value": value, "source": source, "check": False})
 
 
 def _range(reading: _Reading, axis: str) -> tuple[float, float]:
@@ -121,7 +127,8 @@ def _rectangular_bed(reading: _Reading) -> None:
     reading.set("shape", "rectangle", "kinematics " + str(reading.settings["printer"]["kinematics"]))
     reading.set("width", _clean(width), f"stepper_x position {_clean(x0)} to {_clean(x1)}")
     reading.set("depth", _clean(depth), f"stepper_y position {_clean(y0)} to {_clean(y1)}")
-    reading.set("height", _clean(z1), f"stepper_z position_max {_clean(z1)}")
+    # the z range is how far the toolhead can travel, not the highest a print can be
+    reading.set("height", _clean(z1), f"stepper_z position_max {_clean(z1)}", check=True)
     if x0 < 0 and y0 < 0 and abs(x0 + x1) < 0.5 and abs(y0 + y1) < 0.5:
         reading.set("origin_centre", True, "the steppers' positions run from below zero to the same above it")
         reading.form["origin_x"] = reading.form["origin_y"] = 0
@@ -129,22 +136,23 @@ def _rectangular_bed(reading: _Reading) -> None:
         reading.set("origin_x", _clean(x0), f"stepper_x position_min {_clean(x0)}")
         reading.set("origin_y", _clean(y0), f"stepper_y position_min {_clean(y0)}")
         reading.form["origin_centre"] = False
-    _check_mesh(reading, {"X": (width, 0), "Y": (depth, 1)})
+    _check_mesh(reading, {"X": (width, 0, "width"), "Y": (depth, 1, "depth")})
 
 
-def _check_mesh(reading: _Reading, travel: dict[str, tuple[float, int]]) -> None:
+def _check_mesh(reading: _Reading, travel: dict[str, tuple[float, int, str]]) -> None:
     """Klipper's travel includes room a toolchanger parks in: where the bed mesh reaches says where the bed is."""
     mesh = reading.settings.get("bed_mesh")
     low, high = _pair(mesh, "mesh_min"), _pair(mesh, "mesh_max")
     if low is None or high is None:
         return
-    for axis, (length, index) in travel.items():
+    for axis, (length, index, field) in travel.items():
         if high[index] - low[index] < _MESH_COVERAGE * length:
             reading.notes.append(
                 f"Klipper lets the toolhead travel {_clean(length)} mm along {axis}, but its bed mesh only covers "
                 f"{_clean(low[index])} to {_clean(high[index])}: the printable bed is probably smaller than {_clean(length)} mm. "
                 f"Check the {axis} size."
             )
+            reading.flag(field)
 
 
 def _delta_bed(reading: _Reading) -> None:
@@ -158,7 +166,7 @@ def _delta_bed(reading: _Reading) -> None:
     reading.set("shape", "circle", "kinematics delta")
     reading.set("width", _clean(radius * 2), f"printer print_radius {_clean(radius)} (twice that)")
     reading.set("origin_centre", True, "a delta's bed is centred on its origin")
-    reading.set("height", _clean(height), f"stepper_a position_endstop {_clean(height)}")
+    reading.set("height", _clean(height), f"stepper_a position_endstop {_clean(height)}", check=True)
     reading.notes.append(
         "A delta's height is read from its endstop position: check it against the highest a print can be."
     )
@@ -218,11 +226,6 @@ def _retraction(reading: _Reading) -> None:
     )
 
 
-def _exclude_object(reading: _Reading) -> None:
-    if "exclude_object" in reading.objects or "exclude_object" in reading.settings:
-        reading.advanced("exclude_object", "1", "the printer has exclude_object, so the slicer marks each object")
-
-
 def _macro(reading: _Reading, candidates: tuple[str, ...]) -> tuple[str, dict] | None:
     for name in candidates:
         section = reading.settings.get(f"gcode_macro {name}")
@@ -278,7 +281,6 @@ def import_from_klipper(info: dict, settings: dict, objects: list) -> dict[str, 
     _extruders(reading)
     _motion(reading)
     _retraction(reading)
-    _exclude_object(reading)
     _start_gcode(reading)
     _end_gcode(reading)
     hostname = reading.info.get("hostname")
