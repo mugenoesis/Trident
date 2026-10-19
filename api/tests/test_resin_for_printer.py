@@ -155,3 +155,40 @@ def test_a_resin_with_no_rows_at_all_has_no_starting_point(client, tmp_path):
     (root / "materials-index.json").write_text(json.dumps(index))
     resin_module.catalog.load()
     assert _choice(client, "Empty resin", "Elegoo Mars 3", like="true").status_code == 404
+
+
+def _save_printer(client, name, technology, machine="Elegoo Mars 3"):
+    body = {
+        "name": name,
+        "vendor": machine.split()[0],
+        "machine_profile": machine,
+        "process_profile": "",
+        "filament_profiles": [],
+        "filament_colors": [],
+        "technology": technology,
+    }
+    resp = client.post("/printers", json=body)
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()
+
+
+def test_the_saved_resin_printers_are_listed_by_name_with_the_catalogue_printer_they_are(client):
+    _save_printer(client, "gk2", "resin", "Elegoo Mars 3")
+    _save_printer(client, "My FDM", "fdm", "Some FDM printer")
+    saved = client.get("/resin/saved-printers")
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == [{"name": "gk2", "printer": "Elegoo Mars 3"}]
+
+
+def test_no_saved_printers_is_an_empty_list(client):
+    assert client.get("/resin/saved-printers").json() == []
+
+
+def test_a_resin_tools_key_may_list_the_saved_resin_printers_and_an_upload_key_may_not(client):
+    _save_printer(client, "gk2", "resin", "Elegoo Mars 3")
+    resin_key = client.post("/auth/keys", json={"name": "Holecraft", "scope": "resin"}).json()["key"]
+    upload_key = client.post("/auth/keys", json={"name": "Up", "scope": "upload"}).json()["key"]
+    ok = client.get("/resin/saved-printers", headers={"Authorization": f"Bearer {resin_key}"})
+    assert ok.status_code == 200
+    assert ok.json() == [{"name": "gk2", "printer": "Elegoo Mars 3"}]
+    assert client.get("/resin/saved-printers", headers={"Authorization": f"Bearer {upload_key}"}).status_code == 403

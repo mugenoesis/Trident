@@ -12,6 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from .. import resin as resin_module
 from .. import resin_import, resin_runner
 from ..auth import require_resin_tools_user, require_user
+from ..printerstore import store as printer_store
 from ..resin_printers_user import build_preset, user_resin_printers
 from ..resin_user import user_resins
 from ..schemas import (
@@ -33,6 +34,16 @@ router = APIRouter(prefix="/resin", tags=["resin"])
 @router.get("/printers", response_model=list[ResinPrinterInfo])
 def list_resin_printers(current: User = Depends(require_resin_tools_user)) -> list[ResinPrinterInfo]:
     return [ResinPrinterInfo(**p) for p in resin_module.catalog.printers(current.id)]
+
+
+@router.get("/saved-printers")
+def list_saved_resin_printers(current: User = Depends(require_resin_tools_user)) -> list[dict[str, str]]:
+    """The resin printers the user has saved (a printer with a resin and settings kept under a name), each with the printer it is."""
+    return [
+        {"name": p.name, "printer": p.machine_profile}
+        for p in printer_store.list_printers(current.id)
+        if p.technology == "resin"
+    ]
 
 
 @router.get("/resins", response_model=list[ResinInfo])
