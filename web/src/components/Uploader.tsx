@@ -8,8 +8,6 @@ interface UploaderProps {
 	meshNote?: string | null;
 }
 
-const ACCEPT = '.stl,.3mf,.obj,.step,.stp';
-
 export default function Uploader({ onFileSelected, fileName, uploadStatus, meshNote }: UploaderProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [dragOver, setDragOver] = useState(false);
@@ -42,7 +40,8 @@ export default function Uploader({ onFileSelected, fileName, uploadStatus, meshN
 				handleFiles(e.dataTransfer.files);
 			}}
 		>
-			<input ref={inputRef} type="file" accept={ACCEPT} hidden onChange={(e) => handleFiles(e.target.files)} />
+			{/* No `accept`: iPadOS greys out .stl and .3mf when extensions are listed, and the server checks the file anyway. */}
+			<input ref={inputRef} type="file" data-model-input hidden onChange={(e) => handleFiles(e.target.files)} />
 			{fileName ? (
 				<>
 					<strong title={fileName}>{fileName}</strong>

@@ -99,6 +99,7 @@ def test_a_resin_with_no_row_for_the_printer_slices_from_the_values_typed_for_it
     job = _wait(client, client.post("/jobs", json=body).json()["id"])
     assert job["status"] == "succeeded", job["error"]
 
+
 def test_a_layer_preview_is_the_real_slice_as_png_layers(client):
     model_id = _upload(client)
     body = {
