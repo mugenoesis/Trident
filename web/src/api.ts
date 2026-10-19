@@ -192,7 +192,9 @@ export function getSettingsSchema(): Promise<SettingsSchema> {
 
 export async function uploadModel(file: File): Promise<ModelUploadResponse> {
 	const form = new FormData();
-	form.append('file', file);
+	// A file dragged from the iPadOS Files app is a lazy handle that can go out as no part at all: read it into a Blob of its own first.
+	const bytes = await file.arrayBuffer();
+	form.append('file', new Blob([bytes], { type: file.type || 'application/octet-stream' }), file.name);
 	return request('/models', { method: 'POST', body: form });
 }
 

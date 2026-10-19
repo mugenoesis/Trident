@@ -12,7 +12,7 @@ import { chromium } from 'playwright';
 import { goodCube } from './stl-fixtures.mjs';
 
 // the model upload (the resin section has a file input of its own, for resin profiles)
-const MODEL_INPUT = 'input[type="file"][accept*=".stl"]';
+const MODEL_INPUT = 'input[type="file"][data-model-input]';
 const BASE_URL = process.env.SMOKE_BASE_URL ?? 'http://localhost:8000';
 const fail = (message) => {
 	throw new Error(message);
@@ -274,6 +274,13 @@ await page
 	.setInputFiles({ name: 'blu.cfg', mimeType: 'text/plain', buffer: Buffer.from(profile) });
 await panel.getByText(/Imported 1 resin for Elegoo Mars 3/).waitFor();
 check((await panel.getByLabel('Resin vendor').inputValue()) === 'My resins', 'the imported resin is listed under My resins and chosen');
+await page
+	.waitForFunction(
+		() => [...document.querySelectorAll('label')].some((l) => l.textContent?.trim() === 'Exposure' && l.control?.value === '15'),
+		null,
+		{ timeout: 5000 },
+	)
+	.catch(() => {}); // the values follow the chosen resin a moment after the vendor does
 check((await panel.getByLabel('Exposure', { exact: true }).inputValue()) === '15', 'it has the exposure of the profile');
 check((await panel.getByLabel('Bottle price').inputValue()) === '30', 'and its price per litre as a bottle of 1000 ml');
 
