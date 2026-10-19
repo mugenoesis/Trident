@@ -2437,3 +2437,212 @@
 	color: var(--warning);
 	background: rgba(232, 181, 58, 0.15);
 }
+
+/* The Printers page: the live state of saved Klipper printers */
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.printers-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	background: rgba(10, 12, 15, 0.72);
+	overflow: auto;
+	padding: 40px 24px;
+}
+.printers-panel {
+	max-width: 1100px;
+	margin: 0 auto;
+	background: var(--panel-bg);
+	border: 1px solid var(--panel-border);
+	border-radius: 12px;
+	padding: 18px 20px;
+}
+.printers-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 14px;
+}
+.printers-head h2 {
+	margin: 0;
+	font-size: 20px;
+}
+.printers-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(480px, 100%), 1fr));
+	gap: 16px;
+}
+.printer-card {
+	border: 1px solid var(--panel-border);
+	border-radius: 10px;
+	padding: 14px;
+	background: rgba(255, 255, 255, 0.02);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+}
+.printer-top {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 8px;
+}
+.printer-name {
+	font-weight: 700;
+	font-size: 16px;
+}
+.printer-chip {
+	font-size: 12px;
+	padding: 2px 10px;
+	border: 1px solid var(--panel-border);
+	border-radius: 10px;
+	font-weight: 600;
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+.printer-chip.printing {
+	color: var(--success);
+	border-color: var(--success);
+	background: rgba(62, 207, 110, 0.14);
+}
+.printer-chip.paused {
+	color: var(--warning);
+	border-color: var(--warning);
+	background: rgba(232, 181, 58, 0.14);
+}
+.printer-chip.done {
+	color: #8fb4ff;
+	border-color: #5b7fcf;
+	background: rgba(91, 127, 207, 0.14);
+}
+.printer-chip.error {
+	color: var(--danger);
+	border-color: var(--danger);
+	background: rgba(255, 92, 92, 0.14);
+}
+.printer-file {
+	color: var(--text-dim);
+	font-size: 13px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.printer-message {
+	margin: 0;
+	color: var(--danger);
+	font-size: 13px;
+}
+.printer-off {
+	margin: 0;
+	color: var(--text-dim);
+	font-size: 13px;
+}
+.printer-bar {
+	height: 14px;
+	border-radius: 7px;
+	background: #14171b;
+	border: 1px solid var(--panel-border);
+	overflow: hidden;
+}
+.printer-bar > div {
+	height: 100%;
+	background: var(--accent);
+}
+.printer-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+	font-size: 13px;
+	color: var(--text-dim);
+}
+.printer-meta strong {
+	color: var(--text);
+}
+.printer-temps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.printer-temp {
+	border: 1px solid var(--panel-border);
+	border-radius: 8px;
+	padding: 5px 10px;
+	font-size: 13px;
+	min-width: 92px;
+}
+.printer-temp small {
+	display: block;
+	color: var(--text-dim);
+	font-size: 11px;
+}
+.printer-temp span {
+	color: var(--text-dim);
+}
+.printer-temp.hot {
+	border-color: var(--accent);
+}
+.printer-cam-box {
+	position: relative;
+	border-radius: 8px;
+	overflow: hidden;
+	border: 1px solid var(--panel-border);
+	background: #14171b;
+}
+.printer-cam {
+	display: block;
+	width: 100%;
+	max-height: 320px;
+	object-fit: contain;
+}
+.printer-cam-empty {
+	height: 120px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-dim);
+	font-size: 13px;
+}
+.printer-cam-bar {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	padding: 4px 8px;
+	font-size: 12px;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.5);
+	border-top-right-radius: 8px;
+}
+.printer-actions {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+	align-items: center;
+}
+.printer-danger {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+.printer-confirm-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 200;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.5);
+}
+.printer-confirm {
+	max-width: 420px;
+	background: var(--panel-bg);
+	border: 1px solid var(--panel-border);
+	border-radius: 10px;
+	padding: 20px;
+}
+.printer-confirm h3 {
+	margin: 0 0 8px;
+}
