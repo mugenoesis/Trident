@@ -1,0 +1,85 @@
+{
+ "info": {
+  "state": "ready",
+  "state_message": "Printer is ready",
+  "hostname": "lava",
+  "software_version": "1.5.2.13_20260722102206"
+ },
+ "settings": {
+  "printer": {
+   "kinematics": "corexy",
+   "max_velocity": 500,
+   "max_accel": 20000,
+   "square_corner_velocity": 8,
+   "max_z_velocity": 30
+  },
+  "stepper_x": {
+   "position_min": 0,
+   "position_max": 271,
+   "position_endstop": 0
+  },
+  "stepper_y": {
+   "position_min": 0,
+   "position_max": 335,
+   "position_endstop": 0
+  },
+  "stepper_z": {
+   "position_min": -6,
+   "position_max": 275,
+   "position_endstop": 275
+  },
+  "extruder": {
+   "nozzle_diameter": 0.4,
+   "filament_diameter": 1.75,
+   "min_temp": 0,
+   "max_temp": 300
+  },
+  "extruder1": {
+   "nozzle_diameter": 0.4,
+   "filament_diameter": 1.75,
+   "min_temp": 0,
+   "max_temp": 300
+  },
+  "extruder2": {
+   "nozzle_diameter": 0.4,
+   "filament_diameter": 1.75,
+   "min_temp": 0,
+   "max_temp": 300
+  },
+  "extruder3": {
+   "nozzle_diameter": 0.4,
+   "filament_diameter": 1.75,
+   "min_temp": 0,
+   "max_temp": 300
+  },
+  "bed_mesh": {
+   "mesh_min": [
+    3,
+    3
+   ],
+   "mesh_max": [
+    267,
+    267
+   ]
+  },
+  "heater_bed": {
+   "min_temp": 0,
+   "max_temp": 100
+  },
+  "gcode_macro print_start": {
+   "gcode": "\n{% for i in range(printer.configfile.settings.printer.max_physical_extruder_num) %}\nSET_GCODE_VARIABLE MACRO=SM_PRINT_START_LINE_EXTRUDER_{i} VARIABLE=has_finished VALUE=False\nFLOW_APPLY_CALIBRATE_K EXTRUDER={i}\n{% endfor %}\n\nM84\nG92 E0\nM220 S100"
+  },
+  "gcode_macro print_end": {
+   "gcode": "\nM220 S100\n\n{% set client = printer['gcode_macro _CLIENT_VARIABLE'] | default({}) %}\n{% set retract = client.cancel_retract | default(5.0) | abs %}\n{% set move_z_max_heigh = client.move_z_max_heigh | default(270.5) | abs %}\n\n\n_CLIENT_RETRACT LENGTH={retract}\n\n{% set current_pos = printer.gcode_move.gcode_position %}\n{% set delta_z = 0.0 %}"
+  }
+ },
+ "objects": [
+  "exclude_object",
+  "heater_bed",
+  "bed_mesh",
+  "extruder",
+  "extruder1",
+  "extruder2",
+  "extruder3"
+ ]
+}

@@ -15,6 +15,7 @@
 		"preview": "vite preview",
 		"smoke": "node smoke-test.mjs",
 		"smoke:keys": "node keys-test.mjs",
+		"smoke:klipper": "node klipper-test.mjs",
 		"smoke:upload": "node upload-test.mjs",
 		"smoke:resin": "node resin-test.mjs",
 		"smoke:viewer": "node viewer-test.mjs"

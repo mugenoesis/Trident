@@ -537,6 +537,24 @@ class PrinterRecord(BaseModel):
     created_at: str
 
 
+class KlipperImportRequest(BaseModel):
+    """Where a Klipper printer's Moonraker is (POST /printers/klipper-import), and what it needs to let a read through."""
+
+    print_host: str = Field(min_length=1)
+    printhost_apikey: str | None = None
+    printhost_user: str | None = None
+    printhost_password: str | None = None
+
+
+class KlipperImportResult(BaseModel):
+    """The "New printer" form a Klipper printer's own config makes, where each value was read, and what to check."""
+
+    form: PrinterForm
+    findings: list[dict[str, Any]]
+    notes: list[str]
+    klipper: dict[str, Any]
+
+
 class TestConnectionRequest(BaseModel):
     """Ad-hoc connection test: validates fields the caller just typed in,
     for a printer that may not even be saved yet (routers/printers.py's

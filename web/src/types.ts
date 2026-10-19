@@ -432,6 +432,23 @@ export interface PrinterForm {
 	advanced?: Record<string, string>;
 }
 
+// What reading a Klipper printer's own config gives (POST /printers/klipper-import, api/app/klipper_import.py): the New printer form,
+// where each value was read, and what to check.
+interface KlipperFinding {
+	field: string;
+	value: string | number | boolean;
+	source: string;
+	// A value worth a second look (a bed size a toolchanger's travel may overstate).
+	check: boolean;
+}
+
+export interface KlipperImportResult {
+	form: PrinterForm;
+	findings: KlipperFinding[];
+	notes: string[];
+	klipper: { hostname: string | null; version: string | null; state: string | null };
+}
+
 export interface ExportItem {
 	kind: 'machine' | 'filament' | 'process';
 	name: string;

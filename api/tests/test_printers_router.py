@@ -401,3 +401,67 @@ def test_send_to_printer_404s_for_unowned_job(client, monkeypatch):
 
     resp = client.post(f"/printers/{printer_id}/send/{job_id}", json={})
     assert resp.status_code == 404
+
+
+# ---- import a printer from a Klipper printer's own config ----
+
+_KLIPPER_SNAPSHOT = {
+    "info": {"state": "ready", "hostname": "voron", "software_version": "v0.12.0"},
+    "settings": {
+        "printer": {"kinematics": "cartesian", "max_velocity": 300, "max_accel": 3000},
+        "stepper_x": {"position_min": 0, "position_max": 235},
+        "stepper_y": {"position_min": 0, "position_max": 230},
+        "stepper_z": {"position_min": 0, "position_max": 250},
+        "extruder": {"nozzle_diameter": 0.4},
+    },
+    "objects": ["extruder"],
+}
+
+
+def test_klipper_import_answers_a_filled_in_printer_form(client, monkeypatch):
+    seen = {}
+
+    async def fake_read(printer, **kwargs):
+        seen.update(printer)
+        return _KLIPPER_SNAPSHOT
+
+    monkeypatch.setattr(printhost, "read_klipper", fake_read)
+    response = client.post(
+        "/printers/klipper-import", json={"print_host": "http://voron.local", "printhost_apikey": "topsecret"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["form"]["name"] == "voron"
+    assert (body["form"]["width"], body["form"]["depth"], body["form"]["height"]) == (235, 230, 250)
+    assert body["findings"] and body["klipper"]["hostname"] == "voron"
+    # it is asked as a Klipper printer, with the address and key as given, and the key never comes back
+    assert (
+        seen["host_type"] == "moonraker"
+        and seen["print_host"] == "http://voron.local"
+        and seen["printhost_apikey"] == "topsecret"
+    )
+    assert "topsecret" not in response.text
+
+
+def test_klipper_import_says_why_the_printer_could_not_be_read(client, monkeypatch):
+    async def failing(*args, **kwargs):
+        raise printhost.PrintHostError("Couldn't reach the printer: refused")
+
+    monkeypatch.setattr(printhost, "read_klipper", failing)
+    response = client.post("/printers/klipper-import", json={"print_host": "http://voron.local"})
+    assert response.status_code == 502
+    assert "Couldn't reach the printer" in response.json()["detail"]
+
+
+def test_klipper_import_says_why_a_config_cannot_be_used(client, monkeypatch):
+    async def polar(*args, **kwargs):
+        return {"info": {"state": "ready"}, "settings": {"printer": {"kinematics": "polar"}}, "objects": []}
+
+    monkeypatch.setattr(printhost, "read_klipper", polar)
+    response = client.post("/printers/klipper-import", json={"print_host": "http://voron.local"})
+    assert response.status_code == 422
+    assert "polar" in response.json()["detail"]
+
+
+def test_klipper_import_needs_an_address(client):
+    assert client.post("/printers/klipper-import", json={}).status_code == 422

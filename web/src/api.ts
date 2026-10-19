@@ -9,6 +9,7 @@ import type {
 	ImportResult,
 	JobCreateRequest,
 	JobRecord,
+	KlipperImportResult,
 	LayerPreviewStatus,
 	MaterialProfileCreateRequest,
 	MaterialProfileRecord,
@@ -119,6 +120,11 @@ export function createPrinterProfile(form: PrinterForm): Promise<ImportedProfile
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(form),
 	});
+}
+
+// Reads a Klipper printer's own config through Moonraker (read-only) and answers the New printer form it makes.
+export function importFromKlipper(printHost: string, apiKey: string): Promise<KlipperImportResult> {
+	return postJson('/printers/klipper-import', { print_host: printHost, ...(apiKey ? { printhost_apikey: apiKey } : {}) });
 }
 
 export function updatePrinterProfile(form: PrinterForm): Promise<ImportedProfile> {

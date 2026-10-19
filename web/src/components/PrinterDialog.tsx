@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPrinterProfile, getPrinterKeys, getProfileDetail, getStoredPrinter, updatePrinterProfile } from '../api';
+import { type FieldTags, fieldsFromKlipper, tagsFromKlipper } from '../klipperImport';
 import { settingText } from '../settingText';
-import type { PrinterForm, ProfileSummary, SettingDef } from '../types';
+import type { KlipperImportResult, PrinterForm, ProfileSummary, SettingDef } from '../types';
 import AdvancedSettingsTab from './AdvancedSettingsTab';
+import FieldTag from './FieldTag';
+import KlipperImport from './KlipperImport';
 
 // A belt printer with no limit is drawn this long (the same length the server writes for it).
 const ENDLESS_BELT_LENGTH_MM = 2000;
@@ -22,7 +25,7 @@ interface PrinterDialogProps {
 type Tab = 'basics' | 'advanced';
 
 // Everything on the Basics tab, as text so a box can be cleared and retyped.
-interface Fields {
+export interface Fields {
 	flavour: string;
 	shape: 'rectangle' | 'circle';
 	width: string;
@@ -327,7 +330,7 @@ function startOptionsFor(profiles: ProfileSummary[]) {
 type SetField = <K extends keyof Fields>(key: K, value: Fields[K]) => void;
 
 // The bed's shape, size and origin, whether it is a belt, and the drawing of it.
-function BuildPlateSection({ f, set, onBelt }: { f: Fields; set: SetField; onBelt: (belt: boolean) => void }) {
+function BuildPlateSection({ f, set, onBelt, tags }: { f: Fields; set: SetField; onBelt: (belt: boolean) => void; tags: FieldTags }) {
 	return (
 		<>
 			<h3 className="material-section">Build plate</h3>
@@ -342,29 +345,39 @@ function BuildPlateSection({ f, set, onBelt }: { f: Fields; set: SetField; onBel
 							</select>
 						</label>
 						<label>
-							Max height (Z, mm)
+							<span>
+								Max height (Z, mm) <FieldTag tags={tags} f={f} field="height" />
+							</span>
 							<input type="number" step="1" value={f.height} onChange={(e) => set('height', e.target.value)} />
 						</label>
 					</div>
 					<div className="material-grid">
 						<label>
-							{f.shape === 'circle' && !f.belt ? 'Diameter (mm)' : 'Width (X, mm)'}
+							<span>
+								{f.shape === 'circle' && !f.belt ? 'Diameter (mm)' : 'Width (X, mm)'} <FieldTag tags={tags} f={f} field="width" />
+							</span>
 							<input type="number" step="1" value={f.width} onChange={(e) => set('width', e.target.value)} />
 						</label>
 						{!f.belt && f.shape === 'rectangle' && (
 							<label>
-								Depth (Y, mm)
+								<span>
+									Depth (Y, mm) <FieldTag tags={tags} f={f} field="depth" />
+								</span>
 								<input type="number" step="1" value={f.depth} onChange={(e) => set('depth', e.target.value)} />
 							</label>
 						)}
 					</div>
 					<div className="material-grid">
 						<label>
-							Origin X offset (mm)
+							<span>
+								Origin X offset (mm) <FieldTag tags={tags} f={f} field="originX" />
+							</span>
 							<input type="number" step="1" value={f.originX} disabled={f.originCentre} onChange={(e) => set('originX', e.target.value)} />
 						</label>
 						<label>
-							Origin Y offset (mm)
+							<span>
+								Origin Y offset (mm) <FieldTag tags={tags} f={f} field="originY" />
+							</span>
 							<input type="number" step="1" value={f.originY} disabled={f.originCentre} onChange={(e) => set('originY', e.target.value)} />
 						</label>
 					</div>
@@ -549,6 +562,7 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [baseNote, setBaseNote] = useState('');
+	const [klipper, setKlipper] = useState<KlipperImportResult | null>(null);
 
 	const defs = useMemo(() => new Map(schema.map((s) => [s.key, s])), [schema]);
 	const set = <K extends keyof Fields>(key: K, value: Fields[K]) => {
@@ -635,6 +649,18 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 		if (baseKey === 'nothing') void loadBase('nothing', f.flavour, belt, true).then(() => setF((prev) => ({ ...prev, belt })));
 	};
 
+	// A printer read from Klipper: its values fill the fields (which a later change of "Start from" then leaves alone), the name becomes its
+	// hostname unless you have typed one, and what it can do (exclude objects, firmware retraction) joins the advanced settings.
+	const applyKlipper = (result: KlipperImportResult) => {
+		const next = fieldsFromKlipper(result.form);
+		for (const key of Object.keys(next)) touched.current.add(key);
+		setF((prev) => ({ ...prev, ...next }));
+		setAdvanced((prev) => ({ ...prev, ...result.form.advanced }));
+		setName((prev) => (prev === initialName(mode, current) ? result.form.name : prev));
+		setKlipper(result);
+	};
+	const tags = useMemo(() => (klipper ? tagsFromKlipper(klipper) : {}), [klipper]);
+
 	const flavourDef = defs.get('gcode_flavor');
 	const nozzleTypeDef = defs.get('nozzle_type');
 
@@ -702,12 +728,15 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 							startOptions={startOptions}
 							baseLabel={baseLabel}
 						/>
-						<BuildPlateSection f={f} set={set} onBelt={changeBelt} />
+						{mode === 'create' && <KlipperImport onImported={applyKlipper} />}
+						<BuildPlateSection f={f} set={set} onBelt={changeBelt} tags={tags} />
 
 						<h3 className="material-section">Nozzle and firmware</h3>
 						<div className="material-grid material-grid-4">
 							<label>
-								Nozzle (mm)
+								<span>
+									Nozzle (mm) <FieldTag tags={tags} f={f} field="nozzle" />
+								</span>
 								<input type="number" step="0.05" value={f.nozzle} onChange={(e) => set('nozzle', e.target.value)} />
 							</label>
 							<label>
@@ -740,7 +769,9 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 						<h3 className="material-section">Start and end G-code</h3>
 						<div className="material-grid">
 							<label>
-								Start G-code
+								<span>
+									Start G-code <FieldTag tags={tags} f={f} field="start" />
+								</span>
 								<textarea
 									className="gcode-box"
 									rows={7}
@@ -750,7 +781,9 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 								/>
 							</label>
 							<label>
-								End G-code
+								<span>
+									End G-code <FieldTag tags={tags} f={f} field="end" />
+								</span>
 								<textarea className="gcode-box" rows={7} value={f.end} spellCheck={false} onChange={(e) => set('end', e.target.value)} />
 							</label>
 						</div>
@@ -759,19 +792,27 @@ export default function PrinterDialog({ mode, current, profiles, schema, onClose
 						<h3 className="material-section">Motion and retraction</h3>
 						<div className="material-grid material-grid-4">
 							<label>
-								Max speed (mm/s)
+								<span>
+									Max speed (mm/s) <FieldTag tags={tags} f={f} field="maxSpeed" />
+								</span>
 								<input type="number" step="1" value={f.maxSpeed} onChange={(e) => set('maxSpeed', e.target.value)} />
 							</label>
 							<label>
-								Max acceleration (mm/s²)
+								<span>
+									Max acceleration (mm/s²) <FieldTag tags={tags} f={f} field="maxAccel" />
+								</span>
 								<input type="number" step="10" value={f.maxAccel} onChange={(e) => set('maxAccel', e.target.value)} />
 							</label>
 							<label>
-								Retraction (mm)
+								<span>
+									Retraction (mm) <FieldTag tags={tags} f={f} field="retractLen" />
+								</span>
 								<input type="number" step="0.1" value={f.retractLen} onChange={(e) => set('retractLen', e.target.value)} />
 							</label>
 							<label>
-								Retraction speed (mm/s)
+								<span>
+									Retraction speed (mm/s) <FieldTag tags={tags} f={f} field="retractSpeed" />
+								</span>
 								<input type="number" step="1" value={f.retractSpeed} onChange={(e) => set('retractSpeed', e.target.value)} />
 							</label>
 							<label>
