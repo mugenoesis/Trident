@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import printhost
+from .. import klipper_import, printhost
 from .. import resin as resin_module
 from ..auth import require_user
 from ..jobstore import store as job_store
 from ..printerstore import store
 from ..schemas import (
+    KlipperImportRequest,
+    KlipperImportResult,
     MaterialProfileCreateRequest,
     MaterialProfileRecord,
     MaterialProfileUpdateRequest,
@@ -59,6 +63,20 @@ async def test_connection_ad_hoc(body: TestConnectionRequest, current: User = De
     except printhost.PrintHostError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"message": message}
+
+
+@router.post("/klipper-import", response_model=KlipperImportResult)
+async def import_from_klipper_printer(body: KlipperImportRequest, current: User = Depends(require_user)) -> dict[str, Any]:
+    """Reads a Klipper printer's own config through Moonraker (read-only) and answers the New printer form it makes, with where
+    each value was read and what to check. Nothing is saved and nothing on the printer is changed."""
+    try:
+        snapshot = await printhost.read_klipper({**body.model_dump(), "host_type": "moonraker"})
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        return klipper_import.import_from_klipper(snapshot["info"], snapshot["settings"], snapshot["objects"])
+    except klipper_import.KlipperImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/{printer_id}", response_model=PrinterRecord)
