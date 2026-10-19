@@ -87,19 +87,17 @@ def test_a_resin_job_writes_the_printers_file(client):
     assert len(archive.content) > 10_000
 
 
-def test_a_resin_with_no_row_for_the_printer_fails_with_a_clear_message(client):
+def test_a_resin_with_no_row_for_the_printer_slices_from_the_values_typed_for_it(client):
     model_id = _upload(client)
     body = {
         "technology": "resin",
-        "printer_profile": "Elegoo Mars 3",
+        "printer_profile": "Creality Halot One CL-60",
         "model_id": model_id,
         "filament_profiles": ["Siraya Tech Build"],
-        "setting_overrides": {"layer_height": 0.1},
+        "setting_overrides": {"layer_height": 0.1, "exposure_time": 3, "initial_exposure_time": 30},
     }
     job = _wait(client, client.post("/jobs", json=body).json()["id"])
-    assert job["status"] == "failed"
-    assert "no settings for this printer" in (job["error"] or "")
-
+    assert job["status"] == "succeeded", job["error"]
 
 def test_a_layer_preview_is_the_real_slice_as_png_layers(client):
     model_id = _upload(client)
