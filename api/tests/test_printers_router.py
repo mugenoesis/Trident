@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from app import printhost
 
 
@@ -465,3 +467,131 @@ def test_klipper_import_says_why_a_config_cannot_be_used(client, monkeypatch):
 
 def test_klipper_import_needs_an_address(client):
     assert client.post("/printers/klipper-import", json={}).status_code == 422
+
+
+# ---- the live printer page: status, controls, webcams ----
+
+
+def _klipper_printer(client):
+    body = _printer_body(
+        name="Voron", host_type="moonraker", print_host="http://voron.local", printhost_apikey="topsecret"
+    )
+    return client.post("/printers", json=body).json()["id"]
+
+
+def test_status_is_the_printers_state_in_a_form_the_page_can_show(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+    asked = {}
+
+    async def fake_read(printer, **kwargs):
+        asked.update(printer)
+        return {
+            "print_stats": {"state": "printing", "filename": "part.gcode", "print_duration": 600},
+            "virtual_sdcard": {"progress": 0.25},
+        }
+
+    monkeypatch.setattr(printhost, "read_status", fake_read)
+    response = client.get(f"/printers/{printer_id}/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["state"], body["file"], body["progress"], body["remaining_s"]) == (
+        "printing",
+        "part.gcode",
+        0.25,
+        1800,
+    )
+    assert body["can"]["pause"] is True
+    assert asked["print_host"] == "http://voron.local" and asked["printhost_apikey"] == "topsecret"
+    assert "topsecret" not in response.text
+
+
+def test_status_of_a_printer_that_cannot_be_reached_is_a_502_with_the_reason(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+
+    async def failing(*args, **kwargs):
+        raise printhost.PrintHostError("Couldn't reach the printer: refused")
+
+    monkeypatch.setattr(printhost, "read_status", failing)
+    response = client.get(f"/printers/{printer_id}/status")
+    assert response.status_code == 502
+    assert "reach" in response.json()["detail"]
+
+
+def test_status_of_a_printer_that_is_not_a_known_printer_is_a_404(client):
+    assert client.get("/printers/nope/status").status_code == 404
+
+
+def test_a_printer_with_no_klipper_connection_has_no_status(client):
+    printer_id = client.post("/printers", json=_printer_body()).json()["id"]
+    response = client.get(f"/printers/{printer_id}/status")
+    assert response.status_code == 400
+    assert "Klipper" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
+def test_pause_resume_and_cancel_are_passed_to_the_printer(client, monkeypatch, action):
+    printer_id = _klipper_printer(client)
+    done = []
+
+    async def fake_control(printer, what, **kwargs):
+        done.append(what)
+
+    monkeypatch.setattr(printhost, "print_control", fake_control)
+    response = client.post(f"/printers/{printer_id}/print/{action}")
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert done == [action]
+
+
+def test_nothing_else_can_be_asked_of_the_printer_through_it(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+    monkeypatch.setattr(
+        printhost, "print_control", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called"))
+    )
+    assert client.post(f"/printers/{printer_id}/print/emergency_stop").status_code == 422
+
+
+def test_a_refusal_by_the_printer_is_a_502_in_its_words(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+
+    async def refusing(*args, **kwargs):
+        raise printhost.PrintHostError("Klippy Disconnected")
+
+    monkeypatch.setattr(printhost, "print_control", refusing)
+    response = client.post(f"/printers/{printer_id}/print/pause")
+    assert response.status_code == 502 and "Klippy Disconnected" in response.json()["detail"]
+
+
+def test_the_webcams_are_listed_by_name_without_their_addresses(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+
+    async def fake_list(printer, **kwargs):
+        return [{"name": "tool", "snapshot_url": "http://voron.local/snap", "stream_url": "http://voron.local/stream"}]
+
+    monkeypatch.setattr(printhost, "webcam_list", fake_list)
+    response = client.get(f"/printers/{printer_id}/webcams")
+    assert response.status_code == 200
+    assert response.json() == [{"index": 0, "name": "tool"}]
+
+
+def test_a_webcam_snapshot_is_the_picture(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+
+    async def fake_snapshot(printer, index, **kwargs):
+        return b"\xff\xd8jpeg", "image/jpeg"
+
+    monkeypatch.setattr(printhost, "webcam_snapshot", fake_snapshot)
+    response = client.get(f"/printers/{printer_id}/webcams/0/snapshot")
+    assert response.status_code == 200
+    assert response.content == b"\xff\xd8jpeg"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert "no-store" in response.headers["cache-control"]
+
+
+def test_a_webcam_that_is_not_there_is_a_404(client, monkeypatch):
+    printer_id = _klipper_printer(client)
+
+    async def missing(printer, index, **kwargs):
+        raise printhost.NoSuchCamera("There is no camera 3 on this printer")
+
+    monkeypatch.setattr(printhost, "webcam_snapshot", missing)
+    assert client.get(f"/printers/{printer_id}/webcams/3/snapshot").status_code == 404

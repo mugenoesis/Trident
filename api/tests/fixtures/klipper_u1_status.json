@@ -1,0 +1,54 @@
+{
+ "print_stats": {
+  "filename": "plate_1.gcode",
+  "total_duration": 6703.108892363496,
+  "print_duration": 6484.772928842343,
+  "state": "complete",
+  "message": "",
+  "info": {
+   "total_layer": 99,
+   "current_layer": 99
+  }
+ },
+ "display_status": {
+  "progress": 1
+ },
+ "virtual_sdcard": {
+  "progress": 1,
+  "is_active": false
+ },
+ "webhooks": {
+  "state": "ready",
+  "state_message": "Printer is ready"
+ },
+ "heater_bed": {
+  "temperature": 14,
+  "target": 0,
+  "power": 0
+ },
+ "extruder": {
+  "temperature": 16,
+  "target": 0,
+  "power": 0
+ },
+ "extruder1": {
+  "temperature": 16,
+  "target": 0,
+  "power": 0
+ },
+ "extruder2": {
+  "temperature": 16,
+  "target": 0,
+  "power": 0
+ },
+ "extruder3": {
+  "temperature": 16,
+  "target": 0,
+  "power": 0
+ },
+ "temperature_sensor cavity": {
+  "temperature": 17,
+  "measured_min_temp": 12,
+  "measured_max_temp": 40
+ }
+}

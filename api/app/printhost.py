@@ -11,10 +11,13 @@ to do with the nocli/blocked_settings machinery.
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
@@ -187,3 +190,128 @@ async def read_klipper(printer: Printer, *, client: httpx.AsyncClient | None = N
         "settings": _field(config, "result", "status", "configfile", "settings"),
         "objects": _field(objects, "result", "objects"),
     }
+
+
+# ---- the printer page: live status, pause/resume/cancel, webcams (Klipper through Moonraker) ----
+
+_CONTROLS = ("pause", "resume", "cancel")
+_STATUS_OBJECTS = ("webhooks", "print_stats", "virtual_sdcard", "display_status")
+_HEATER_OBJECT = re.compile(r"^(extruder\d*|heater_bed|heater_generic .+|temperature_sensor .+|temperature_fan .+)$")
+_MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
+
+
+class NoSuchCamera(PrintHostError):
+    """The printer has no camera with that number."""
+
+
+def _klipper_base(printer: Printer, what: str) -> str:
+    if printer["host_type"] != "moonraker":
+        raise PrintHostError(f"{what} works for Klipper printers (Moonraker) only")
+    return _require_supported(printer)[1]
+
+
+@asynccontextmanager
+async def _session(client: httpx.AsyncClient | None, read_timeout: float) -> AsyncIterator[httpx.AsyncClient]:
+    """The given client (tests), or one scoped to this one piece of work."""
+    if client is not None:
+        yield client
+        return
+    own = httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=read_timeout))
+    try:
+        yield own
+    finally:
+        await own.aclose()
+
+
+async def read_status(printer: Printer, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """A Klipper printer's live status as Moonraker reports it (the `status` of an objects query): the print, and every heater and temperature
+    sensor it has. Read-only: two GETs. `client` is only passed in tests."""
+    base = _klipper_base(printer, "A live status")
+    async with _session(client, 10.0) as http:
+        listed = _field(await _get_json(http, f"{base}/printer/objects/list", printer), "result", "objects")
+        wanted = [o for o in listed if isinstance(o, str) and (o in _STATUS_OBJECTS or _HEATER_OBJECT.match(o))]
+        query = "&".join(quote(name, safe="") for name in wanted)
+        answer = await _get_json(http, f"{base}/printer/objects/query?{query}", printer)
+    return _field(answer, "result", "status")
+
+
+async def print_control(printer: Printer, action: str, *, client: httpx.AsyncClient | None = None) -> None:
+    """Pause, resume or cancel the print on a Klipper printer. Nothing else can be asked of it through here."""
+    if action not in _CONTROLS:
+        raise PrintHostError("Only pause, resume or cancel can be asked of the printer")
+    base = _klipper_base(printer, "Controlling a print")
+    async with _session(client, 15.0) as http:
+        try:
+            response = await http.post(
+                f"{base}/printer/print/{action}", headers=_headers(printer), **_auth_kwargs(printer)
+            )
+        except httpx.HTTPError as exc:
+            raise PrintHostError(f"Couldn't reach the printer: {exc}") from exc
+    if response.status_code >= 400:
+        raise PrintHostError(_refusal(response))
+
+
+def _refusal(response: httpx.Response) -> str:
+    """The printer's own words for why it said no, else its status."""
+    try:
+        message = response.json()["error"]["message"]
+        if isinstance(message, str) and message:
+            return message[:200]
+    except (ValueError, KeyError, TypeError):
+        pass
+    return f"Printer host returned {response.status_code}: {response.text[:200]}"
+
+
+async def _cameras(http: httpx.AsyncClient, printer: Printer, base: str) -> list[dict[str, str]]:
+    answer = await _get_json(http, f"{base}/server/webcams/list", printer)
+    origin = "{0.scheme}://{0.netloc}/".format(urlsplit(base))
+    cameras: list[dict[str, str]] = []
+    for cam in _field(answer, "result", "webcams"):
+        if not isinstance(cam, Mapping) or not cam.get("enabled", True) or not cam.get("snapshot_url"):
+            continue
+        snapshot = urljoin(origin, str(cam["snapshot_url"]))
+        if urlsplit(snapshot).scheme not in ("http", "https"):
+            continue
+        stream = urljoin(origin, str(cam.get("stream_url") or ""))
+        cameras.append(
+            {
+                "name": str(cam.get("name") or f"Camera {len(cameras) + 1}"),
+                "snapshot_url": snapshot,
+                "stream_url": stream,
+            }
+        )
+    return cameras
+
+
+async def webcam_list(printer: Printer, *, client: httpx.AsyncClient | None = None) -> list[dict[str, str]]:
+    """The printer's enabled webcams that can give a snapshot: `{name, snapshot_url, stream_url}`, addresses made whole."""
+    base = _klipper_base(printer, "A webcam")
+    async with _session(client, 10.0) as http:
+        return await _cameras(http, printer, base)
+
+
+async def webcam_snapshot(
+    printer: Printer, index: int, *, client: httpx.AsyncClient | None = None
+) -> tuple[bytes, str]:
+    """One picture from webcam `index` of `webcam_list`, and its type. The printer's credentials go only to the printer's own address."""
+    base = _klipper_base(printer, "A webcam")
+    async with _session(client, 10.0) as http:
+        cameras = await _cameras(http, printer, base)
+        if not 0 <= index < len(cameras):
+            raise NoSuchCamera(f"There is no camera {index} on this printer")
+        url = cameras[index]["snapshot_url"]
+        ours = urlsplit(url).netloc == urlsplit(base).netloc
+        try:
+            response = await http.get(
+                url, headers=_headers(printer) if ours else {}, **(_auth_kwargs(printer) if ours else {})
+            )
+        except httpx.HTTPError as exc:
+            raise PrintHostError(f"Couldn't reach the camera: {exc}") from exc
+    if response.status_code >= 400:
+        raise PrintHostError(f"The camera returned {response.status_code}")
+    kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    if not kind.startswith("image/"):
+        raise PrintHostError("The camera did not answer with a picture")
+    if len(response.content) > _MAX_SNAPSHOT_BYTES:
+        raise PrintHostError("The camera's picture is too large")
+    return response.content, kind
