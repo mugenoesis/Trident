@@ -79,7 +79,7 @@ def _moonraker(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=CAMERAS)
     if path.startswith("/printer/print/") and request.method == "POST":
         return httpx.Response(200, json={"result": "ok"})
-    if path == "/webcam/" or path == "/snap.jpg":
+    if path in {"/webcam/", "/snap.jpg"}:
         return httpx.Response(200, content=b"\xff\xd8jpegbytes", headers={"content-type": "image/jpeg"})
     return httpx.Response(404)
 
