@@ -26,7 +26,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 console.log(`[1/7] Loading ${BASE_URL} and choosing single-user mode ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: 'Just me (no login)' }).click();
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 
 console.log('[2/7] Making an upload-only key ...');
 await page.getByRole('button', { name: 'Settings' }).click();
@@ -74,7 +74,7 @@ check(after.status() === 401, 'a revoked key stops working at once');
 
 console.log('[6/7] A model that is not there ...');
 await page.goto(`${BASE_URL}/?model=nosuchmodel`, { waitUntil: 'networkidle' });
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 check(!page.url().includes('model='), 'a model that cannot be found still clears the address');
 
 console.log("[7/7] A key for Holecraft's resin tools (hollow, supports) ...");

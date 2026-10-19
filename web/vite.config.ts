@@ -10,7 +10,7 @@ export default defineConfig({
 			registerType: 'autoUpdate',
 			includeAssets: ['favicon.svg'],
 			manifest: {
-				name: 'TridentSlicer',
+				name: 'Trident Studio',
 				short_name: 'Trident',
 				description: 'Slice STL/3MF files with a headless OrcaSlicer backend',
 				theme_color: '#1b1f24',

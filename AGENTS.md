@@ -5,7 +5,7 @@ Read this first, then `README.md` (what Trident does, how it is built and checke
 
 ## What this project is
 
-Trident (TridentSlicer, repo `headless-orca`) is a **self-hosted slicer for a server**: OrcaSlicer's engine run headless in Docker, a
+Trident (Trident Studio, repo `headless-orca`) is a **self-hosted slicer for a server**: OrcaSlicer's engine run headless in Docker, a
 FastAPI API (`api/`) and a React web UI (`web/`), shipped as one container. License: AGPL-3.0-only.
 
 - The slicing engine is a **submodule**, `vendor/orcaslicer` = the `headless-orca` branch of `mugenoesis/Pseudorca` (our OrcaSlicer fork,

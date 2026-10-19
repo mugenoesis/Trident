@@ -27,7 +27,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible()) await justMe.click();
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 
 // How many pixels of the preview are the model's orange (the plate and background are grey).
 async function modelPixels() {

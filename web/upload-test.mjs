@@ -20,7 +20,7 @@ const check = (ok, what) => {
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible().catch(() => false)) await justMe.click();
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 
 const accept = await page.locator('input[data-model-input]').getAttribute('accept');
 check(

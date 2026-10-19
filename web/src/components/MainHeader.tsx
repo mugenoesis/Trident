@@ -8,7 +8,7 @@ export default function MainHeader({ c }: { c: AppCtx }) {
 			<header className="app-header">
 				<h1>
 					<img src="/icon-192.png" alt="" width={46} height={46} />
-					TridentSlicer
+					Trident Studio
 				</h1>
 				<SettingsMenu
 					status={authStatus}
