@@ -39,7 +39,7 @@ export default function SetupGate({ onChooseSingle, onChooseMulti }: SetupGatePr
 		<div className="auth-gate">
 			<div className="auth-card">
 				<img className="auth-logo" src="/icon-192.png" alt="Trident logo" width={96} height={96} />
-				<h2>Welcome to TridentSlicer</h2>
+				<h2>Welcome to Trident Studio</h2>
 				{mode === 'choose' && (
 					<>
 						<p className="auth-copy">How do you want to use this?</p>

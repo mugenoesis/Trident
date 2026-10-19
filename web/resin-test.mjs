@@ -42,7 +42,7 @@ console.log(`[1/20] Loading ${BASE_URL} ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible()) await justMe.click();
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 
 console.log('[2/20] Uploading a model, then switching to Resin ...');
 await page.locator(MODEL_INPUT).setInputFiles(path.resolve('fixtures/test-cube.stl'));
@@ -173,7 +173,7 @@ check(true, 'its saved exposure is back (2.5, not the 9 typed after saving)');
 console.log('[10/20] After a reload ...');
 await remembered;
 await page.reload({ waitUntil: 'networkidle' });
-await page.waitForSelector('text=TridentSlicer');
+await page.waitForSelector('text=Trident Studio');
 await panel.getByLabel('Printer', { exact: true }).waitFor();
 // the last printer is restored once the saved printers have loaded, a moment after the page is up
 await page.waitForFunction(() => document.querySelector('#resin-printer option:checked')?.textContent === 'Mars 3');
