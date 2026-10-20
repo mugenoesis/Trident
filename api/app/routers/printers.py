@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from .. import klipper_import, klipper_status, printhost
+from .. import bambu_camera, bambu_link, bambu_status, klipper_import, klipper_status, printhost
 from .. import resin as resin_module
 from ..auth import require_user
 from ..jobstore import store as job_store
@@ -25,7 +26,8 @@ from ..schemas import (
     TestConnectionRequest,
 )
 from ..userstore import User
-from .jobs import resolve_job_gcode_path
+from .jobs import resolve_job_3mf_path, resolve_job_gcode_path
+from .models import resolve_model_original_name
 
 router = APIRouter(prefix="/printers", tags=["printers"])
 
@@ -59,8 +61,11 @@ async def test_connection_ad_hoc(body: TestConnectionRequest, current: User = De
     printer, POST /printers/{id}/test-connection uses its stored
     credentials instead."""
     try:
-        message = await printhost.test_connection(body.model_dump())
-    except printhost.PrintHostError as exc:
+        if body.host_type == "bambu":
+            message = await bambu_link.check_connection(body.print_host, body.device_id, body.printhost_apikey)
+        else:
+            message = await printhost.test_connection(body.model_dump())
+    except (printhost.PrintHostError, bambu_link.BambuError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"message": message}
 
@@ -81,36 +86,79 @@ async def import_from_klipper_printer(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _klipper_row(printer_id: str, current: User):
-    """The stored connection of one of the user's own printers, which has to be a Klipper (Moonraker) one."""
+def _live_row(printer_id: str, current: User):
+    """The stored connection of one of the user's own printers that has a live page: a Klipper (Moonraker) printer, or a Bambu one in LAN mode."""
     _get_owned_printer(printer_id, current)
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
+    if row["host_type"] == "bambu":
+        if not (row["print_host"] and row["device_id"] and row["printhost_apikey"]):
+            raise HTTPException(
+                status_code=400, detail="This Bambu printer needs its IP address, serial number and access code saved"
+            )
+        return row
     if row["host_type"] != "moonraker" or not row["print_host"]:
-        raise HTTPException(status_code=400, detail="This printer has no Klipper (Moonraker) connection saved")
+        raise HTTPException(status_code=400, detail="This printer has no Klipper (Moonraker) or Bambu connection saved")
     return row
+
+
+def _refuse_if_monitor_only(row) -> None:
+    """A Bambu printer saved as monitor only is never sent a command: without Developer Mode it would ignore it."""
+    if row["monitor_only"]:
+        raise HTTPException(
+            status_code=409,
+            detail="This printer is saved as monitor only. Turn on Developer Mode on it and untick monitor only to control it from here",
+        )
 
 
 @router.get("/{printer_id}/status")
 async def printer_status(printer_id: str, current: User = Depends(require_user)) -> dict[str, Any]:
-    """The live state of a Klipper printer: the print, its progress, the temperatures and what can be done to it. Read-only."""
-    row = _klipper_row(printer_id, current)
+    """The live state of a Klipper or Bambu printer: the print, its progress, the temperatures and what can be done to it. Read-only."""
+    row = _live_row(printer_id, current)
     try:
-        raw = await printhost.read_status(row)
-    except printhost.PrintHostError as exc:
+        if row["host_type"] == "bambu":
+            status = bambu_status.status_from_bambu(await bambu_link.read_report(row), row["device_id"])
+            if row["monitor_only"]:
+                status["can"] = {"pause": False, "resume": False, "cancel": False}
+                status["monitor_only"] = True
+            return status
+        return klipper_status.status_from_klipper(await printhost.read_status(row))
+    except (printhost.PrintHostError, bambu_link.BambuError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return klipper_status.status_from_klipper(raw)
+
+
+@router.get("/{printer_id}/raw-status")
+async def printer_raw_status(printer_id: str, current: User = Depends(require_user)) -> dict[str, Any]:
+    """What a Bambu printer reports, as it sends it, without what identifies it: for finding out what a printer says that the page does not use."""
+    row = _live_row(printer_id, current)
+    if row["host_type"] != "bambu":
+        raise HTTPException(status_code=400, detail="Only a Bambu printer has a raw report")
+    try:
+        report = await bambu_link.read_report(row)
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    secrets = [
+        row["device_id"],
+        row["print_host"],
+        bambu_link.split_host(row["print_host"])[0],
+        row["printhost_apikey"],
+    ]
+    return {"report": bambu_link.redacted(report, secrets)}
 
 
 @router.post("/{printer_id}/print/{action}")
 async def control_print(
     printer_id: str, action: Literal["pause", "resume", "cancel"], current: User = Depends(require_user)
 ) -> dict[str, bool]:
-    """Pause, resume or cancel the print on a Klipper printer. Nothing else can be asked of it through here."""
-    row = _klipper_row(printer_id, current)
+    """Pause, resume or cancel the print on a Klipper or Bambu printer. Nothing else can be asked of it through here."""
+    row = _live_row(printer_id, current)
     try:
-        await printhost.print_control(row, action)
-    except printhost.PrintHostError as exc:
+        if row["host_type"] == "bambu":
+            _refuse_if_monitor_only(row)
+            await bambu_link.control(row, action)
+        else:
+            await printhost.print_control(row, action)
+    except (printhost.PrintHostError, bambu_link.BambuError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}
 
@@ -118,7 +166,11 @@ async def control_print(
 @router.get("/{printer_id}/webcams")
 async def printer_webcams(printer_id: str, current: User = Depends(require_user)) -> list[dict[str, Any]]:
     """The webcams of a Klipper printer, by name (their addresses stay here: a picture is fetched through the snapshot route)."""
-    row = _klipper_row(printer_id, current)
+    row = _live_row(printer_id, current)
+    if row["host_type"] == "bambu":
+        return [
+            {"index": 0, "name": "Camera"}
+        ]  # one camera; whether it answers is found out when a picture is asked for
     try:
         cameras = await printhost.webcam_list(row)
     except printhost.PrintHostError as exc:
@@ -126,10 +178,22 @@ async def printer_webcams(printer_id: str, current: User = Depends(require_user)
     return [{"index": i, "name": cam["name"]} for i, cam in enumerate(cameras)]
 
 
+async def _bambu_snapshot(row, index: int) -> Response:
+    if index != 0:
+        raise HTTPException(status_code=404, detail=f"There is no camera {index} on this printer")
+    try:
+        data, kind = await bambu_camera.snapshot(row)
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=data, media_type=kind, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/{printer_id}/webcams/{index}/snapshot")
 async def printer_webcam_snapshot(printer_id: str, index: int, current: User = Depends(require_user)) -> Response:
     """One picture from a webcam of a Klipper printer (fetched here, so the printer's address and key stay on the server)."""
-    row = _klipper_row(printer_id, current)
+    row = _live_row(printer_id, current)
+    if row["host_type"] == "bambu":
+        return await _bambu_snapshot(row, index)
     try:
         data, kind = await printhost.webcam_snapshot(row, index)
     except printhost.NoSuchCamera as exc:
@@ -276,10 +340,26 @@ async def test_printer_connection(printer_id: str, current: User = Depends(requi
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
     try:
-        message = await printhost.test_connection(row)
-    except printhost.PrintHostError as exc:
+        if row["host_type"] == "bambu":
+            message = await bambu_link.check_connection(row["print_host"], row["device_id"], row["printhost_apikey"])
+        else:
+            message = await printhost.test_connection(row)
+    except (printhost.PrintHostError, bambu_link.BambuError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"message": message}
+
+
+async def _send_to_bambu(row, job, body: SendToPrinterRequest) -> dict[str, bool]:
+    """A Bambu printer is sent the job's sliced 3MF (uploaded by FTPS, started by MQTT if asked), named after the model."""
+    three_mf = resolve_job_3mf_path(job.id)
+    name = Path(resolve_model_original_name(job.model_id) or job.id).stem
+    try:
+        await bambu_link.send_print(
+            row, three_mf, name=name, start=body.start_print, use_ams=body.use_ams, plate_index=job.plate_index
+        )
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @router.post("/{printer_id}/send/{job_id}")
@@ -293,10 +373,12 @@ async def send_to_printer(
     job = job_store.get(job_id)
     if job is None or job.user_id != current.id:
         raise HTTPException(status_code=404, detail="Job not found")
-    gcode_path = resolve_job_gcode_path(job_id)
-
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
+    if row["host_type"] == "bambu":
+        _refuse_if_monitor_only(row)
+        return await _send_to_bambu(row, job, body)
+    gcode_path = resolve_job_gcode_path(job_id)
     try:
         await printhost.send_gcode(row, gcode_path, body.start_print)
     except printhost.PrintHostError as exc:

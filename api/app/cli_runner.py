@@ -134,6 +134,20 @@ def _filament_map_overrides(
     return out
 
 
+# The sliced 3MF a Bambu printer is sent (the plate's G-code packaged with what it needs), written next to the G-code for Bambu machines.
+SLICED_3MF = "sliced.gcode.3mf"
+
+
+def is_bambu_machine(detail: ProfileDetail) -> bool:
+    """Whether a machine profile is a Bambu printer's, or a copy of one: what a Bambu printer is sent is a sliced 3MF, not plain G-code."""
+    data = detail.data
+    return (
+        detail.vendor == "BBL"
+        or str(data.get("printer_model", "")).startswith("Bambu Lab")
+        or str(data.get("inherits", "")).startswith("Bambu Lab")
+    )
+
+
 def _resolve_profile_detail(kind: str, name: str, user_id: str | None = None) -> ProfileDetail:
     detail = profiles_module.catalog.get_by_name(kind, name, user_id)
     if detail is None:
@@ -410,6 +424,8 @@ def _slice_command(
         # type, so it's correct (and safe with spaces, e.g. enum values like
         # "Textured PEI Plate") for every option, not just bools.
         cmd.append(f"--{key.replace('_', '-')}={value}")
+    if is_bambu_machine(printer_detail):
+        cmd += ["--export-3mf", SLICED_3MF]
     cmd.append(str(model_path))
     return cmd
 

@@ -4,6 +4,7 @@ import { usePrinterStatus } from '../hooks/usePrinterStatus';
 import { layerText, percentText, showsCamera, stateLabel, stateTone, timeText } from '../printerStatus';
 import type { PrintAction, PrinterCamera, PrinterRecord, PrinterStatus } from '../types';
 import PrinterCam from './PrinterCam';
+import RawStatus from './RawStatus';
 
 /** "Nozzle 214.8° / 215°" tiles: a heater that is heating is outlined. */
 function Temperatures({ status }: { status: PrinterStatus }) {
@@ -134,7 +135,11 @@ export default function PrinterCard({ printer }: { printer: PrinterRecord }) {
 			{!loaded && <p className="auth-hint">Asking the printer…</p>}
 			{error && (
 				<>
-					<p className="printer-off">{error}. It may be off; trying again every few seconds.</p>
+					<p className="printer-off">
+						{/needs its/.test(error)
+							? `${error}: edit the printer to add them.`
+							: `${error}. It may be off; trying again every few seconds.`}
+					</p>
 					<p className="auth-hint">{printer.print_host}</p>
 				</>
 			)}
@@ -164,7 +169,14 @@ export default function PrinterCard({ printer }: { printer: PrinterRecord }) {
 					)}
 					<Temperatures status={status} />
 					{showsCamera(status) && <PrinterCam printerId={printer.id} cameras={cameras} />}
-					<Controls printer={printer} status={status} onDone={refresh} />
+					{status.monitor_only ? (
+						<p className="auth-hint">
+							Monitor only: this printer is not in Developer Mode, so it can be watched but not controlled from here.
+						</p>
+					) : (
+						<Controls printer={printer} status={status} onDone={refresh} />
+					)}
+					{printer.host_type === 'bambu' && <RawStatus printerId={printer.id} />}
 				</>
 			)}
 		</article>

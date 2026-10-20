@@ -2646,3 +2646,21 @@
 .printer-confirm h3 {
 	margin: 0 0 8px;
 }
+.printer-raw-box {
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.printer-raw-box summary {
+	cursor: pointer;
+}
+.printer-raw {
+	max-height: 260px;
+	overflow: auto;
+	margin: 6px 0 0;
+	padding: 8px;
+	border: 1px solid var(--panel-border);
+	border-radius: 6px;
+	background: #14171b;
+	color: var(--text);
+	font-size: 11px;
+}
