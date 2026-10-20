@@ -449,6 +449,33 @@ export interface KlipperImportResult {
 	klipper: { hostname: string | null; version: string | null; state: string | null };
 }
 
+// The live state of a Klipper printer (GET /printers/{id}/status, api/app/klipper_status.py).
+interface PrinterTemperature {
+	name: string;
+	kind: 'nozzle' | 'bed' | 'heater' | 'chamber' | 'sensor';
+	current: number;
+	target: number | null;
+}
+
+export interface PrinterStatus {
+	state: string;
+	state_message: string;
+	file: string | null;
+	progress: number | null;
+	layer: { current: number; total: number } | null;
+	elapsed_s: number | null;
+	remaining_s: number | null;
+	temperatures: PrinterTemperature[];
+	can: { pause: boolean; resume: boolean; cancel: boolean };
+}
+
+export interface PrinterCamera {
+	index: number;
+	name: string;
+}
+
+export type PrintAction = 'pause' | 'resume' | 'cancel';
+
 export interface ExportItem {
 	kind: 'machine' | 'filament' | 'process';
 	name: string;

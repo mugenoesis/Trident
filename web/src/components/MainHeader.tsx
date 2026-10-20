@@ -1,4 +1,5 @@
 import type { AppCtx } from '../hooks/useAppController';
+import PrintersButton from './PrintersPanel';
 import SettingsMenu from './SettingsMenu';
 
 export default function MainHeader({ c }: { c: AppCtx }) {
@@ -10,15 +11,18 @@ export default function MainHeader({ c }: { c: AppCtx }) {
 					<img src="/icon-192.png" alt="" width={46} height={46} />
 					Trident Studio
 				</h1>
-				<SettingsMenu
-					status={authStatus}
-					onSwitchToMulti={onSwitchToMulti}
-					onSwitchToSingle={onSwitchToSingle}
-					onCreateUser={onCreateUser}
-					onLogout={onLogout}
-					sampleModels={sampleModels}
-					onLoadSample={handleLoadSample}
-				/>
+				<div className="header-actions">
+					<PrintersButton />
+					<SettingsMenu
+						status={authStatus}
+						onSwitchToMulti={onSwitchToMulti}
+						onSwitchToSingle={onSwitchToSingle}
+						onCreateUser={onCreateUser}
+						onLogout={onLogout}
+						sampleModels={sampleModels}
+						onLoadSample={handleLoadSample}
+					/>
+				</div>
 			</header>
 			{catalogError && <div className="banner-error">Failed to load printer/settings catalog: {catalogError}</div>}
 		</>

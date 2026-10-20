@@ -60,6 +60,10 @@ cd web && npm run dev                      # Vite on :5173, talking to an API on
 - Engine images for testing are built by layering a fresh engine build over a Trident image (see Pseudorca's `scripts/pseudorca/build-candidate.sh`);
   a full Dockerfile build takes about an hour.
 
+## The Printers page (live Klipper state)
+- Server: `klipper_status.status_from_klipper` (pure) turns Moonraker's objects-query `status` into what the page shows; `printhost.read_status` (asks the objects list, then only the print objects and the heaters and sensors), `print_control` (**only pause, resume and cancel**, checked before anything is sent), `webcam_list` and `webcam_snapshot` (the printer's key goes only to the printer's own address, never to a camera elsewhere) are the Moonraker side; routes are in routers/printers.py (all need a saved printer with host_type moonraker). Tests use `tests/fixtures/klipper_u1_status.json` (trimmed from a real response).
+- Web: `PrintersButton` (header) opens `PrintersPanel`, one `PrinterCard` per saved Klipper printer; `usePrinterStatus` polls every 3 s only while a card is mounted, `PrinterCam` renews a webcam picture about once a second (each picture loads out of sight and is swapped in), `printerStatus.ts` holds the pure labels and text. `web/printers-test.mjs` runs it against a fake Moonraker.
+
 ## API and web conventions
 - Jobs are stored as free-form records (`jobstore`, SQLite); new job kinds go in the existing `result` and `setting_overrides`, not new columns.
 - The web app's state lives in `hooks/useAppState.ts`; each hook next to it does one job and `useAppController.ts` calls them in order.

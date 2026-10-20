@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
-from .. import klipper_import, printhost
+from .. import klipper_import, klipper_status, printhost
 from .. import resin as resin_module
 from ..auth import require_user
 from ..jobstore import store as job_store
@@ -79,6 +79,64 @@ async def import_from_klipper_printer(
         return klipper_import.import_from_klipper(snapshot["info"], snapshot["settings"], snapshot["objects"])
     except klipper_import.KlipperImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _klipper_row(printer_id: str, current: User):
+    """The stored connection of one of the user's own printers, which has to be a Klipper (Moonraker) one."""
+    _get_owned_printer(printer_id, current)
+    row = store.get_printer_row(printer_id)
+    assert row is not None  # just confirmed ownership above
+    if row["host_type"] != "moonraker" or not row["print_host"]:
+        raise HTTPException(status_code=400, detail="This printer has no Klipper (Moonraker) connection saved")
+    return row
+
+
+@router.get("/{printer_id}/status")
+async def printer_status(printer_id: str, current: User = Depends(require_user)) -> dict[str, Any]:
+    """The live state of a Klipper printer: the print, its progress, the temperatures and what can be done to it. Read-only."""
+    row = _klipper_row(printer_id, current)
+    try:
+        raw = await printhost.read_status(row)
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return klipper_status.status_from_klipper(raw)
+
+
+@router.post("/{printer_id}/print/{action}")
+async def control_print(
+    printer_id: str, action: Literal["pause", "resume", "cancel"], current: User = Depends(require_user)
+) -> dict[str, bool]:
+    """Pause, resume or cancel the print on a Klipper printer. Nothing else can be asked of it through here."""
+    row = _klipper_row(printer_id, current)
+    try:
+        await printhost.print_control(row, action)
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.get("/{printer_id}/webcams")
+async def printer_webcams(printer_id: str, current: User = Depends(require_user)) -> list[dict[str, Any]]:
+    """The webcams of a Klipper printer, by name (their addresses stay here: a picture is fetched through the snapshot route)."""
+    row = _klipper_row(printer_id, current)
+    try:
+        cameras = await printhost.webcam_list(row)
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return [{"index": i, "name": cam["name"]} for i, cam in enumerate(cameras)]
+
+
+@router.get("/{printer_id}/webcams/{index}/snapshot")
+async def printer_webcam_snapshot(printer_id: str, index: int, current: User = Depends(require_user)) -> Response:
+    """One picture from a webcam of a Klipper printer (fetched here, so the printer's address and key stay on the server)."""
+    row = _klipper_row(printer_id, current)
+    try:
+        data, kind = await printhost.webcam_snapshot(row, index)
+    except printhost.NoSuchCamera as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except printhost.PrintHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=data, media_type=kind, headers={"Cache-Control": "no-store"})
 
 
 @router.put("/{printer_id}", response_model=PrinterRecord)

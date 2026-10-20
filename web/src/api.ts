@@ -18,10 +18,13 @@ import type {
 	MyResinPrinterRequest,
 	MyResinRequest,
 	ObjectEdit,
+	PrintAction,
+	PrinterCamera,
 	PrinterConnection,
 	PrinterCreateRequest,
 	PrinterForm,
 	PrinterRecord,
+	PrinterStatus,
 	PrinterUpdateRequest,
 	ProfileDetail,
 	ProfileSummary,
@@ -125,6 +128,24 @@ export function createPrinterProfile(form: PrinterForm): Promise<ImportedProfile
 // Reads a Klipper printer's own config through Moonraker (read-only) and answers the New printer form it makes.
 export function importFromKlipper(printHost: string, apiKey: string): Promise<KlipperImportResult> {
 	return postJson('/printers/klipper-import', { print_host: printHost, ...(apiKey ? { printhost_apikey: apiKey } : {}) });
+}
+
+// The live page of a saved Klipper printer: what it is doing, pause/resume/cancel, and its webcams (pictures come through the server).
+export function getPrinterStatus(printerId: string): Promise<PrinterStatus> {
+	return request(`/printers/${encodeURIComponent(printerId)}/status`);
+}
+
+export function controlPrint(printerId: string, action: PrintAction): Promise<{ ok: boolean }> {
+	return request(`/printers/${encodeURIComponent(printerId)}/print/${action}`, { method: 'POST' });
+}
+
+export function listPrinterWebcams(printerId: string): Promise<PrinterCamera[]> {
+	return request(`/printers/${encodeURIComponent(printerId)}/webcams`);
+}
+
+/** The address of one picture from a webcam; `tick` makes each one a new address, so the browser fetches it afresh. */
+export function printerSnapshotUrl(printerId: string, index: number, tick: number): string {
+	return `${API_BASE}/printers/${encodeURIComponent(printerId)}/webcams/${index}/snapshot?t=${tick}`;
 }
 
 export function updatePrinterProfile(form: PrinterForm): Promise<ImportedProfile> {
