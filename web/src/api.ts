@@ -505,8 +505,8 @@ export function deleteSettingsProfile(printerId: string, profileId: string): Pro
 	return request(`/printers/${printerId}/settings-profiles/${profileId}`, { method: 'DELETE' });
 }
 
-export function sendToPrinter(printerId: string, jobId: string, startPrint: boolean): Promise<{ ok: boolean }> {
-	return postJson(`/printers/${printerId}/send/${jobId}`, { start_print: startPrint });
+export function sendToPrinter(printerId: string, jobId: string, startPrint: boolean, useAms = false): Promise<{ ok: boolean }> {
+	return postJson(`/printers/${printerId}/send/${jobId}`, { start_print: startPrint, use_ams: useAms });
 }
 
 export function createUser(username: string, password: string): Promise<AuthStatus> {

@@ -83,19 +83,26 @@ def project_file_command(*, plate: str, remote_name: str, md5: str, use_ams: boo
 
 
 class ImplicitFtps(ftplib.FTP_TLS):
-    """FTP over TLS from the first byte (port 990), as a printer speaks it. Its data connections reuse the control connection's TLS session, which
-    the printer insists on."""
+    """FTP over TLS from the first byte (port 990), as a printer speaks it: the control connection is wrapped in TLS as soon as it is made, before the
+    server's greeting is read. Its data connections reuse the control connection's TLS session, which the printer insists on.
+    """
 
-    def connect(self, host: str = "", port: int = 0, timeout: float = -999, source_address: Any = None) -> str:
-        welcome = super().connect(host, port, timeout, source_address)
-        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
-        self.file = self.sock.makefile("r", encoding=self.encoding)
-        return welcome
+    _wrapped: Any = None
+
+    @property
+    def sock(self) -> Any:  # type: ignore[override]
+        return self._wrapped
+
+    @sock.setter
+    def sock(self, value: Any) -> None:
+        if value is not None and not isinstance(value, ssl.SSLSocket):
+            value = self.context.wrap_socket(value)
+        self._wrapped = value
 
     def ntransfercmd(self, cmd: str, rest: Any = None) -> tuple[socket.socket, int | None]:
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
         if self._prot_p:
-            conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)  # type: ignore[union-attr]
+            conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)
         return conn, size
 
 

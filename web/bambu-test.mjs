@@ -8,6 +8,7 @@
 // (default 172.17.0.1, Docker's bridge gateway). The container may be on its first-run screen.
 
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,7 +36,7 @@ const until = async (what, test, ms = 10000) => {
 // ---- a Bambu printer: MQTT 3.1.1 over TLS, as much of it as Trident uses ----
 const SERIAL = '00M00A000000000';
 const CODE = '12345678';
-const printer = { state: 'RUNNING', percent: 25, told: [], sockets: new Set() };
+const printer = { state: 'RUNNING', percent: 25, told: [], commands: [], sockets: new Set(), uploads: {} };
 const report = () => ({
 	print: {
 		command: 'push_status',
@@ -118,6 +119,7 @@ function onPublish(socket, flags, body) {
 	const command = message.print?.command;
 	if (!command) return;
 	printer.told.push(command);
+	printer.commands.push(message.print);
 	printer.state = { pause: 'PAUSE', resume: 'RUNNING', stop: 'IDLE' }[command] ?? printer.state;
 	publishReport(socket);
 }
@@ -179,6 +181,66 @@ const broker = tls.createServer(
 		});
 	},
 );
+
+// ---- the same printer's FTPS (implicit TLS on port 990): login, passive mode, and STOR ----
+const tlsOptions = { key: fs.readFileSync(`${directory}/key.pem`), cert: fs.readFileSync(`${directory}/cert.pem`) };
+const ftps = tls.createServer(tlsOptions, (control) => {
+	control.on('error', () => undefined);
+	const reply = (line) => control.write(`${line}\r\n`);
+	let stored = null;
+	let dataServer = null;
+	let loggedIn = false;
+	reply('220 Fake Bambu FTPS');
+	const finishStore = (name, data) => {
+		printer.uploads[name] = data;
+		reply('226 Transfer complete');
+	};
+	const commands = {
+		USER: () => reply('331 Password please'),
+		PASS: (arg) => {
+			loggedIn = arg === CODE;
+			reply(loggedIn ? '230 Logged in' : '530 Login incorrect');
+		},
+		PBSZ: () => reply('200 PBSZ=0'),
+		PROT: () => reply('200 Protection set to Private'),
+		TYPE: () => reply('200 Type set'),
+		PASV: () => {
+			dataServer = tls.createServer(tlsOptions, (data) => {
+				const chunks = [];
+				data.on('error', () => undefined);
+				data.on('data', (c) => chunks.push(c));
+				data.on('end', () => {
+					data.end();
+					finishStore(stored, Buffer.concat(chunks));
+				});
+			});
+			dataServer.listen(0, '0.0.0.0', () => {
+				const port = dataServer.address().port;
+				reply(`227 Entering Passive Mode (0,0,0,0,${port >> 8},${port & 255})`);
+			});
+		},
+		STOR: (arg) => {
+			stored = arg;
+			reply(loggedIn ? '150 Ok to send data' : '530 Not logged in');
+		},
+		QUIT: () => {
+			reply('221 Bye');
+			control.end();
+		},
+	};
+	let pending = '';
+	control.on('data', (chunk) => {
+		pending += chunk.toString();
+		for (let at = pending.indexOf('\r\n'); at >= 0; at = pending.indexOf('\r\n')) {
+			const line = pending.slice(0, at);
+			pending = pending.slice(at + 2);
+			const [word, ...rest] = line.split(' ');
+			(commands[word.toUpperCase()] ?? (() => reply('502 Not implemented')))(rest.join(' '));
+		}
+	});
+	control.on('close', () => dataServer?.close());
+});
+await new Promise((resolve) => ftps.listen(990, '0.0.0.0', resolve));
 await new Promise((resolve) => broker.listen(0, '0.0.0.0', resolve));
 const address = `${FAKE_HOST}:${broker.address().port}`;
 // a real printer pushes its status about every second while it works
@@ -191,7 +253,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1500 } });
 const pageErrors = [];
 page.on('pageerror', (err) => pageErrors.push(String(err)));
 
-console.log(`[1/6] Adding a Bambu printer (the fake one is at ${address}) ...`);
+console.log(`[1/7] Adding a Bambu printer (the fake one is at ${address}) ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible().catch(() => false)) await justMe.click();
@@ -210,7 +272,7 @@ check((await form.getByLabel(/HTTP username/).count()) === 0, 'and not the web-a
 await form.getByLabel('IP address').fill(address);
 await form.getByLabel('Serial number').fill(SERIAL);
 
-console.log('[2/6] Testing the connection ...');
+console.log('[2/7] Testing the connection ...');
 await form.getByLabel('Access code').fill('wrong');
 await form.getByRole('button', { name: 'Test connection' }).click();
 await form.getByText(/refused the access code/).waitFor({ timeout: 15000 });
@@ -223,7 +285,7 @@ await form.getByRole('button', { name: 'Save printer' }).click();
 await page.getByText('Manage saved printers (1)').waitFor();
 check(true, 'the printer is saved');
 
-console.log('[3/6] Editing it ...');
+console.log('[3/7] Editing it ...');
 await page.getByText('Manage saved printers (1)').click();
 await page.getByRole('listitem').getByRole('button', { name: 'Settings', exact: true }).click();
 const edit = page.locator('form.printer-settings-form');
@@ -233,7 +295,7 @@ check((await edit.getByLabel(/^Access code/).inputValue()) === '', 'but never th
 check((await edit.getByText(/leave blank to keep/).count()) >= 1, 'which can be left blank to keep it');
 await edit.getByRole('button', { name: 'Cancel' }).click();
 
-console.log('[4/6] Watching it ...');
+console.log('[4/7] Watching it ...');
 await page.getByRole('button', { name: 'Printers', exact: true }).click();
 const panel = page.getByRole('dialog', { name: 'Your printers' });
 await panel.waitFor();
@@ -246,7 +308,7 @@ check((await card.getByText(/1 h 30 min left/).count()) === 1, 'and the time lef
 check((await card.getByText('214.8°').count()) === 1, 'the nozzle');
 check((await card.getByText('Chamber').count()) === 1, 'and an X1’s chamber');
 
-console.log('[5/6] Pausing, resuming and cancelling ...');
+console.log('[5/7] Pausing, resuming and cancelling ...');
 await card.getByRole('button', { name: 'Pause' }).click();
 await until('the pause', () => printer.told.includes('pause'));
 await card.getByText('Paused', { exact: true }).waitFor({ timeout: 15000 });
@@ -262,7 +324,7 @@ await confirm.getByRole('button', { name: 'Cancel the print', exact: true }).cli
 await until('the stop', () => printer.told.includes('stop'));
 check(true, 'cancelling asks first, then sends the printer’s own stop');
 
-console.log('[6/6] What the printer reports, for finding out what it says ...');
+console.log('[6/7] What the printer reports, for finding out what it says ...');
 await card.getByText('Raw status', { exact: true }).click();
 const raw = card.locator('pre.printer-raw');
 await raw.waitFor({ timeout: 15000 });
@@ -273,9 +335,35 @@ check(
 	'without the serial number, the code or the address',
 );
 
+console.log('[7/7] Sending a sliced print ...');
+await panel.getByRole('button', { name: /Close/ }).click();
+await page.locator('input[type="file"][data-model-input]').setInputFiles(path.resolve('fixtures/test-cube.stl'));
+await page.waitForSelector('text=Ready to slice');
+await page.getByLabel('Saved printer').selectOption({ label: 'X1C' });
+await page.getByRole('button', { name: 'Slice', exact: true }).click();
+const send = page.getByRole('button', { name: 'Send to X1C' });
+await send.waitFor({ timeout: 120000 });
+check(await page.getByLabel(/Print from the AMS/).isVisible(), 'a Bambu printer is offered the AMS');
+await send.click();
+await page.getByText('Sent to X1C.').waitFor({ timeout: 30000 });
+const name = 'test-cube.gcode.3mf';
+check(printer.uploads[name]?.length > 1000, 'the sliced 3MF is uploaded to the printer by FTPS');
+check(printer.uploads[name].subarray(0, 2).toString() === 'PK', 'and it is a 3MF (a zip file)');
+check(!printer.told.includes('project_file'), 'without being started unless asked');
+await page.getByLabel(/Start printing immediately/).check();
+await page.getByLabel(/Print from the AMS/).check();
+await send.click();
+await until('the start command', () => printer.told.includes('project_file'), 30000);
+const start = printer.commands.find((c) => c.command === 'project_file');
+check(start.file === name && start.url === `ftp:///${name}`, 'the print is started by name, as ftp:///name');
+check(start.param === 'Metadata/plate_1.gcode', 'for the plate in the 3MF');
+check(start.md5 === crypto.createHash('md5').update(printer.uploads[name]).digest('hex'), 'with the file\u2019s checksum');
+check(start.use_ams === true && JSON.stringify(start.ams_mapping) === '[0]', 'from the AMS\u2019s first slot when asked');
+
 check(pageErrors.length === 0, `no page errors (${pageErrors.join('; ')})`);
 clearInterval(pusher);
 for (const s of printer.sockets) s.destroy();
 await browser.close();
 broker.close();
+ftps.close();
 console.log('bambu browser check passed');

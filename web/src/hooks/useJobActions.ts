@@ -6,9 +6,9 @@ export function useJobActions(c: AppState & Pick<MainAppProps, never>) {
 	const { selectedPrinterId, setHistory, setCurrentJob, setViewedJobId, setViewMode } = c;
 
 	const handleSendToPrinter = useCallback(
-		(jobId: string, startPrint: boolean) => {
+		(jobId: string, startPrint: boolean, useAms: boolean) => {
 			if (!selectedPrinterId) return Promise.reject(new Error('No printer selected'));
-			return sendToPrinter(selectedPrinterId, jobId, startPrint);
+			return sendToPrinter(selectedPrinterId, jobId, startPrint, useAms);
 		},
 		[selectedPrinterId],
 	);
