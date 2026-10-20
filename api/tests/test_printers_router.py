@@ -731,3 +731,29 @@ def test_a_failed_bambu_connection_test_is_a_502(client, monkeypatch):
         json={"host_type": "bambu", "print_host": "192.168.1.50", "printhost_apikey": "x", "device_id": SERIAL},
     )
     assert response.status_code == 502 and "reach" in response.json()["detail"]
+
+
+def test_a_bambu_printers_raw_report_is_shown_without_what_identifies_it(client, monkeypatch):
+    printer = _bambu_printer(client)
+
+    async def fake_report(row):
+        return {
+            "gcode_state": "RUNNING",
+            "sn": SERIAL,
+            "ip": "192.168.1.50",
+            "mc_percent": 42,
+            "subtask_name": "benchy",
+        }
+
+    monkeypatch.setattr(bambu_link, "read_report", fake_report)
+    response = client.get(f"/printers/{printer['id']}/raw-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["report"]["mc_percent"] == 42 and body["report"]["subtask_name"] == "benchy"
+    for secret in (SERIAL, "192.168.1.50", "12345678"):
+        assert secret not in response.text
+
+
+def test_only_a_bambu_printer_has_a_raw_report(client):
+    printer_id = _klipper_printer(client)
+    assert client.get(f"/printers/{printer_id}/raw-status").status_code == 400

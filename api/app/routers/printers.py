@@ -112,6 +112,25 @@ async def printer_status(printer_id: str, current: User = Depends(require_user))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/{printer_id}/raw-status")
+async def printer_raw_status(printer_id: str, current: User = Depends(require_user)) -> dict[str, Any]:
+    """What a Bambu printer reports, as it sends it, without what identifies it: for finding out what a printer says that the page does not use."""
+    row = _live_row(printer_id, current)
+    if row["host_type"] != "bambu":
+        raise HTTPException(status_code=400, detail="Only a Bambu printer has a raw report")
+    try:
+        report = await bambu_link.read_report(row)
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    secrets = [
+        row["device_id"],
+        row["print_host"],
+        bambu_link.split_host(row["print_host"])[0],
+        row["printhost_apikey"],
+    ]
+    return {"report": bambu_link.redacted(report, secrets)}
+
+
 @router.post("/{printer_id}/print/{action}")
 async def control_print(
     printer_id: str, action: Literal["pause", "resume", "cancel"], current: User = Depends(require_user)

@@ -322,3 +322,40 @@ def test_a_connection_check_says_how_the_printer_is_and_lets_go_of_it(monkeypatc
     message = asyncio.run(bambu_link.check_connection("192.168.1.50", SERIAL, "12345678"))
     assert "Connected" in message and "standby" in message
     assert made[0].closed is True
+
+
+# ---- an address can carry a port ----
+
+
+def test_an_address_with_a_port_is_connected_to_on_that_port():
+    transport = _paho()
+    transport.connect("192.168.1.50:9999", "bblp", "12345678")
+    assert ("connect", "192.168.1.50", 9999) in FakePaho.last.calls
+
+
+def test_an_address_with_no_port_uses_8883():
+    transport = _paho()
+    transport.connect(" 192.168.1.50 ", "bblp", "12345678")
+    assert ("connect", "192.168.1.50", 8883) in FakePaho.last.calls
+
+
+# ---- the raw report, for finding out what a printer says (nothing that identifies it) ----
+
+
+def test_a_raw_report_has_the_serial_number_the_address_and_the_code_taken_out():
+    from app.bambu_link import redacted
+
+    report = {
+        "gcode_state": "RUNNING",
+        "sn": SERIAL,
+        "ip": "192.168.1.50",
+        "ap_ssid": "MyWifi",
+        "subtask_name": f"made on {SERIAL}",
+        "nested": {"wifi": "192.168.1.50 is me", "layers": [1, 2, {"code": "12345678"}]},
+        "mc_percent": 42,
+    }
+    clean = redacted(report, [SERIAL, "192.168.1.50", "12345678"])
+    text = json.dumps(clean)
+    for secret in (SERIAL, "192.168.1.50", "12345678", "MyWifi"):
+        assert secret not in text
+    assert clean["gcode_state"] == "RUNNING" and clean["mc_percent"] == 42

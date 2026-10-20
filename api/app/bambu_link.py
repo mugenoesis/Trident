@@ -26,6 +26,17 @@ _USERNAME = "bblp"
 # What a link is asked to do to the print: the names the page uses, and the printer's own commands for them.
 _CONTROLS = {"pause": "pause", "resume": "resume", "cancel": "stop"}
 _IDLE_SECONDS = 60.0
+# Keys of a report that say which printer it is, left out of a raw report that is shared.
+_IDENTIFYING_KEYS = frozenset({"sn", "ip", "ap_ssid", "ssid", "bssid", "mac"})
+
+
+def split_host(address: str) -> tuple[str, int]:
+    """A printer's address as saved: an IP address or name, with a port after a colon if it is not the usual 8883."""
+    text = address.strip()
+    name, colon, port = text.rpartition(":")
+    if colon and port.isdigit() and ":" not in name:
+        return name, int(port)
+    return text, MQTT_PORT
 
 
 class BambuError(Exception):
@@ -74,8 +85,9 @@ class PahoTransport:
         client.username_pw_set(username, password)
         client.tls_set(cert_reqs=ssl.CERT_NONE)
         client.tls_insecure_set(True)  # a printer's certificate is its own, so there is nothing to check it against
+        name, port = split_host(host)
         try:
-            client.connect(host, MQTT_PORT, 30)
+            client.connect(name, port, 30)
         except OSError as exc:
             raise BambuError(f"Couldn't reach the printer: {exc}") from exc
         client.loop_start()
@@ -248,6 +260,19 @@ class BambuLinks:
 
         self._reaper = threading.Thread(target=loop, name="bambu-link-reaper", daemon=True)
         self._reaper.start()
+
+
+def redacted(value: Any, secrets: list[str]) -> Any:
+    """A report (or a part of one) with what identifies the printer taken out: keys such as its serial number and address, and any text that has
+    one of the given secrets (its serial number, address and access code) in it. Fit to paste when asking what a printer reports."""
+    if isinstance(value, dict):
+        return {k: redacted(v, secrets) for k, v in value.items() if k not in _IDENTIFYING_KEYS}
+    if isinstance(value, list):
+        return [redacted(v, secrets) for v in value]
+    if isinstance(value, str):
+        for secret in (s for s in secrets if s):
+            value = value.replace(secret, "***")
+    return value
 
 
 def _new_transport() -> Transport:
