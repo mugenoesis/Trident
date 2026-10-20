@@ -6,6 +6,7 @@ The tests use a fake transport (what talks MQTT), so nothing here needs a printe
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import pytest
 
@@ -26,7 +27,7 @@ class FakeTransport:
         self.subscribed: list[str] = []
         self.published: list[tuple[str, dict]] = []
         self.closed = False
-        self.handler = None
+        self.handler: Callable[[str, bytes], None] = lambda topic, payload: None
 
     def set_on_message(self, handler):
         self.handler = handler
@@ -200,8 +201,8 @@ class FakePaho:
         self.reason = reason or FakeReason(False)
         self.fail_with = fail_with
         self.calls: list[tuple] = []
-        self.on_connect = None
-        self.on_message = None
+        self.on_connect: Callable[..., None] = lambda *args: None
+        self.on_message: Callable[..., None] = lambda *args: None
         FakePaho.last = self
 
     def tls_set(self, **kwargs):

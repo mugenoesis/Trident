@@ -66,8 +66,9 @@ class PahoTransport:
     @staticmethod
     def _paho_client() -> Any:
         import paho.mqtt.client as mqtt  # imported here: only a link to a real printer needs it
+        from paho.mqtt.enums import CallbackAPIVersion
 
-        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
+        return mqtt.Client(CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
 
     def set_on_message(self, handler: Callable[[str, bytes], None]) -> None:
         self._handler = handler
@@ -159,17 +160,15 @@ class BambuLink:
             self._report = merge_report(self._report, update)
         self._got.set()
 
-    def _ask_for_everything(self) -> None:
-        assert self._transport is not None
-        self._transport.publish(
-            self._request_topic, json.dumps({"pushing": {"sequence_id": "1", "command": "pushall"}})
-        )
+    def _ask_for_everything(self, transport: Transport) -> None:
+        transport.publish(self._request_topic, json.dumps({"pushing": {"sequence_id": "1", "command": "pushall"}}))
 
-    def _ensure_started(self) -> None:
+    def _ensure_started(self) -> Transport:
+        """The transport, connected and listening (made, and asked for everything, if it was not yet)."""
         self.last_used = self._clock()
         with self._lock:
             if self._transport is not None:
-                return
+                return self._transport
             transport = self._factory()
             transport.set_on_message(self._on_message)
             try:
@@ -179,13 +178,14 @@ class BambuLink:
                 raise
             self._transport = transport
         transport.subscribe(f"device/{self.serial}/report")
-        self._ask_for_everything()
+        self._ask_for_everything(transport)
+        return transport
 
     def report(self) -> dict[str, Any]:
         """Everything the printer has reported (asking it to, if it has said nothing yet)."""
-        self._ensure_started()
+        transport = self._ensure_started()
         if not self._got.wait(self._reply_wait):
-            self._ask_for_everything()
+            self._ask_for_everything(transport)
             if not self._got.wait(self._reply_wait):
                 raise BambuError(
                     "The printer did not answer. Check that it is on, that Developer Mode (which needs LAN Only mode) is on, "
@@ -198,9 +198,8 @@ class BambuLink:
         """Pause, resume or cancel the print. Nothing else can be sent through here."""
         if action not in _CONTROLS:
             raise BambuError("Only pause, resume or cancel can be asked of the printer")
-        self._ensure_started()
-        assert self._transport is not None
-        self._transport.publish(
+        transport = self._ensure_started()
+        transport.publish(
             self._request_topic, json.dumps({"print": {"sequence_id": "0", "command": _CONTROLS[action], "param": ""}})
         )
 
@@ -209,9 +208,8 @@ class BambuLink:
         command = message.get("print", {}).get("command") if isinstance(message.get("print"), dict) else None
         if command != "project_file":
             raise BambuError("Only the command that starts an uploaded print can be sent that way")
-        self._ensure_started()
-        assert self._transport is not None
-        self._transport.publish(self._request_topic, json.dumps(message))
+        transport = self._ensure_started()
+        transport.publish(self._request_topic, json.dumps(message))
 
     def close(self) -> None:
         with self._lock:
@@ -290,7 +288,11 @@ def _new_transport() -> Transport:
     return PahoTransport()
 
 
-links = BambuLinks(transport_factory=lambda: _new_transport())
+def _transport_factory() -> Transport:
+    return _new_transport()  # looked up when called, so a test can replace _new_transport
+
+
+links = BambuLinks(transport_factory=_transport_factory)
 
 
 # ---- what the routes use: a saved printer's row (secrets included) in, a report or an action out ----
@@ -354,7 +356,7 @@ async def send_print(
 async def check_connection(host: str | None, serial: str | None, code: str | None) -> str:
     """Connects to a printer that may not be saved yet, to see that the address, serial number and access code are right; lets go of it again."""
     host, serial, code = _complete(host, serial, code)
-    link = BambuLink(host, serial, code, lambda: _new_transport())
+    link = BambuLink(host, serial, code, _transport_factory)
     try:
         report = await asyncio.to_thread(link.report)
     finally:

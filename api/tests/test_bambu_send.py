@@ -81,7 +81,7 @@ def test_the_ams_is_used_from_its_first_slot_when_asked():
 def test_a_files_checksum_is_its_md5(tmp_path):
     path = tmp_path / "x.3mf"
     path.write_bytes(b"hello")
-    assert md5_of(path) == hashlib.md5(b"hello").hexdigest()
+    assert md5_of(path) == hashlib.md5(b"hello", usedforsecurity=False).hexdigest()
 
 
 # ---- the upload ----
@@ -151,12 +151,12 @@ def test_a_refused_login_is_said_to_be_the_access_code(tmp_path):
 
     class Refusing(FakeFtp):
         def login(self, user, passwd):
-            raise ftplib.error_perm("530 Login incorrect")
+            raise ftplib.error_perm("530 Login incorrect")  # noqa: S321 - the error of an FTPS client
 
     path = tmp_path / "s.3mf"
     path.write_bytes(b"x")
     with pytest.raises(BambuError, match="access code"):
-        upload("192.168.1.50", "wrong", path, "a.gcode.3mf", ftp_factory=lambda: Refusing())
+        upload("192.168.1.50", "wrong", path, "a.gcode.3mf", ftp_factory=Refusing)
 
 
 def test_a_name_that_could_climb_out_of_the_root_is_refused(tmp_path):
@@ -164,7 +164,7 @@ def test_a_name_that_could_climb_out_of_the_root_is_refused(tmp_path):
     path.write_bytes(b"x")
     for bad in ("../x.3mf", "a/b.3mf", "a b;DELE.3mf\r\n", ""):
         with pytest.raises(BambuError, match="name"):
-            upload("192.168.1.50", "12345678", path, bad, ftp_factory=lambda: FakeFtp())
+            upload("192.168.1.50", "12345678", path, bad, ftp_factory=FakeFtp)
 
 
 def _unused(_: io.BytesIO) -> None:  # keeps the io import honest for the zip helper above

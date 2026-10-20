@@ -90,18 +90,19 @@ class ImplicitFtps(ftplib.FTP_TLS):
     _wrapped: Any = None
 
     @property
-    def sock(self) -> Any:  # type: ignore[override]
+    def sock(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
         return self._wrapped
 
     @sock.setter
-    def sock(self, value: Any) -> None:
+    def sock(self, value: Any) -> None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if value is not None and not isinstance(value, ssl.SSLSocket):
             value = self.context.wrap_socket(value)
         self._wrapped = value
 
     def ntransfercmd(self, cmd: str, rest: Any = None) -> tuple[socket.socket, int | None]:
-        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
-        if self._prot_p:
+        # an FTPS client: the data connection is wrapped in TLS just below
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)  # noqa: S321
+        if getattr(self, "_prot_p", False):
             conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)
         return conn, size
 
