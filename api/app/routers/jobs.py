@@ -503,6 +503,17 @@ def get_job(job_id: str, current: User = Depends(require_user)) -> JobRecord:
     return _get_owned_job(job_id, current)
 
 
+def resolve_job_3mf_path(job_id: str) -> Path:
+    """The sliced 3MF of a job (what a Bambu printer is sent), which only a slice for a Bambu machine makes."""
+    path = _job_output_dir(job_id) / cli_runner.SLICED_3MF
+    if not path.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail="This job has no sliced 3MF to send to a Bambu printer: slice it again with a Bambu printer profile",
+        )
+    return path
+
+
 def resolve_job_gcode_path(job_id: str) -> Path:
     """The on-disk sliced gcode file for a job -- shared by the download
     route below and the send-to-printer route (routers/printers.py), which

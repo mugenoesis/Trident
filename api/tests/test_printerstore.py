@@ -363,3 +363,73 @@ def test_migrates_db_with_old_scalar_filament_profile(tmp_path: Path):
     assert no_filament is not None
     assert no_filament.filament_profiles is None
     assert no_filament.filament_colors is None
+
+
+# ---- a Bambu printer's serial number (device_id) ----
+
+
+def test_a_printers_serial_number_is_kept_and_shown(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(
+        user_id="alice",
+        **_printer_fields(
+            host_type="bambu", print_host="192.168.1.50", printhost_apikey="12345678", device_id="00M00A000000000"
+        ),
+    )
+    assert printer.device_id == "00M00A000000000"
+    assert printer.has_credentials is True  # the access code
+    assert db.get_printer(printer.id).device_id == "00M00A000000000"  # type: ignore[union-attr]
+    row = db.get_printer_row(printer.id)
+    assert row is not None and row["printhost_apikey"] == "12345678"
+
+
+def test_a_printer_without_one_has_none(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    assert db.create_printer(user_id="alice", **_printer_fields()).device_id is None
+
+
+def test_the_serial_number_can_be_changed_later(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    printer = db.create_printer(
+        user_id="alice", **_printer_fields(host_type="bambu", print_host="192.168.1.50", device_id="old")
+    )
+    assert db.update_printer(printer.id, device_id="new").device_id == "new"  # type: ignore[union-attr]
+
+
+def test_a_database_from_before_serial_numbers_is_migrated(tmp_path: Path):
+    db_path = tmp_path / "printers.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE printers (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+            vendor TEXT NOT NULL, machine_profile TEXT NOT NULL,
+            process_profile TEXT NOT NULL, filament_profile TEXT NOT NULL,
+            filament_profiles TEXT, filament_colors TEXT,
+            bed_width REAL, bed_depth REAL, bed_height REAL, host_type TEXT,
+            print_host TEXT, printhost_apikey TEXT, printhost_user TEXT,
+            printhost_password TEXT, created_at TEXT NOT NULL,
+            technology TEXT NOT NULL DEFAULT 'fdm', resin_settings TEXT
+        );
+        CREATE TABLE material_profiles (
+            id TEXT PRIMARY KEY, printer_id TEXT NOT NULL, user_id TEXT NOT NULL,
+            name TEXT NOT NULL, quick_settings TEXT NOT NULL,
+            advanced_overrides TEXT NOT NULL, process_profile TEXT,
+            filament_profile TEXT, filament_profiles TEXT, filament_colors TEXT, created_at TEXT NOT NULL
+        );
+        """)
+    conn.execute(
+        """INSERT INTO printers (id, user_id, name, vendor, machine_profile, process_profile, filament_profile, filament_profiles,
+               filament_colors, created_at) VALUES ('p1', 'alice', 'Old', 'BBL', 'x', 'y', 'z', '["z"]', '["#ffffff"]', '2024-01-01T00:00:00+00:00')"""
+    )
+    conn.commit()
+    conn.close()
+    printer = PrinterStore(db_path).get_printer("p1")
+    assert printer is not None and printer.name == "Old" and printer.device_id is None
+
+
+def test_monitor_only_is_stored_changed_and_off_by_default(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    assert db.create_printer(user_id="alice", **_printer_fields()).monitor_only is False
+    printer = db.create_printer(user_id="alice", **_printer_fields(host_type="bambu", monitor_only=True))
+    assert printer.monitor_only is True
+    assert db.update_printer(printer.id, monitor_only=False).monitor_only is False  # type: ignore[union-attr]

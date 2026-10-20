@@ -135,6 +135,11 @@ export function getPrinterStatus(printerId: string): Promise<PrinterStatus> {
 	return request(`/printers/${encodeURIComponent(printerId)}/status`);
 }
 
+// What a Bambu printer reports, as it sends it, without what identifies it.
+export function getPrinterRawStatus(printerId: string): Promise<{ report: Record<string, unknown> }> {
+	return request(`/printers/${encodeURIComponent(printerId)}/raw-status`);
+}
+
 export function controlPrint(printerId: string, action: PrintAction): Promise<{ ok: boolean }> {
 	return request(`/printers/${encodeURIComponent(printerId)}/print/${action}`, { method: 'POST' });
 }
@@ -500,8 +505,8 @@ export function deleteSettingsProfile(printerId: string, profileId: string): Pro
 	return request(`/printers/${printerId}/settings-profiles/${profileId}`, { method: 'DELETE' });
 }
 
-export function sendToPrinter(printerId: string, jobId: string, startPrint: boolean): Promise<{ ok: boolean }> {
-	return postJson(`/printers/${printerId}/send/${jobId}`, { start_print: startPrint });
+export function sendToPrinter(printerId: string, jobId: string, startPrint: boolean, useAms = false): Promise<{ ok: boolean }> {
+	return postJson(`/printers/${printerId}/send/${jobId}`, { start_print: startPrint, use_ams: useAms });
 }
 
 export function createUser(username: string, password: string): Promise<AuthStatus> {

@@ -4,7 +4,7 @@ import type { PrinterRecord } from '../types';
 interface SendToPrinterControlProps {
 	printer: PrinterRecord;
 	jobId: string;
-	onSend: (jobId: string, startPrint: boolean) => Promise<unknown>;
+	onSend: (jobId: string, startPrint: boolean, useAms: boolean) => Promise<unknown>;
 }
 
 // Rendered alongside GcodeViewer (App.tsx), not buried down in JobPanel's
@@ -13,6 +13,8 @@ interface SendToPrinterControlProps {
 // there too, or it's an extra scroll back down every single time.
 export default function SendToPrinterControl({ printer, jobId, onSend }: SendToPrinterControlProps) {
 	const [startPrint, setStartPrint] = useState(false);
+	// A Bambu printer can print from its AMS (the first slot) instead of the spool on its back.
+	const [useAms, setUseAms] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [result, setResult] = useState<'idle' | 'sent' | 'error'>('idle');
 	const [error, setError] = useState<string | null>(null);
@@ -21,7 +23,7 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 		setBusy(true);
 		setResult('idle');
 		setError(null);
-		onSend(jobId, startPrint)
+		onSend(jobId, startPrint, useAms)
 			.then(() => setResult('sent'))
 			.catch((err: Error) => {
 				setResult('error');
@@ -30,12 +32,23 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 			.finally(() => setBusy(false));
 	};
 
+	if (printer.monitor_only)
+		return (
+			<div className="job-hint">{printer.name} is saved as monitor only: turn on Developer Mode on it and untick that to send prints.</div>
+		);
+
 	return (
 		<div className="send-to-printer">
 			<label className="checkbox-label">
 				<input type="checkbox" checked={startPrint} onChange={(e) => setStartPrint(e.target.checked)} />
 				Start printing immediately
 			</label>
+			{printer.host_type === 'bambu' && (
+				<label className="checkbox-label">
+					<input type="checkbox" checked={useAms} onChange={(e) => setUseAms(e.target.checked)} />
+					Print from the AMS (its first slot)
+				</label>
+			)}
 			<button type="button" className="preview-button" disabled={busy} onClick={send}>
 				{busy ? 'Sending…' : `Send to ${printer.name}`}
 			</button>
