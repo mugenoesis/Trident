@@ -17,6 +17,7 @@ import ssl
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from .bambu_status import merge_report, status_from_bambu
@@ -203,6 +204,15 @@ class BambuLink:
             self._request_topic, json.dumps({"print": {"sequence_id": "0", "command": _CONTROLS[action], "param": ""}})
         )
 
+    def start_print(self, message: dict[str, Any]) -> None:
+        """Starts an uploaded print: only the start command can be sent through here."""
+        command = message.get("print", {}).get("command") if isinstance(message.get("print"), dict) else None
+        if command != "project_file":
+            raise BambuError("Only the command that starts an uploaded print can be sent that way")
+        self._ensure_started()
+        assert self._transport is not None
+        self._transport.publish(self._request_topic, json.dumps(message))
+
     def close(self) -> None:
         with self._lock:
             transport, self._transport = self._transport, None
@@ -264,7 +274,8 @@ class BambuLinks:
 
 def redacted(value: Any, secrets: list[str]) -> Any:
     """A report (or a part of one) with what identifies the printer taken out: keys such as its serial number and address, and any text that has
-    one of the given secrets (its serial number, address and access code) in it. Fit to paste when asking what a printer reports."""
+    one of the given secrets (its serial number, address and access code) in it. Fit to paste when asking what a printer reports.
+    """
     if isinstance(value, dict):
         return {k: redacted(v, secrets) for k, v in value.items() if k not in _IDENTIFYING_KEYS}
     if isinstance(value, list):
@@ -316,6 +327,23 @@ async def control(row: Any, action: str) -> None:
     """Pause, resume or cancel the print on a saved Bambu printer."""
     link = _link_for(row)
     await asyncio.to_thread(link.control, action)
+
+
+async def send_print(
+    row: Any, three_mf: Path, *, name: str, start: bool, use_ams: bool, plate_index: int | None
+) -> None:
+    """Uploads a sliced 3MF to a saved Bambu printer, and starts it if asked (otherwise it waits on the printer's own screen)."""
+    from . import bambu_send  # imported here: bambu_send uses this module's errors
+
+    host, _serial, code = _complete(row["print_host"], row["device_id"], row["printhost_apikey"])
+    plate = bambu_send.plate_path(three_mf, plate_index)
+    remote = bambu_send.remote_name(name)
+    await asyncio.to_thread(bambu_send.upload, host, code, three_mf, remote)
+    if start:
+        message = bambu_send.project_file_command(
+            plate=plate, remote_name=remote, md5=bambu_send.md5_of(three_mf), use_ams=use_ams
+        )
+        await asyncio.to_thread(_link_for(row).start_print, message)
 
 
 async def check_connection(host: str | None, serial: str | None, code: str | None) -> str:

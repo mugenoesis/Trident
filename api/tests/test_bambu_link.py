@@ -359,3 +359,27 @@ def test_a_raw_report_has_the_serial_number_the_address_and_the_code_taken_out()
     for secret in (SERIAL, "192.168.1.50", "12345678", "MyWifi"):
         assert secret not in text
     assert clean["gcode_state"] == "RUNNING" and clean["mc_percent"] == 42
+
+
+# ---- starting a print ----
+
+
+def test_a_print_can_be_started_with_the_start_command_and_nothing_else_of_that_kind():
+    from app.bambu_send import project_file_command
+
+    transport = FakeTransport(answers=[FULL])
+    link = _link(transport)
+    link.start_print(
+        project_file_command(plate="Metadata/plate_1.gcode", remote_name="a.gcode.3mf", md5="x", use_ams=False)
+    )
+    topic, message = transport.published[-1]
+    assert topic == REQUEST and message["print"]["command"] == "project_file"
+
+
+def test_no_other_command_can_be_sent_as_a_start():
+    transport = FakeTransport()
+    link = _link(transport)
+    for bad in ({"print": {"command": "gcode_line", "param": "M104 S300"}}, {"system": {"command": "ledctrl"}}, {}):
+        with pytest.raises(BambuError, match="start"):
+            link.start_print(bad)
+    assert transport.published == []

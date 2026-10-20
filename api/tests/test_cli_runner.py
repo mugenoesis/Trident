@@ -376,3 +376,46 @@ def test_as_text_decodes_output_captured_before_a_timeout():
     assert cli_runner._as_text(b"partial \xff output") == "partial � output"
     assert cli_runner._as_text("already text") == "already text"
     assert cli_runner._as_text(None) == ""
+
+
+# ---- a Bambu machine's slice also comes out as the sliced 3MF a Bambu printer is sent ----
+
+
+def _machine(vendor: str, name: str, **data):
+    from app.schemas import ProfileDetail
+
+    return ProfileDetail(
+        vendor=vendor, kind="machine", name=name, path="", compatible_printers=[], data={"name": name, **data}
+    )
+
+
+def _command(detail):
+    return cli_runner._slice_command(
+        model_path=Path("/tmp/m.stl"),
+        output_dir=Path("/tmp/o"),
+        fifo_path=Path("/tmp/o/progress.pipe"),
+        printer_detail=detail,
+        profile_paths=("/tmp/p.json", "/tmp/q.json", []),
+        setting_overrides={},
+        plate_index=None,
+        arrange=True,
+        keep_positions=False,
+        belt_shift_y=0.0,
+    )
+
+
+def test_bambu_machines_are_told_from_the_others():
+    assert cli_runner.is_bambu_machine(_machine("BBL", "Bambu Lab X1 Carbon 0.4 nozzle"))
+    assert cli_runner.is_bambu_machine(_machine("My profiles", "X1C custom", inherits="Bambu Lab X1 Carbon 0.4 nozzle"))
+    assert cli_runner.is_bambu_machine(_machine("Custom", "Mine", printer_model="Bambu Lab A1 mini"))
+    assert not cli_runner.is_bambu_machine(_machine("Voron", "Voron 2.4 300 0.4 nozzle"))
+    assert not cli_runner.is_bambu_machine(_machine("Custom", "MyKlipper 0.4 nozzle"))
+
+
+def test_a_slice_for_a_bambu_machine_also_exports_the_sliced_3mf():
+    cmd = _command(_machine("BBL", "Bambu Lab X1 Carbon 0.4 nozzle"))
+    assert cmd[cmd.index("--export-3mf") + 1] == cli_runner.SLICED_3MF
+
+
+def test_a_slice_for_any_other_machine_does_not():
+    assert "--export-3mf" not in _command(_machine("Voron", "Voron 2.4 300 0.4 nozzle"))

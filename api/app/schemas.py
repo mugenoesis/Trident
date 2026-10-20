@@ -582,6 +582,8 @@ class SendToPrinterRequest(BaseModel):
     # defaults off everywhere -- the frontend always surfaces this as an
     # explicit checkbox rather than defaulting it on.
     start_print: bool = False
+    # A Bambu printer: print from the AMS (its first slot) instead of the external spool.
+    use_ams: bool = False
 
 
 class SourceInfo(BaseModel):

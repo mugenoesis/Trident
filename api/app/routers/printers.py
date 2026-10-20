@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -25,7 +26,8 @@ from ..schemas import (
     TestConnectionRequest,
 )
 from ..userstore import User
-from .jobs import resolve_job_gcode_path
+from .jobs import resolve_job_3mf_path, resolve_job_gcode_path
+from .models import resolve_model_original_name
 
 router = APIRouter(prefix="/printers", tags=["printers"])
 
@@ -321,6 +323,19 @@ async def test_printer_connection(printer_id: str, current: User = Depends(requi
     return {"message": message}
 
 
+async def _send_to_bambu(row, job, body: SendToPrinterRequest) -> dict[str, bool]:
+    """A Bambu printer is sent the job's sliced 3MF (uploaded by FTPS, started by MQTT if asked), named after the model."""
+    three_mf = resolve_job_3mf_path(job.id)
+    name = Path(resolve_model_original_name(job.model_id) or job.id).stem
+    try:
+        await bambu_link.send_print(
+            row, three_mf, name=name, start=body.start_print, use_ams=body.use_ams, plate_index=job.plate_index
+        )
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 @router.post("/{printer_id}/send/{job_id}")
 async def send_to_printer(
     printer_id: str,
@@ -332,10 +347,11 @@ async def send_to_printer(
     job = job_store.get(job_id)
     if job is None or job.user_id != current.id:
         raise HTTPException(status_code=404, detail="Job not found")
-    gcode_path = resolve_job_gcode_path(job_id)
-
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
+    if row["host_type"] == "bambu":
+        return await _send_to_bambu(row, job, body)
+    gcode_path = resolve_job_gcode_path(job_id)
     try:
         await printhost.send_gcode(row, gcode_path, body.start_print)
     except printhost.PrintHostError as exc:

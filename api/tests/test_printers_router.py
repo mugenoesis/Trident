@@ -757,3 +757,85 @@ def test_a_bambu_printers_raw_report_is_shown_without_what_identifies_it(client,
 def test_only_a_bambu_printer_has_a_raw_report(client):
     printer_id = _klipper_printer(client)
     assert client.get(f"/printers/{printer_id}/raw-status").status_code == 400
+
+
+# ---- sending a sliced print to a Bambu printer ----
+
+
+def _bambu_job(client, monkeypatch, with_3mf: bool = True) -> str:
+    from app import cli_runner
+    from app.cli_runner import SliceResult
+
+    def fake_run_slice(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "plate_1.gcode").write_text("; fake\n")
+        if with_3mf:
+            import zipfile
+
+            with zipfile.ZipFile(output_dir / cli_runner.SLICED_3MF, "w") as z:
+                z.writestr("Metadata/plate_1.gcode", "; fake\n")
+        return SliceResult(return_code=0, result_json={"return_code": 0}, stdout="", stderr="", used_result_json=True)
+
+    monkeypatch.setattr(cli_runner, "run_slice", fake_run_slice)
+    model_id = client.post("/models", files={"file": ("benchy.stl", io.BytesIO(b"fake"), "model/stl")}).json()[
+        "model_id"
+    ]
+    return client.post("/jobs", json={"model_id": model_id, "printer_profile": "p", "process_profile": "q"}).json()[
+        "id"
+    ]
+
+
+def test_a_sliced_print_is_sent_to_a_bambu_printer_as_its_3mf(client, monkeypatch):
+    printer = _bambu_printer(client)
+    job_id = _bambu_job(client, monkeypatch)
+    sent = {}
+
+    async def fake_send(row, three_mf, *, name, start, use_ams, plate_index):
+        sent.update(
+            host=row["print_host"],
+            three_mf=three_mf.name,
+            name=name,
+            start=start,
+            use_ams=use_ams,
+            plate_index=plate_index,
+        )
+
+    monkeypatch.setattr(bambu_link, "send_print", fake_send)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": True, "use_ams": True})
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert sent["host"] == "192.168.1.50" and sent["three_mf"] == "sliced.gcode.3mf"
+    assert sent["start"] is True and sent["use_ams"] is True
+    assert sent["name"].startswith("benchy")
+
+
+def test_nothing_is_started_unless_asked(client, monkeypatch):
+    printer = _bambu_printer(client)
+    job_id = _bambu_job(client, monkeypatch)
+    sent = {}
+
+    async def fake_send(row, three_mf, *, name, start, use_ams, plate_index):
+        sent.update(start=start, use_ams=use_ams)
+
+    monkeypatch.setattr(bambu_link, "send_print", fake_send)
+    assert client.post(f"/printers/{printer['id']}/send/{job_id}", json={}).status_code == 200
+    assert sent == {"start": False, "use_ams": False}
+
+
+def test_a_job_with_no_3mf_cannot_be_sent_to_a_bambu_printer_and_says_why(client, monkeypatch):
+    printer = _bambu_printer(client)
+    job_id = _bambu_job(client, monkeypatch, with_3mf=False)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={})
+    assert response.status_code == 400 and "Bambu" in response.json()["detail"]
+
+
+def test_a_failed_send_to_a_bambu_printer_is_a_502_in_the_links_words(client, monkeypatch):
+    printer = _bambu_printer(client)
+    job_id = _bambu_job(client, monkeypatch)
+
+    async def failing(*args, **kwargs):
+        raise bambu_link.BambuError("The printer refused the access code")
+
+    monkeypatch.setattr(bambu_link, "send_print", failing)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={})
+    assert response.status_code == 502 and "access code" in response.json()["detail"]
