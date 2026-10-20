@@ -539,3 +539,7 @@ export function pasteBambuAddress(url: string): Promise<NonNullable<BambuCloudSt
 		body: JSON.stringify({ url }),
 	});
 }
+
+export function runBambuSession(): Promise<{ steps: { step: string; value: unknown }[] }> {
+	return request('/bambu-cloud/session', { method: 'POST' });
+}

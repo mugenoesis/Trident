@@ -84,3 +84,16 @@ def callback(request: Request, current: User = Depends(require_user), rest: str 
         or "<li>nothing</li>"
     )
     return f"<h3>Bambu sent the browser back to Trident</h3><p>It carried:</p><ul>{names}</ul><p>You can close this tab.</p>"
+
+
+@router.post("/session")
+async def session(current: User = Depends(require_user)) -> dict[str, Any]:
+    """Give the pasted sign-in to Bambu's plug-in and report what it says (steps only: no token, serial number or access code)."""
+    _require_enabled()
+    try:
+        steps = await bambu_cloud.run_session(
+            _plugin_folder(), settings.orcaslicer_datadir / "bambu-session", settings.profiles_dir.parent / "cert", settings.bambu_helper_path
+        )
+    except bambu_cloud.BambuCloudError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"steps": steps}

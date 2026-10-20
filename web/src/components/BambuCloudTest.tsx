@@ -1,3 +1,4 @@
+import BambuSessionTest from './BambuSessionTest';
 import { useEffect, useState } from 'react';
 import { type BambuCloudStatus, getBambuCloud, getBambuSignInUrl, installBambuPlugin, pasteBambuAddress } from '../api';
 
@@ -98,6 +99,7 @@ export default function BambuCloudTest() {
 			<button type="button" className="preview-button" disabled={!pasted} onClick={paste}>
 				Check that address
 			</button>
+			<BambuSessionTest />
 			{problem && <p className="banner-error">{problem}</p>}
 			{status.callback && <CallbackResult callback={status.callback} />}
 		</fieldset>

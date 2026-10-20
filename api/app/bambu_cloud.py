@@ -8,6 +8,7 @@ arrived by field name and length only (the values stay out of every response and
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -148,3 +149,43 @@ async def install_plugin(folder: Path, *, client: httpx.AsyncClient | None = Non
     meta = {"version": entry.get("version"), "sha256": hashlib.sha256(archive).hexdigest(), "url": entry["url"]}
     (folder / _META).write_text(json.dumps(meta))
     return {"installed": True, **meta}
+
+
+# ---- handing the sign-in to the plug-in ----
+
+HELPER_TIMEOUT_S = 90
+
+
+async def run_session(plugin_dir: Path, config_dir: Path, cert_dir: Path, helper: Path) -> list[dict[str, Any]]:
+    """Give the last pasted sign-in to Bambu's plug-in through the helper program, and return the steps it reports.
+
+    The tokens go to the helper on stdin only, and a step that would repeat one is dropped: no token leaves this function."""
+    raw = _callback.raw
+    if not (raw.get("access_token") and raw.get("refresh_token")):
+        raise BambuCloudError("Paste the address the browser ended up on after signing in first")
+    if not helper.is_file():
+        raise BambuCloudError("The helper program for Bambu's plug-in is not in this image")
+    keys = ("access_token", "refresh_token", "expires_in", "refresh_expires_in")
+    payload = json.dumps(
+        {"plugin_dir": str(plugin_dir), "config_dir": str(config_dir), "cert_dir": str(cert_dir), **{k: raw.get(k, "") for k in keys}}
+    )
+    proc = await asyncio.create_subprocess_exec(
+        str(helper), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(payload.encode()), HELPER_TIMEOUT_S)
+    except TimeoutError as exc:
+        proc.kill()
+        raise BambuCloudError("The plug-in did not answer in time") from exc
+    secrets = [v for k, v in raw.items() if k.endswith("_token") and v]
+    steps: list[dict[str, Any]] = []
+    for line in out.decode(errors="replace").splitlines():
+        if any(secret in line for secret in secrets):
+            continue
+        try:
+            steps.append(json.loads(line))
+        except ValueError:
+            continue
+    if proc.returncode:
+        steps.append({"step": "helper_exit", "value": proc.returncode})
+    return steps
