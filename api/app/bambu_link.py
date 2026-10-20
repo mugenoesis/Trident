@@ -311,6 +311,11 @@ def _complete(host: object, serial: object, code: object) -> tuple[str, str, str
     return host.strip(), serial.strip(), code.strip()
 
 
+def connection_of(row: Any) -> tuple[str, str, str]:
+    """A saved Bambu printer's address, serial number and access code (or an error that says which is missing)."""
+    return _complete(row["print_host"], row["device_id"], row["printhost_apikey"])
+
+
 def _link_for(row: Any) -> BambuLink:
     host, serial, code = _complete(row["print_host"], row["device_id"], row["printhost_apikey"])
     links.start_reaper()

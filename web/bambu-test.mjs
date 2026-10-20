@@ -37,7 +37,9 @@ const until = async (what, test, ms = 10000) => {
 const SERIAL = '00M00A000000000';
 const CODE = '12345678';
 const printer = { state: 'RUNNING', percent: 25, told: [], commands: [], sockets: new Set(), uploads: {} };
-const report = () => ({
+// a second printer, with the camera of an A1 (a picture over TLS on port 6000), on the same broker
+const A1_SERIAL = '03000A000000000';
+const report = (serial = SERIAL) => ({
 	print: {
 		command: 'push_status',
 		gcode_state: printer.state,
@@ -53,7 +55,7 @@ const report = () => ({
 		chamber_temper: 31.4,
 		print_error: 0,
 		hms: [],
-		sn: SERIAL,
+		sn: serial,
 	},
 });
 const lengthBytes = (n) => {
@@ -75,8 +77,10 @@ const text = (s) => {
 	return Buffer.concat([len, b]);
 };
 const publishReport = (socket) => {
-	if (socket.subscribed && !socket.destroyed)
-		socket.write(packet(0x30, Buffer.concat([text(`device/${SERIAL}/report`), Buffer.from(JSON.stringify(report()))])));
+	for (const serial of socket.serials ?? []) {
+		if (!socket.destroyed)
+			socket.write(packet(0x30, Buffer.concat([text(`device/${serial}/report`), Buffer.from(JSON.stringify(report(serial)))])));
+	}
 };
 function onConnect(socket, body) {
 	let o = 2 + body.readUInt16BE(0) + 1; // the protocol name and level
@@ -98,11 +102,13 @@ function onConnect(socket, body) {
 function onSubscribe(socket, body) {
 	let o = 2;
 	let granted = Buffer.alloc(0);
+	socket.serials ??= [];
 	while (o < body.length) {
+		const topic = body.toString('utf8', o + 2, o + 2 + body.readUInt16BE(o));
+		socket.serials.push(topic.split('/')[1]); // device/<serial>/report
 		o += 2 + body.readUInt16BE(o) + 1;
 		granted = Buffer.concat([granted, Buffer.from([1])]);
 	}
-	socket.subscribed = true;
 	socket.write(packet(0x90, Buffer.concat([body.slice(0, 2), granted])));
 }
 function onPublish(socket, flags, body) {
@@ -113,7 +119,7 @@ function onPublish(socket, flags, body) {
 		socket.write(packet(0x40, body.slice(o, o + 2)));
 		o += 2;
 	}
-	if (topic !== `device/${SERIAL}/request`) return;
+	if (!topic.endsWith('/request')) return;
 	const message = JSON.parse(body.slice(o).toString());
 	if (message.pushing?.command === 'pushall') publishReport(socket);
 	const command = message.print?.command;
@@ -241,6 +247,23 @@ const ftps = tls.createServer(tlsOptions, (control) => {
 	control.on('close', () => dataServer?.close());
 });
 await new Promise((resolve) => ftps.listen(990, '0.0.0.0', resolve));
+
+// ---- an A1's camera: after an 80-byte login, a picture behind a 16-byte header (TLS, port 6000) ----
+const camera = { picture: null, logins: [] };
+const cameraServer = tls.createServer(tlsOptions, (socket) => {
+	socket.on('error', () => undefined);
+	let got = Buffer.alloc(0);
+	socket.on('data', (chunk) => {
+		got = Buffer.concat([got, chunk]);
+		if (got.length < 80 || !camera.picture) return;
+		camera.logins.push(got.subarray(0, 80));
+		const header = Buffer.alloc(16);
+		header.writeUInt32LE(camera.picture.length, 0);
+		socket.write(Buffer.concat([header, camera.picture]));
+		got = Buffer.alloc(0);
+	});
+});
+await new Promise((resolve) => cameraServer.listen(6000, '0.0.0.0', resolve));
 await new Promise((resolve) => broker.listen(0, '0.0.0.0', resolve));
 const address = `${FAKE_HOST}:${broker.address().port}`;
 // a real printer pushes its status about every second while it works
@@ -253,7 +276,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1500 } });
 const pageErrors = [];
 page.on('pageerror', (err) => pageErrors.push(String(err)));
 
-console.log(`[1/7] Adding a Bambu printer (the fake one is at ${address}) ...`);
+console.log(`[1/8] Adding a Bambu printer (the fake one is at ${address}) ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible().catch(() => false)) await justMe.click();
@@ -272,7 +295,7 @@ check((await form.getByLabel(/HTTP username/).count()) === 0, 'and not the web-a
 await form.getByLabel('IP address').fill(address);
 await form.getByLabel('Serial number').fill(SERIAL);
 
-console.log('[2/7] Testing the connection ...');
+console.log('[2/8] Testing the connection ...');
 await form.getByLabel('Access code').fill('wrong');
 await form.getByRole('button', { name: 'Test connection' }).click();
 await form.getByText(/refused the access code/).waitFor({ timeout: 15000 });
@@ -285,7 +308,7 @@ await form.getByRole('button', { name: 'Save printer' }).click();
 await page.getByText('Manage saved printers (1)').waitFor();
 check(true, 'the printer is saved');
 
-console.log('[3/7] Editing it ...');
+console.log('[3/8] Editing it ...');
 await page.getByText('Manage saved printers (1)').click();
 await page.getByRole('listitem').getByRole('button', { name: 'Settings', exact: true }).click();
 const edit = page.locator('form.printer-settings-form');
@@ -295,7 +318,7 @@ check((await edit.getByLabel(/^Access code/).inputValue()) === '', 'but never th
 check((await edit.getByText(/leave blank to keep/).count()) >= 1, 'which can be left blank to keep it');
 await edit.getByRole('button', { name: 'Cancel' }).click();
 
-console.log('[4/7] Watching it ...');
+console.log('[4/8] Watching it ...');
 await page.getByRole('button', { name: 'Printers', exact: true }).click();
 const panel = page.getByRole('dialog', { name: 'Your printers' });
 await panel.waitFor();
@@ -308,7 +331,7 @@ check((await card.getByText(/1 h 30 min left/).count()) === 1, 'and the time lef
 check((await card.getByText('214.8°').count()) === 1, 'the nozzle');
 check((await card.getByText('Chamber').count()) === 1, 'and an X1’s chamber');
 
-console.log('[5/7] Pausing, resuming and cancelling ...');
+console.log('[5/8] Pausing, resuming and cancelling ...');
 await card.getByRole('button', { name: 'Pause' }).click();
 await until('the pause', () => printer.told.includes('pause'));
 await card.getByText('Paused', { exact: true }).waitFor({ timeout: 15000 });
@@ -324,7 +347,7 @@ await confirm.getByRole('button', { name: 'Cancel the print', exact: true }).cli
 await until('the stop', () => printer.told.includes('stop'));
 check(true, 'cancelling asks first, then sends the printer’s own stop');
 
-console.log('[6/7] What the printer reports, for finding out what it says ...');
+console.log('[6/8] What the printer reports, for finding out what it says ...');
 await card.getByText('Raw status', { exact: true }).click();
 const raw = card.locator('pre.printer-raw');
 await raw.waitFor({ timeout: 15000 });
@@ -335,7 +358,7 @@ check(
 	'without the serial number, the code or the address',
 );
 
-console.log('[7/7] Sending a sliced print ...');
+console.log('[7/8] Sending a sliced print ...');
 await panel.getByRole('button', { name: /Close/ }).click();
 await page.locator('input[type="file"][data-model-input]').setInputFiles(path.resolve('fixtures/test-cube.stl'));
 await page.waitForSelector('text=Ready to slice');
@@ -360,10 +383,60 @@ check(start.param === 'Metadata/plate_1.gcode', 'for the plate in the 3MF');
 check(start.md5 === crypto.createHash('md5').update(printer.uploads[name]).digest('hex'), 'with the file\u2019s checksum');
 check(start.use_ams === true && JSON.stringify(start.ams_mapping) === '[0]', 'from the AMS\u2019s first slot when asked');
 
+console.log('[8/8] The cameras ...');
+// a real JPEG, made by the browser
+camera.picture = Buffer.from(
+	await page.evaluate(() => {
+		const canvas = document.createElement('canvas');
+		canvas.width = 16;
+		canvas.height = 9;
+		const context = canvas.getContext('2d');
+		context.fillStyle = 'rgb(20,160,40)';
+		context.fillRect(0, 0, 16, 9);
+		return canvas.toDataURL('image/jpeg').split(',')[1];
+	}),
+	'base64',
+);
+printer.state = 'RUNNING';
+const saved = await page.evaluate(
+	async ([host, serial, code]) => {
+		const body = {
+			name: 'A1',
+			vendor: 'BBL',
+			machine_profile: 'x',
+			process_profile: 'x',
+			host_type: 'bambu',
+			print_host: host,
+			device_id: serial,
+			printhost_apikey: code,
+		};
+		const res = await fetch('/printers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+		return res.status;
+	},
+	[address, A1_SERIAL, CODE],
+);
+check(saved === 200, 'an A1 is saved too');
+await page.getByRole('button', { name: 'Printers', exact: true }).click();
+const again = page.getByRole('dialog', { name: 'Your printers' });
+const a1 = again.locator('.printer-card').filter({ has: page.getByText('A1', { exact: true }) });
+const picture = a1.locator('img.printer-cam');
+await picture.waitFor({ timeout: 60000 });
+check(await picture.evaluate((img) => img.complete && img.naturalWidth > 0), 'an A1’s camera picture is shown on its card');
+check(
+	camera.logins.length > 0 &&
+		camera.logins[0].subarray(16, 20).toString() === 'bblp' &&
+		camera.logins[0].subarray(48, 56).toString() === CODE,
+	'it logged in to the camera as bblp with the access code',
+);
+const x1 = again.locator('.printer-card').filter({ has: page.getByText('X1C', { exact: true }) });
+await x1.getByText(/camera is not answering/).waitFor({ timeout: 60000 });
+check(!(await x1.innerText()).includes(CODE), 'an X1 whose stream cannot be opened says so, without the access code');
+
 check(pageErrors.length === 0, `no page errors (${pageErrors.join('; ')})`);
 clearInterval(pusher);
 for (const s of printer.sockets) s.destroy();
 await browser.close();
 broker.close();
 ftps.close();
+cameraServer.close();
 console.log('bambu browser check passed');

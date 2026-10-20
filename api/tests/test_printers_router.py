@@ -4,7 +4,7 @@ import io
 
 import pytest
 
-from app import bambu_link, printhost
+from app import bambu_camera, bambu_link, printhost
 
 
 def _printer_body(**overrides):
@@ -687,11 +687,6 @@ def test_pause_resume_and_cancel_go_to_a_bambu_printer(client, monkeypatch, acti
     assert done == [action]
 
 
-def test_a_bambu_printer_has_no_webcams_listed_yet(client):
-    printer = _bambu_printer(client)
-    assert client.get(f"/printers/{printer['id']}/webcams").json() == []
-
-
 def test_testing_a_bambu_connection_connects_to_the_printer(client, monkeypatch):
     asked = {}
 
@@ -839,3 +834,39 @@ def test_a_failed_send_to_a_bambu_printer_is_a_502_in_the_links_words(client, mo
     monkeypatch.setattr(bambu_link, "send_print", failing)
     response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={})
     assert response.status_code == 502 and "access code" in response.json()["detail"]
+
+
+def test_a_bambu_printer_has_one_camera_listed(client):
+    printer = _bambu_printer(client)
+    assert client.get(f"/printers/{printer['id']}/webcams").json() == [{"index": 0, "name": "Camera"}]
+
+
+def test_a_bambu_cameras_picture_comes_from_its_camera(client, monkeypatch):
+    printer = _bambu_printer(client)
+    asked = {}
+
+    async def fake_snapshot(row):
+        asked.update(host=row["print_host"], serial=row["device_id"], code=row["printhost_apikey"])
+        return b"\xff\xd8jpeg\xff\xd9", "image/jpeg"
+
+    monkeypatch.setattr(bambu_camera, "snapshot", fake_snapshot)
+    response = client.get(f"/printers/{printer['id']}/webcams/0/snapshot")
+    assert response.status_code == 200 and response.content == b"\xff\xd8jpeg\xff\xd9"
+    assert response.headers["content-type"] == "image/jpeg" and "no-store" in response.headers["cache-control"]
+    assert asked == {"host": "192.168.1.50", "serial": SERIAL, "code": "12345678"}
+
+
+def test_a_bambu_printer_has_only_the_one_camera(client):
+    printer = _bambu_printer(client)
+    assert client.get(f"/printers/{printer['id']}/webcams/1/snapshot").status_code == 404
+
+
+def test_a_camera_that_does_not_answer_is_a_502_in_the_words_of_the_error(client, monkeypatch):
+    printer = _bambu_printer(client)
+
+    async def failing(row):
+        raise bambu_link.BambuError("The camera is not answering: is LAN mode liveview on?")
+
+    monkeypatch.setattr(bambu_camera, "snapshot", failing)
+    response = client.get(f"/printers/{printer['id']}/webcams/0/snapshot")
+    assert response.status_code == 502 and "liveview" in response.json()["detail"]

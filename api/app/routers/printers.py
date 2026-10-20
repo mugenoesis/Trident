@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from .. import bambu_link, bambu_status, klipper_import, klipper_status, printhost
+from .. import bambu_camera, bambu_link, bambu_status, klipper_import, klipper_status, printhost
 from .. import resin as resin_module
 from ..auth import require_user
 from ..jobstore import store as job_store
@@ -154,7 +154,9 @@ async def printer_webcams(printer_id: str, current: User = Depends(require_user)
     """The webcams of a Klipper printer, by name (their addresses stay here: a picture is fetched through the snapshot route)."""
     row = _live_row(printer_id, current)
     if row["host_type"] == "bambu":
-        return []  # its camera is not supported yet
+        return [
+            {"index": 0, "name": "Camera"}
+        ]  # one camera; whether it answers is found out when a picture is asked for
     try:
         cameras = await printhost.webcam_list(row)
     except printhost.PrintHostError as exc:
@@ -162,12 +164,22 @@ async def printer_webcams(printer_id: str, current: User = Depends(require_user)
     return [{"index": i, "name": cam["name"]} for i, cam in enumerate(cameras)]
 
 
+async def _bambu_snapshot(row, index: int) -> Response:
+    if index != 0:
+        raise HTTPException(status_code=404, detail=f"There is no camera {index} on this printer")
+    try:
+        data, kind = await bambu_camera.snapshot(row)
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=data, media_type=kind, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/{printer_id}/webcams/{index}/snapshot")
 async def printer_webcam_snapshot(printer_id: str, index: int, current: User = Depends(require_user)) -> Response:
     """One picture from a webcam of a Klipper printer (fetched here, so the printer's address and key stay on the server)."""
     row = _live_row(printer_id, current)
     if row["host_type"] == "bambu":
-        raise HTTPException(status_code=404, detail="A Bambu printer's camera is not supported yet")
+        return await _bambu_snapshot(row, index)
     try:
         data, kind = await printhost.webcam_snapshot(row, index)
     except printhost.NoSuchCamera as exc:

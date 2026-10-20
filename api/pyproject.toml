@@ -21,6 +21,8 @@ dependencies = [
     "defusedxml>=0.7",
     # bambu_link.py: the live link to a Bambu printer in LAN / Developer mode speaks MQTT over TLS.
     "paho-mqtt>=2.1",
+    # bambu_camera.py: one frame of an X1 / H2 printer's RTSPS stream (the library brings its own FFmpeg).
+    "av>=14",
 ]
 
 [project.optional-dependencies]
