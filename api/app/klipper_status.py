@@ -40,21 +40,38 @@ def _temperature(name: str, kind: str, values: Mapping[str, Any]) -> dict[str, A
     }
 
 
+def _nozzles(status: Mapping[str, Any]) -> list[dict[str, Any] | None]:
+    keys = sorted((k for k in status if _NOZZLE.match(k)), key=lambda k: int(_NOZZLE.match(k).group(1) or 0))  # type: ignore[union-attr]
+    return [
+        _temperature(f"Nozzle {i + 1}" if len(keys) > 1 else "Nozzle", "nozzle", _section(status, key))
+        for i, key in enumerate(keys)
+    ]
+
+
+def _heaters(status: Mapping[str, Any]) -> list[dict[str, Any] | None]:
+    return [
+        _temperature(key.split(" ", 1)[1], "heater", _section(status, key))
+        for key in sorted(k for k in status if k.startswith("heater_generic "))
+    ]
+
+
+def _sensors(status: Mapping[str, Any]) -> list[dict[str, Any] | None]:
+    """The chamber's sensors, then the other temperature sensors."""
+    keys = sorted(k for k in status if k.startswith(("temperature_sensor ", "temperature_fan ")))
+    chambers = [k for k in keys if any(w in k.lower() for w in _CHAMBER_WORDS)]
+    out = [_temperature("Chamber", "chamber", _section(status, key)) for key in chambers]
+    out += [_temperature(key.split(" ", 1)[1], "sensor", _section(status, key)) for key in keys if key not in chambers]
+    return out
+
+
 def _temperatures(status: Mapping[str, Any]) -> list[dict[str, Any]]:
     """The nozzles, the bed, other heaters, the chamber and the other sensors, in that order."""
-    nozzles = sorted((k for k in status if _NOZZLE.match(k)), key=lambda k: int(_NOZZLE.match(k).group(1) or 0))  # type: ignore[union-attr]
-    out: list[dict[str, Any] | None] = []
-    for i, key in enumerate(nozzles):
-        out.append(_temperature(f"Nozzle {i + 1}" if len(nozzles) > 1 else "Nozzle", "nozzle", _section(status, key)))
-    out.append(_temperature("Bed", "bed", _section(status, "heater_bed")))
-    for key in sorted(k for k in status if k.startswith("heater_generic ")):
-        out.append(_temperature(key.split(" ", 1)[1], "heater", _section(status, key)))
-    sensors = sorted(k for k in status if k.startswith(("temperature_sensor ", "temperature_fan ")))
-    chambers = [k for k in sensors if any(w in k.lower() for w in _CHAMBER_WORDS)]
-    for key in chambers:
-        out.append(_temperature("Chamber", "chamber", _section(status, key)))
-    for key in (k for k in sensors if k not in chambers):
-        out.append(_temperature(key.split(" ", 1)[1], "sensor", _section(status, key)))
+    out = [
+        *_nozzles(status),
+        _temperature("Bed", "bed", _section(status, "heater_bed")),
+        *_heaters(status),
+        *_sensors(status),
+    ]
     return [t for t in out if t]
 
 
