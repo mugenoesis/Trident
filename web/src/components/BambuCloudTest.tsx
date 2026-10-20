@@ -22,6 +22,7 @@ export default function BambuCloudTest() {
 	const [busy, setBusy] = useState(false);
 	const [problem, setProblem] = useState<string | null>(null);
 	const [waiting, setWaiting] = useState(false);
+	const [pasted, setPasted] = useState('');
 
 	useEffect(() => {
 		let alive = true;
@@ -48,7 +49,6 @@ export default function BambuCloudTest() {
 			.finally(() => setBusy(false));
 	};
 
-	const [pasted, setPasted] = useState('');
 	const paste = () => {
 		setProblem(null);
 		pasteBambuAddress(pasted)
