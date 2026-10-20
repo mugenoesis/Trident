@@ -227,11 +227,13 @@ export interface AuthStatus {
 // knows how to talk to (see api/app/printhost.py) -- the value stored can
 // technically be any OrcaSlicer host_type string, but the UI only offers
 // these two since anything else can't be sent to yet.
-export type PrintHostType = 'octoprint' | 'moonraker';
+export type PrintHostType = 'octoprint' | 'moonraker' | 'bambu';
 
 export interface PrinterConnection {
 	host_type: PrintHostType | null;
 	print_host: string | null;
+	// A Bambu printer (LAN mode): print_host is its IP address, printhost_apikey its access code, and this its serial number.
+	device_id?: string | null;
 	printhost_apikey: string | null;
 	printhost_user: string | null;
 	printhost_password: string | null;
@@ -284,6 +286,7 @@ export interface PrinterUpdateRequest {
 	printhost_apikey?: string;
 	printhost_user?: string;
 	printhost_password?: string;
+	device_id?: string | null;
 }
 
 // Filament choice only -- print-quality settings live separately in a

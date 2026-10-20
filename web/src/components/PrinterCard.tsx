@@ -4,6 +4,7 @@ import { usePrinterStatus } from '../hooks/usePrinterStatus';
 import { layerText, percentText, showsCamera, stateLabel, stateTone, timeText } from '../printerStatus';
 import type { PrintAction, PrinterCamera, PrinterRecord, PrinterStatus } from '../types';
 import PrinterCam from './PrinterCam';
+import RawStatus from './RawStatus';
 
 /** "Nozzle 214.8° / 215°" tiles: a heater that is heating is outlined. */
 function Temperatures({ status }: { status: PrinterStatus }) {
@@ -165,6 +166,7 @@ export default function PrinterCard({ printer }: { printer: PrinterRecord }) {
 					<Temperatures status={status} />
 					{showsCamera(status) && <PrinterCam printerId={printer.id} cameras={cameras} />}
 					<Controls printer={printer} status={status} onDone={refresh} />
+					{printer.host_type === 'bambu' && <RawStatus printerId={printer.id} />}
 				</>
 			)}
 		</article>

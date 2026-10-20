@@ -5,6 +5,7 @@ import type { PrinterRecord, PrinterUpdateRequest, PrintHostType } from '../type
 interface ConnectionFields {
 	host_type: PrintHostType | null;
 	print_host: string | null;
+	device_id?: string | null;
 	printhost_apikey: string | null;
 	printhost_user: string | null;
 	printhost_password: string | null;
@@ -20,6 +21,46 @@ interface SavedPrintersProps {
 	onDeletePrinter: (id: string) => void;
 	// The mode the screen is in: a resin printer has no G-code connection to ask about.
 	technology: 'fdm' | 'resin';
+}
+
+/** A Bambu printer in LAN mode: its IP address, serial number and access code (all on its own screen). The access code is a secret, so it is never shown again. */
+function BambuFields({
+	host,
+	onHost,
+	serial,
+	onSerial,
+	code,
+	onCode,
+	codeSaved,
+}: {
+	host: string;
+	onHost: (v: string) => void;
+	serial: string;
+	onSerial: (v: string) => void;
+	code: string;
+	onCode: (v: string) => void;
+	codeSaved: boolean;
+}) {
+	return (
+		<>
+			<label>
+				IP address (the printer's screen shows it)
+				<input value={host} onChange={(e) => onHost(e.target.value)} />
+			</label>
+			<label>
+				Serial number
+				<input value={serial} onChange={(e) => onSerial(e.target.value)} />
+			</label>
+			<label>
+				Access code{codeSaved && ' (leave blank to keep the saved one)'}
+				<input type="password" autoComplete="off" value={code} onChange={(e) => onCode(e.target.value)} />
+			</label>
+			<p className="auth-hint">
+				The printer has to be in Developer Mode, which needs LAN Only mode first (both are in its settings; LAN Only mode takes it off Bambu
+				Cloud until you turn it off again).
+			</p>
+		</>
+	);
 }
 
 // Shared by the create-printer form (testing connection details before the
@@ -69,6 +110,7 @@ function PrinterSettingsForm({
 	const [name, setName] = useState(printer.name);
 	const [hostType, setHostType] = useState<'' | PrintHostType>(printer.host_type ?? '');
 	const [printHost, setPrintHost] = useState(printer.print_host ?? '');
+	const [serial, setSerial] = useState(printer.device_id ?? '');
 	const [apiKey, setApiKey] = useState('');
 	const [hostUser, setHostUser] = useState('');
 	const [hostPassword, setHostPassword] = useState('');
@@ -84,6 +126,7 @@ function PrinterSettingsForm({
 			host_type: hostType || null,
 			print_host: printHost || null,
 		};
+		if (hostType === 'bambu') body.device_id = serial || null;
 		if (apiKey) body.printhost_apikey = apiKey;
 		if (hostUser) body.printhost_user = hostUser;
 		if (hostPassword) body.printhost_password = hostPassword;
@@ -120,9 +163,21 @@ function PrinterSettingsForm({
 							<option value="">None</option>
 							<option value="moonraker">Klipper (Moonraker)</option>
 							<option value="octoprint">OctoPrint</option>
+							<option value="bambu">Bambu Lab (LAN mode)</option>
 						</select>
 					</label>
-					{hostType && (
+					{hostType === 'bambu' && (
+						<BambuFields
+							host={printHost}
+							onHost={setPrintHost}
+							serial={serial}
+							onSerial={setSerial}
+							code={apiKey}
+							onCode={setApiKey}
+							codeSaved={printer.has_credentials}
+						/>
+					)}
+					{hostType && hostType !== 'bambu' && (
 						<>
 							<label>
 								Host (e.g. http://printer.local:7125)
@@ -186,6 +241,7 @@ export default function SavedPrinters({
 	const [printerName, setPrinterName] = useState('');
 	const [hostType, setHostType] = useState<'' | PrintHostType>('');
 	const [printHost, setPrintHost] = useState('');
+	const [serial, setSerial] = useState('');
 	const [apiKey, setApiKey] = useState('');
 	const [hostUser, setHostUser] = useState('');
 	const [hostPassword, setHostPassword] = useState('');
@@ -199,6 +255,7 @@ export default function SavedPrinters({
 		setPrinterName('');
 		setHostType('');
 		setPrintHost('');
+		setSerial('');
 		setApiKey('');
 		setHostUser('');
 		setHostPassword('');
@@ -212,6 +269,7 @@ export default function SavedPrinters({
 		onSavePrinter(printerName, {
 			host_type: hostType || null,
 			print_host: printHost || null,
+			device_id: hostType === 'bambu' ? serial || null : null,
 			printhost_apikey: apiKey || null,
 			printhost_user: hostUser || null,
 			printhost_password: hostPassword || null,
@@ -257,9 +315,21 @@ export default function SavedPrinters({
 									<option value="">None</option>
 									<option value="moonraker">Klipper (Moonraker)</option>
 									<option value="octoprint">OctoPrint</option>
+									<option value="bambu">Bambu Lab (LAN mode)</option>
 								</select>
 							</label>
-							{hostType && (
+							{hostType === 'bambu' && (
+								<BambuFields
+									host={printHost}
+									onHost={setPrintHost}
+									serial={serial}
+									onSerial={setSerial}
+									code={apiKey}
+									onCode={setApiKey}
+									codeSaved={false}
+								/>
+							)}
+							{hostType && hostType !== 'bambu' && (
 								<>
 									<label>
 										Host (e.g. http://printer.local:7125)
@@ -277,20 +347,21 @@ export default function SavedPrinters({
 										HTTP password (if behind basic auth)
 										<input type="password" value={hostPassword} onChange={(e) => setHostPassword(e.target.value)} />
 									</label>
-									{printHost && (
-										<TestConnectionButton
-											onTest={() =>
-												testConnectionDetails({
-													host_type: hostType || null,
-													print_host: printHost || null,
-													printhost_apikey: apiKey || null,
-													printhost_user: hostUser || null,
-													printhost_password: hostPassword || null,
-												})
-											}
-										/>
-									)}
 								</>
+							)}
+							{hostType && printHost && (
+								<TestConnectionButton
+									onTest={() =>
+										testConnectionDetails({
+											host_type: hostType,
+											print_host: printHost,
+											device_id: hostType === 'bambu' ? serial || null : null,
+											printhost_apikey: apiKey || null,
+											printhost_user: hostUser || null,
+											printhost_password: hostPassword || null,
+										})
+									}
+								/>
 							)}
 						</>
 					)}

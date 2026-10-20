@@ -29,9 +29,9 @@ export function stateTone(state: string): StateTone {
 	return 'off';
 }
 
-/** The saved printers a live page can show: the ones with a Klipper (Moonraker) address. */
-export function klipperPrinters(printers: PrinterRecord[]): PrinterRecord[] {
-	return printers.filter((p) => p.host_type === 'moonraker' && !!p.print_host);
+/** The saved printers a live page can show: the ones with a Klipper (Moonraker) address, and the Bambu ones (LAN mode). */
+export function livePrinters(printers: PrinterRecord[]): PrinterRecord[] {
+	return printers.filter((p) => (p.host_type === 'moonraker' || p.host_type === 'bambu') && !!p.print_host);
 }
 
 /** "42%" for a progress between 0 and 1, or null when there is none. */

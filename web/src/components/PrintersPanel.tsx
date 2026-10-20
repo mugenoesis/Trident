@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listPrinters } from '../api';
-import { klipperPrinters } from '../printerStatus';
+import { livePrinters } from '../printerStatus';
 import type { PrinterRecord } from '../types';
 import PrinterCard from './PrinterCard';
 
@@ -14,7 +14,7 @@ function PrintersPanel({ onClose }: { onClose: () => void }) {
 
 	useEffect(() => {
 		listPrinters()
-			.then((list) => setPrinters(klipperPrinters(list)))
+			.then((list) => setPrinters(livePrinters(list)))
 			.catch((err: Error) => setError(err.message));
 	}, []);
 
@@ -39,8 +39,8 @@ function PrintersPanel({ onClose }: { onClose: () => void }) {
 				{!printers && !error && <p className="auth-hint">Loading…</p>}
 				{printers?.length === 0 && (
 					<p className="auth-hint">
-						No saved printer has a Klipper (Moonraker) address yet. Save a printer with its address (under Printer settings, Manage saved
-						printers) and it appears here.
+						No saved printer has a Klipper (Moonraker) address or a Bambu (LAN mode) connection yet. Save a printer with its connection
+						(under Printer settings, Manage saved printers) and it appears here.
 					</p>
 				)}
 				<div className="printers-grid">
@@ -49,8 +49,8 @@ function PrintersPanel({ onClose }: { onClose: () => void }) {
 					))}
 				</div>
 				<p className="auth-hint">
-					Only printers saved with a Klipper (Moonraker) address are shown. Cancelling asks first. Pause, resume and cancel are all this
-					page can do to a printer.
+					Only printers saved with a Klipper (Moonraker) or Bambu (LAN mode) connection are shown. Cancelling asks first. Pause, resume and
+					cancel are all this page can do to a printer.
 				</p>
 			</div>
 		</div>
