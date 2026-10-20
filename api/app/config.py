@@ -67,5 +67,8 @@ class Settings(BaseSettings):
     # missing frontend build never breaks the API itself.
     static_dir: Path = Path("../web/dist")
 
+    # EXPERIMENT: Bambu Cloud sign-in through Bambu's own plug-in (routers/bambu_cloud.py). Off unless asked for.
+    experimental_bambu_cloud: bool = False
+
 
 settings = Settings()

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { testConnectionDetails, testPrinterConnection } from '../api';
 import type { PrinterRecord, PrinterUpdateRequest, PrintHostType } from '../types';
+import BambuCloudTest from './BambuCloudTest';
 
 interface ConnectionFields {
 	host_type: PrintHostType | null;
@@ -60,6 +61,7 @@ function BambuFields({
 				Access code{codeSaved && ' (leave blank to keep the saved one)'}
 				<input type="password" autoComplete="off" value={code} onChange={(e) => onCode(e.target.value)} />
 			</label>
+			<BambuCloudTest />
 			<label className="checkbox-label">
 				<input type="checkbox" checked={monitorOnly} onChange={(e) => onMonitorOnly(e.target.checked)} />
 				Monitor only (Developer Mode is off)

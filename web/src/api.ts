@@ -512,3 +512,22 @@ export function sendToPrinter(printerId: string, jobId: string, startPrint: bool
 export function createUser(username: string, password: string): Promise<AuthStatus> {
 	return postJson('/auth/users', { username, password });
 }
+
+// EXPERIMENT: Bambu Cloud sign-in through Bambu's own plug-in (the panel only shows when the server has it switched on).
+export interface BambuCloudStatus {
+	enabled: boolean;
+	plugin?: { installed: boolean; version?: string; sha256?: string };
+	callback?: { received_at: number; fields: { name: string; length: number }[]; extra_path_lengths: number[] } | null;
+}
+
+export function getBambuCloud(): Promise<BambuCloudStatus> {
+	return request('/bambu-cloud');
+}
+
+export function installBambuPlugin(): Promise<NonNullable<BambuCloudStatus['plugin']>> {
+	return request('/bambu-cloud/plugin', { method: 'POST' });
+}
+
+export function getBambuSignInUrl(origin: string): Promise<{ url: string }> {
+	return request(`/bambu-cloud/sign-in-url?origin=${encodeURIComponent(origin)}`);
+}
