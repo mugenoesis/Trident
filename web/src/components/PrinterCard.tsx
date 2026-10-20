@@ -135,7 +135,11 @@ export default function PrinterCard({ printer }: { printer: PrinterRecord }) {
 			{!loaded && <p className="auth-hint">Asking the printer…</p>}
 			{error && (
 				<>
-					<p className="printer-off">{error}. It may be off; trying again every few seconds.</p>
+					<p className="printer-off">
+						{/needs its/.test(error)
+							? `${error}: edit the printer to add them.`
+							: `${error}. It may be off; trying again every few seconds.`}
+					</p>
 					<p className="auth-hint">{printer.print_host}</p>
 				</>
 			)}
