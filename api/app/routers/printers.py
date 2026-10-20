@@ -102,13 +102,26 @@ def _live_row(printer_id: str, current: User):
     return row
 
 
+def _refuse_if_monitor_only(row) -> None:
+    """A Bambu printer saved as monitor only is never sent a command: without Developer Mode it would ignore it."""
+    if row["monitor_only"]:
+        raise HTTPException(
+            status_code=409,
+            detail="This printer is saved as monitor only. Turn on Developer Mode on it and untick monitor only to control it from here",
+        )
+
+
 @router.get("/{printer_id}/status")
 async def printer_status(printer_id: str, current: User = Depends(require_user)) -> dict[str, Any]:
     """The live state of a Klipper or Bambu printer: the print, its progress, the temperatures and what can be done to it. Read-only."""
     row = _live_row(printer_id, current)
     try:
         if row["host_type"] == "bambu":
-            return bambu_status.status_from_bambu(await bambu_link.read_report(row), row["device_id"])
+            status = bambu_status.status_from_bambu(await bambu_link.read_report(row), row["device_id"])
+            if row["monitor_only"]:
+                status["can"] = {"pause": False, "resume": False, "cancel": False}
+                status["monitor_only"] = True
+            return status
         return klipper_status.status_from_klipper(await printhost.read_status(row))
     except (printhost.PrintHostError, bambu_link.BambuError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -141,6 +154,7 @@ async def control_print(
     row = _live_row(printer_id, current)
     try:
         if row["host_type"] == "bambu":
+            _refuse_if_monitor_only(row)
             await bambu_link.control(row, action)
         else:
             await printhost.print_control(row, action)
@@ -362,6 +376,7 @@ async def send_to_printer(
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
     if row["host_type"] == "bambu":
+        _refuse_if_monitor_only(row)
         return await _send_to_bambu(row, job, body)
     gcode_path = resolve_job_gcode_path(job_id)
     try:

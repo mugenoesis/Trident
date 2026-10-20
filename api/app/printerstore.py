@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS printers (
     created_at TEXT NOT NULL,
     technology TEXT NOT NULL DEFAULT 'fdm',
     resin_settings TEXT,
-    device_id TEXT
+    device_id TEXT,
+    monitor_only INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS material_profiles (
     id TEXT PRIMARY KEY,
@@ -117,6 +118,8 @@ class PrinterStore:
             conn.execute("ALTER TABLE printers ADD COLUMN resin_settings TEXT")
         if "device_id" not in printer_columns:
             conn.execute("ALTER TABLE printers ADD COLUMN device_id TEXT")
+        if "monitor_only" not in printer_columns:
+            conn.execute("ALTER TABLE printers ADD COLUMN monitor_only INTEGER NOT NULL DEFAULT 0")
         if "filament_profiles" not in printer_columns:
             conn.execute("ALTER TABLE printers ADD COLUMN filament_profiles TEXT")
             conn.execute("ALTER TABLE printers ADD COLUMN filament_colors TEXT")
@@ -166,8 +169,8 @@ class PrinterStore:
                     filament_profile, filament_profiles, filament_colors,
                     bed_width, bed_depth, bed_height, host_type,
                     print_host, printhost_apikey, printhost_user, printhost_password,
-                    created_at, technology, resin_settings, device_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, technology, resin_settings, device_id, monitor_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     printer_id,
                     user_id,
@@ -190,6 +193,7 @@ class PrinterStore:
                     fields.get("technology") or "fdm",
                     json.dumps(fields.get("resin_settings") or {}),
                     fields.get("device_id"),
+                    1 if fields.get("monitor_only") else 0,
                 ),
             )
         return self.get_printer(printer_id)  # type: ignore[return-value]
@@ -219,6 +223,7 @@ class PrinterStore:
             "printhost_password",
             "resin_settings",
             "device_id",
+            "monitor_only",
         }
     )
 
@@ -226,6 +231,8 @@ class PrinterStore:
         updates = {k: v for k, v in fields.items() if k in self._UPDATABLE_COLUMNS}
         if "resin_settings" in updates:
             updates["resin_settings"] = json.dumps(updates["resin_settings"] or {})
+        if "monitor_only" in updates:
+            updates["monitor_only"] = 1 if updates["monitor_only"] else 0
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             with self._connect() as conn:
@@ -288,6 +295,7 @@ class PrinterStore:
             host_type=row["host_type"],
             print_host=row["print_host"],
             device_id=row["device_id"],
+            monitor_only=bool(row["monitor_only"]),
             has_credentials=bool(row["printhost_apikey"] or row["printhost_user"] or row["printhost_password"]),
             created_at=row["created_at"],
         )

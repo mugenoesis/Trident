@@ -32,6 +32,11 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 			.finally(() => setBusy(false));
 	};
 
+	if (printer.monitor_only)
+		return (
+			<div className="job-hint">{printer.name} is saved as monitor only: turn on Developer Mode on it and untick that to send prints.</div>
+		);
+
 	return (
 		<div className="send-to-printer">
 			<label className="checkbox-label">

@@ -276,7 +276,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1500 } });
 const pageErrors = [];
 page.on('pageerror', (err) => pageErrors.push(String(err)));
 
-console.log(`[1/8] Adding a Bambu printer (the fake one is at ${address}) ...`);
+console.log(`[1/9] Adding a Bambu printer (the fake one is at ${address}) ...`);
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 const justMe = page.getByRole('button', { name: 'Just me (no login)' });
 if (await justMe.isVisible().catch(() => false)) await justMe.click();
@@ -295,7 +295,7 @@ check((await form.getByLabel(/HTTP username/).count()) === 0, 'and not the web-a
 await form.getByLabel('IP address').fill(address);
 await form.getByLabel('Serial number').fill(SERIAL);
 
-console.log('[2/8] Testing the connection ...');
+console.log('[2/9] Testing the connection ...');
 await form.getByLabel('Access code').fill('wrong');
 await form.getByRole('button', { name: 'Test connection' }).click();
 await form.getByText(/refused the access code/).waitFor({ timeout: 15000 });
@@ -308,7 +308,7 @@ await form.getByRole('button', { name: 'Save printer' }).click();
 await page.getByText('Manage saved printers (1)').waitFor();
 check(true, 'the printer is saved');
 
-console.log('[3/8] Editing it ...');
+console.log('[3/9] Editing it ...');
 await page.getByText('Manage saved printers (1)').click();
 await page.getByRole('listitem').getByRole('button', { name: 'Settings', exact: true }).click();
 const edit = page.locator('form.printer-settings-form');
@@ -318,7 +318,7 @@ check((await edit.getByLabel(/^Access code/).inputValue()) === '', 'but never th
 check((await edit.getByText(/leave blank to keep/).count()) >= 1, 'which can be left blank to keep it');
 await edit.getByRole('button', { name: 'Cancel' }).click();
 
-console.log('[4/8] Watching it ...');
+console.log('[4/9] Watching it ...');
 await page.getByRole('button', { name: 'Printers', exact: true }).click();
 const panel = page.getByRole('dialog', { name: 'Your printers' });
 await panel.waitFor();
@@ -331,7 +331,7 @@ check((await card.getByText(/1 h 30 min left/).count()) === 1, 'and the time lef
 check((await card.getByText('214.8°').count()) === 1, 'the nozzle');
 check((await card.getByText('Chamber').count()) === 1, 'and an X1’s chamber');
 
-console.log('[5/8] Pausing, resuming and cancelling ...');
+console.log('[5/9] Pausing, resuming and cancelling ...');
 await card.getByRole('button', { name: 'Pause' }).click();
 await until('the pause', () => printer.told.includes('pause'));
 await card.getByText('Paused', { exact: true }).waitFor({ timeout: 15000 });
@@ -347,7 +347,7 @@ await confirm.getByRole('button', { name: 'Cancel the print', exact: true }).cli
 await until('the stop', () => printer.told.includes('stop'));
 check(true, 'cancelling asks first, then sends the printer’s own stop');
 
-console.log('[6/8] What the printer reports, for finding out what it says ...');
+console.log('[6/9] What the printer reports, for finding out what it says ...');
 await card.getByText('Raw status', { exact: true }).click();
 const raw = card.locator('pre.printer-raw');
 await raw.waitFor({ timeout: 15000 });
@@ -358,7 +358,7 @@ check(
 	'without the serial number, the code or the address',
 );
 
-console.log('[7/8] Sending a sliced print ...');
+console.log('[7/9] Sending a sliced print ...');
 await panel.getByRole('button', { name: /Close/ }).click();
 await page.locator('input[type="file"][data-model-input]').setInputFiles(path.resolve('fixtures/test-cube.stl'));
 await page.waitForSelector('text=Ready to slice');
@@ -383,7 +383,7 @@ check(start.param === 'Metadata/plate_1.gcode', 'for the plate in the 3MF');
 check(start.md5 === crypto.createHash('md5').update(printer.uploads[name]).digest('hex'), 'with the file\u2019s checksum');
 check(start.use_ams === true && JSON.stringify(start.ams_mapping) === '[0]', 'from the AMS\u2019s first slot when asked');
 
-console.log('[8/8] The cameras ...');
+console.log('[8/9] The cameras ...');
 // a real JPEG, made by the browser
 camera.picture = Buffer.from(
 	await page.evaluate(() => {
@@ -431,6 +431,31 @@ check(
 const x1 = again.locator('.printer-card').filter({ has: page.getByText('X1C', { exact: true }) });
 await x1.getByText(/camera is not answering/).waitFor({ timeout: 60000 });
 check(!(await x1.innerText()).includes(CODE), 'an X1 whose stream cannot be opened says so, without the access code');
+
+console.log('[9/9] A printer saved as monitor only ...');
+await page.evaluate(
+	async ([host, serial, code]) => {
+		const body = {
+			name: 'P1S',
+			vendor: 'BBL',
+			machine_profile: 'x',
+			process_profile: 'x',
+			host_type: 'bambu',
+			print_host: host,
+			device_id: serial,
+			printhost_apikey: code,
+			monitor_only: true,
+		};
+		await fetch('/printers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+	},
+	[address, A1_SERIAL, CODE],
+);
+await again.getByRole('button', { name: /Close/ }).click();
+await page.getByRole('button', { name: 'Printers', exact: true }).click();
+const p1s = page.getByRole('dialog', { name: 'Your printers' }).locator('.printer-card', { hasText: 'P1S' });
+await p1s.getByText('Printing', { exact: true }).waitFor({ timeout: 30000 });
+check((await p1s.getByText(/Monitor only/).count()) === 1, 'a monitor-only printer says it can only be watched');
+check((await p1s.getByRole('button', { name: /Pause|Resume|Cancel/ }).count()) === 0, 'and has no buttons for the print');
 
 check(pageErrors.length === 0, `no page errors (${pageErrors.join('; ')})`);
 clearInterval(pusher);

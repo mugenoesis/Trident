@@ -425,3 +425,11 @@ def test_a_database_from_before_serial_numbers_is_migrated(tmp_path: Path):
     conn.close()
     printer = PrinterStore(db_path).get_printer("p1")
     assert printer is not None and printer.name == "Old" and printer.device_id is None
+
+
+def test_monitor_only_is_stored_changed_and_off_by_default(tmp_path: Path):
+    db = PrinterStore(tmp_path / "printers.sqlite3")
+    assert db.create_printer(user_id="alice", **_printer_fields()).monitor_only is False
+    printer = db.create_printer(user_id="alice", **_printer_fields(host_type="bambu", monitor_only=True))
+    assert printer.monitor_only is True
+    assert db.update_printer(printer.id, monitor_only=False).monitor_only is False  # type: ignore[union-attr]

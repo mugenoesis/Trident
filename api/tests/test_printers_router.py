@@ -870,3 +870,50 @@ def test_a_camera_that_does_not_answer_is_a_502_in_the_words_of_the_error(client
     monkeypatch.setattr(bambu_camera, "snapshot", failing)
     response = client.get(f"/printers/{printer['id']}/webcams/0/snapshot")
     assert response.status_code == 502 and "liveview" in response.json()["detail"]
+
+
+# ---- a Bambu printer saved as monitor only (LAN Only mode, no Developer Mode) ----
+
+
+def test_a_monitor_only_printer_shows_its_state_but_allows_no_controls(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    assert printer["monitor_only"] is True
+
+    async def fake_report(row):
+        return {"gcode_state": "RUNNING", "subtask_name": "benchy", "mc_percent": 42}
+
+    monkeypatch.setattr(bambu_link, "read_report", fake_report)
+    body = client.get(f"/printers/{printer['id']}/status").json()
+    assert body["state"] == "printing" and body["monitor_only"] is True
+    assert body["can"] == {"pause": False, "resume": False, "cancel": False}
+
+
+def test_a_monitor_only_printer_is_never_sent_a_command(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    sent = []
+
+    async def fake_control(row, what):
+        sent.append(what)
+
+    monkeypatch.setattr(bambu_link, "control", fake_control)
+    response = client.post(f"/printers/{printer['id']}/print/cancel")
+    assert response.status_code == 409 and "monitor only" in response.json()["detail"]
+    assert sent == []
+
+
+def test_a_monitor_only_printer_is_not_sent_a_print(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    job_id = _bambu_job(client, monkeypatch)
+
+    async def fake_send(*args, **kwargs):
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(bambu_link, "send_print", fake_send)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": True})
+    assert response.status_code == 409
+
+
+def test_monitor_only_can_be_turned_off_later(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    updated = client.put(f"/printers/{printer['id']}", json={"monitor_only": False}).json()
+    assert updated["monitor_only"] is False

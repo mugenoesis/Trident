@@ -165,7 +165,13 @@ export default function PrinterCard({ printer }: { printer: PrinterRecord }) {
 					)}
 					<Temperatures status={status} />
 					{showsCamera(status) && <PrinterCam printerId={printer.id} cameras={cameras} />}
-					<Controls printer={printer} status={status} onDone={refresh} />
+					{status.monitor_only ? (
+						<p className="auth-hint">
+							Monitor only: this printer is not in Developer Mode, so it can be watched but not controlled from here.
+						</p>
+					) : (
+						<Controls printer={printer} status={status} onDone={refresh} />
+					)}
 					{printer.host_type === 'bambu' && <RawStatus printerId={printer.id} />}
 				</>
 			)}

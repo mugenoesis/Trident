@@ -6,6 +6,7 @@ interface ConnectionFields {
 	host_type: PrintHostType | null;
 	print_host: string | null;
 	device_id?: string | null;
+	monitor_only?: boolean;
 	printhost_apikey: string | null;
 	printhost_user: string | null;
 	printhost_password: string | null;
@@ -32,6 +33,8 @@ function BambuFields({
 	code,
 	onCode,
 	codeSaved,
+	monitorOnly,
+	onMonitorOnly,
 }: {
 	host: string;
 	onHost: (v: string) => void;
@@ -40,6 +43,8 @@ function BambuFields({
 	code: string;
 	onCode: (v: string) => void;
 	codeSaved: boolean;
+	monitorOnly: boolean;
+	onMonitorOnly: (v: boolean) => void;
 }) {
 	return (
 		<>
@@ -55,9 +60,13 @@ function BambuFields({
 				Access code{codeSaved && ' (leave blank to keep the saved one)'}
 				<input type="password" autoComplete="off" value={code} onChange={(e) => onCode(e.target.value)} />
 			</label>
+			<label className="checkbox-label">
+				<input type="checkbox" checked={monitorOnly} onChange={(e) => onMonitorOnly(e.target.checked)} />
+				Monitor only (Developer Mode is off)
+			</label>
 			<p className="auth-hint">
-				The printer has to be in Developer Mode, which needs LAN Only mode first (both are in its settings; LAN Only mode takes it off Bambu
-				Cloud until you turn it off again).
+				LAN Only mode is enough to watch the printer. To pause, cancel or send prints from here it also needs Developer Mode (both are in
+				its settings; LAN Only mode takes it off Bambu Cloud until you turn it off again).
 			</p>
 		</>
 	);
@@ -111,6 +120,7 @@ function PrinterSettingsForm({
 	const [hostType, setHostType] = useState<'' | PrintHostType>(printer.host_type ?? '');
 	const [printHost, setPrintHost] = useState(printer.print_host ?? '');
 	const [serial, setSerial] = useState(printer.device_id ?? '');
+	const [monitorOnly, setMonitorOnly] = useState(!!printer.monitor_only);
 	const [apiKey, setApiKey] = useState('');
 	const [hostUser, setHostUser] = useState('');
 	const [hostPassword, setHostPassword] = useState('');
@@ -126,7 +136,10 @@ function PrinterSettingsForm({
 			host_type: hostType || null,
 			print_host: printHost || null,
 		};
-		if (hostType === 'bambu') body.device_id = serial || null;
+		if (hostType === 'bambu') {
+			body.device_id = serial || null;
+			body.monitor_only = monitorOnly;
+		}
 		if (apiKey) body.printhost_apikey = apiKey;
 		if (hostUser) body.printhost_user = hostUser;
 		if (hostPassword) body.printhost_password = hostPassword;
@@ -175,6 +188,8 @@ function PrinterSettingsForm({
 							code={apiKey}
 							onCode={setApiKey}
 							codeSaved={printer.has_credentials}
+							monitorOnly={monitorOnly}
+							onMonitorOnly={setMonitorOnly}
 						/>
 					)}
 					{hostType && hostType !== 'bambu' && (
@@ -242,6 +257,7 @@ export default function SavedPrinters({
 	const [hostType, setHostType] = useState<'' | PrintHostType>('');
 	const [printHost, setPrintHost] = useState('');
 	const [serial, setSerial] = useState('');
+	const [monitorOnly, setMonitorOnly] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const [hostUser, setHostUser] = useState('');
 	const [hostPassword, setHostPassword] = useState('');
@@ -270,6 +286,7 @@ export default function SavedPrinters({
 			host_type: hostType || null,
 			print_host: printHost || null,
 			device_id: hostType === 'bambu' ? serial || null : null,
+			monitor_only: hostType === 'bambu' && monitorOnly,
 			printhost_apikey: apiKey || null,
 			printhost_user: hostUser || null,
 			printhost_password: hostPassword || null,
@@ -327,6 +344,8 @@ export default function SavedPrinters({
 									code={apiKey}
 									onCode={setApiKey}
 									codeSaved={false}
+									monitorOnly={monitorOnly}
+									onMonitorOnly={setMonitorOnly}
 								/>
 							)}
 							{hostType && hostType !== 'bambu' && (

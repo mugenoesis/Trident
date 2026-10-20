@@ -234,6 +234,8 @@ export interface PrinterConnection {
 	print_host: string | null;
 	// A Bambu printer (LAN mode): print_host is its IP address, printhost_apikey its access code, and this its serial number.
 	device_id?: string | null;
+	// A Bambu printer left out of Developer Mode: shown, but never sent a command.
+	monitor_only?: boolean;
 	printhost_apikey: string | null;
 	printhost_user: string | null;
 	printhost_password: string | null;
@@ -287,6 +289,7 @@ export interface PrinterUpdateRequest {
 	printhost_user?: string;
 	printhost_password?: string;
 	device_id?: string | null;
+	monitor_only?: boolean;
 }
 
 // Filament choice only -- print-quality settings live separately in a
@@ -470,6 +473,7 @@ export interface PrinterStatus {
 	remaining_s: number | null;
 	temperatures: PrinterTemperature[];
 	can: { pause: boolean; resume: boolean; cancel: boolean };
+	monitor_only?: boolean;
 }
 
 export interface PrinterCamera {
