@@ -206,3 +206,30 @@ def test_installing_the_plugin_reports_a_failure_in_words(client, experiment, mo
     monkeypatch.setattr(bambu_cloud, "install_plugin", failing)
     response = client.post("/bambu-cloud/plugin")
     assert response.status_code == 502 and "Bambu" in response.json()["detail"]
+
+
+# ---- the loopback link and the pasted address ----
+
+
+def test_the_loopback_link_sends_bambu_to_localhost_as_orca_does():
+    url = bambu_cloud.sign_in_url(ORIGIN, loopback=True)
+    callback = urlparse(unquote(parse_qs(urlparse(url).query)["to"][0]))
+    assert parse_qs(callback.query)["redirect_url"] == ["http://localhost:41999"]
+
+
+def test_a_pasted_address_is_recorded_by_field_name_and_length_only(client, experiment):
+    pasted = "http://localhost:41999/?ticket=s3cret-ticket-value&state=abc"
+    response = client.post("/bambu-cloud/paste", json={"url": pasted})
+    assert response.status_code == 200
+    assert response.json()["fields"] == [{"name": "ticket", "length": 19}, {"name": "state", "length": 3}]
+    assert "s3cret" not in response.text and "s3cret" not in str(client.get("/bambu-cloud").json())
+
+
+def test_a_pasted_fragment_counts_too(client, experiment):
+    response = client.post("/bambu-cloud/paste", json={"url": "http://localhost:41999/#token=abcdef"})
+    assert response.json()["fields"] == [{"name": "token", "length": 6}]
+
+
+@pytest.mark.parametrize("pasted", ["not a url", "ftp://localhost/x", "https://evil.test/?ticket=1", ""])
+def test_only_a_localhost_address_can_be_pasted(client, experiment, pasted):
+    assert client.post("/bambu-cloud/paste", json={"url": pasted}).status_code == 400

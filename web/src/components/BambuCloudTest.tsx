@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { type BambuCloudStatus, getBambuCloud, getBambuSignInUrl, installBambuPlugin } from '../api';
+import { type BambuCloudStatus, getBambuCloud, getBambuSignInUrl, installBambuPlugin, pasteBambuAddress } from '../api';
 
 /** What Bambu's redirect carried, by field name and length (the server never sends back a value). */
 function CallbackResult({ callback }: { callback: NonNullable<BambuCloudStatus['callback']> }) {
@@ -48,9 +48,20 @@ export default function BambuCloudTest() {
 			.finally(() => setBusy(false));
 	};
 
-	const signIn = () => {
+	const [pasted, setPasted] = useState('');
+	const paste = () => {
 		setProblem(null);
-		getBambuSignInUrl(window.location.origin)
+		pasteBambuAddress(pasted)
+			.then((callback) => {
+				setStatus({ ...status, callback });
+				setPasted('');
+			})
+			.catch((err: Error) => setProblem(err.message.replace(/^\d{3}\s+/, '')));
+	};
+
+	const signIn = (loopback: boolean) => {
+		setProblem(null);
+		getBambuSignInUrl(window.location.origin, loopback)
 			.then(({ url }) => {
 				window.open(url, '_blank', 'noopener');
 				setWaiting(true);
@@ -74,8 +85,18 @@ export default function BambuCloudTest() {
 					{busy ? 'Downloading…' : "Download Bambu's network plug-in"}
 				</button>
 			)}
-			<button type="button" className="preview-button" onClick={signIn}>
-				Sign in with Bambu (opens a new tab)
+			<button type="button" className="preview-button" onClick={() => signIn(false)}>
+				Sign in with Bambu (sends the browser back here)
+			</button>
+			<button type="button" className="preview-button" onClick={() => signIn(true)}>
+				Sign in with Bambu (the link Orca uses: sends the browser to localhost)
+			</button>
+			<label>
+				After that one, copy the address the browser ends up on and paste it here (only its field names are kept)
+				<input value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="http://localhost:41999/…" autoComplete="off" />
+			</label>
+			<button type="button" className="preview-button" disabled={!pasted} onClick={paste}>
+				Check that address
 			</button>
 			{problem && <p className="banner-error">{problem}</p>}
 			{status.callback && <CallbackResult callback={status.callback} />}

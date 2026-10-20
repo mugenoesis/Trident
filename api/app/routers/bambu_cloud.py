@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
 from .. import bambu_cloud
 from ..auth import require_user
@@ -48,11 +49,25 @@ async def install_plugin(current: User = Depends(require_user)) -> dict[str, Any
 
 
 @router.get("/sign-in-url")
-def sign_in_url(origin: str, current: User = Depends(require_user)) -> dict[str, str]:
+def sign_in_url(origin: str, loopback: bool = False, current: User = Depends(require_user)) -> dict[str, str]:
     """The link to Bambu's sign-in page that sends the browser back here; `origin` is the address the browser uses for Trident."""
     _require_enabled()
     try:
-        return {"url": bambu_cloud.sign_in_url(origin)}
+        return {"url": bambu_cloud.sign_in_url(origin, loopback=loopback)}
+    except bambu_cloud.BambuCloudError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class PastedAddress(BaseModel):
+    url: str = Field(max_length=4000)
+
+
+@router.post("/paste")
+def paste(body: PastedAddress, current: User = Depends(require_user)) -> dict[str, Any]:
+    """An address copied from the browser after the sign-in (one that starts with http://localhost): recorded by field name and length only."""
+    _require_enabled()
+    try:
+        return bambu_cloud.record_pasted(body.url)
     except bambu_cloud.BambuCloudError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

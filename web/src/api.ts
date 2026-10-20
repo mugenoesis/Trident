@@ -528,6 +528,14 @@ export function installBambuPlugin(): Promise<NonNullable<BambuCloudStatus['plug
 	return request('/bambu-cloud/plugin', { method: 'POST' });
 }
 
-export function getBambuSignInUrl(origin: string): Promise<{ url: string }> {
-	return request(`/bambu-cloud/sign-in-url?origin=${encodeURIComponent(origin)}`);
+export function getBambuSignInUrl(origin: string, loopback = false): Promise<{ url: string }> {
+	return request(`/bambu-cloud/sign-in-url?origin=${encodeURIComponent(origin)}&loopback=${loopback}`);
+}
+
+export function pasteBambuAddress(url: string): Promise<NonNullable<BambuCloudStatus['callback']>> {
+	return request('/bambu-cloud/paste', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url }),
+	});
 }

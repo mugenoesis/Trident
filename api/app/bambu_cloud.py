@@ -16,7 +16,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
 
@@ -34,13 +34,21 @@ class BambuCloudError(Exception):
     """Something that went wrong with the plug-in or the sign-in, in words the user can read."""
 
 
-def sign_in_url(origin: str) -> str:
-    """The Bambu sign-in link that sends the browser back to `origin` (Trident's own address) once the user is signed in."""
+LOOPBACK_BASE = "http://localhost:41999"
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
+
+
+def sign_in_url(origin: str, *, loopback: bool = False) -> str:
+    """The Bambu sign-in link that sends the browser back to `origin` (Trident's own address) once the user is signed in.
+
+    With `loopback` it is the link Orca itself builds, which sends the browser to localhost instead (nothing need listen there).
+    """
     if not _ORIGIN.match(origin):
         raise BambuCloudError("That is not a plain web address (http://host:port) for Trident")
+    back = LOOPBACK_BASE if loopback else origin + CALLBACK_PATH
     callback = (
         "https://bambulab.com/sign-in/callback?openBy=studio&from=studio&source=portal&locale=en"
-        f"&redirect_url={quote(origin + CALLBACK_PATH, safe='')}"
+        f"&redirect_url={quote(back, safe='')}"
     )
     return f"{SIGN_IN_URL}?from=studio&source=portal&to={quote(callback, safe='')}"
 
@@ -67,6 +75,16 @@ def record_callback(path: str, query: dict[str, str]) -> None:
         "extra_path_lengths": extra,
     }
     _callback.raw = dict(query)
+
+
+def record_pasted(address: str) -> dict[str, Any]:
+    """Record an address the browser ended up on (copied from its address bar): only a localhost one, by query and fragment field names."""
+    parts = urlsplit(address.strip())
+    if parts.scheme not in ("http", "https") or parts.hostname not in _LOOPBACK_HOSTS:
+        raise BambuCloudError("Paste the address the browser ended up on: it starts with http://localhost")
+    fields = dict(parse_qsl(parts.query)) | dict(parse_qsl(parts.fragment))
+    record_callback(parts.path or "/", fields)
+    return _callback.shown or {}
 
 
 def last_callback() -> dict[str, Any] | None:
