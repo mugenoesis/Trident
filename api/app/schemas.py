@@ -498,6 +498,9 @@ class PrinterCreateRequest(BaseModel):
     printhost_apikey: str | None = None
     printhost_user: str | None = None
     printhost_password: str | None = None
+    # A Bambu printer (host_type "bambu", LAN / Developer mode): print_host is its IP address, printhost_apikey its LAN access code,
+    # and this is its serial number (which the printer's MQTT topics are named by).
+    device_id: str | None = None
 
 
 class PrinterUpdateRequest(BaseModel):
@@ -512,6 +515,7 @@ class PrinterUpdateRequest(BaseModel):
     printhost_apikey: str | None = None
     printhost_user: str | None = None
     printhost_password: str | None = None
+    device_id: str | None = None
     # Resin printers only: the saved slice settings.
     resin_settings: dict[str, Any] | None = None
 
@@ -531,6 +535,8 @@ class PrinterRecord(BaseModel):
     bed_height: float | None = None
     host_type: str | None = None
     print_host: str | None = None
+    # A Bambu printer's serial number (not a secret; the access code is, and is never sent back).
+    device_id: str | None = None
     # Write-only: the raw apikey/user/password are never sent back to the
     # browser once saved -- just whether *something* is configured.
     has_credentials: bool
@@ -567,6 +573,7 @@ class TestConnectionRequest(BaseModel):
     printhost_apikey: str | None = None
     printhost_user: str | None = None
     printhost_password: str | None = None
+    device_id: str | None = None
 
 
 class SendToPrinterRequest(BaseModel):

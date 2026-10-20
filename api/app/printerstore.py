@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS printers (
     printhost_password TEXT,
     created_at TEXT NOT NULL,
     technology TEXT NOT NULL DEFAULT 'fdm',
-    resin_settings TEXT
+    resin_settings TEXT,
+    device_id TEXT
 );
 CREATE TABLE IF NOT EXISTS material_profiles (
     id TEXT PRIMARY KEY,
@@ -114,6 +115,8 @@ class PrinterStore:
         if "technology" not in printer_columns:
             conn.execute("ALTER TABLE printers ADD COLUMN technology TEXT NOT NULL DEFAULT 'fdm'")
             conn.execute("ALTER TABLE printers ADD COLUMN resin_settings TEXT")
+        if "device_id" not in printer_columns:
+            conn.execute("ALTER TABLE printers ADD COLUMN device_id TEXT")
         if "filament_profiles" not in printer_columns:
             conn.execute("ALTER TABLE printers ADD COLUMN filament_profiles TEXT")
             conn.execute("ALTER TABLE printers ADD COLUMN filament_colors TEXT")
@@ -163,8 +166,8 @@ class PrinterStore:
                     filament_profile, filament_profiles, filament_colors,
                     bed_width, bed_depth, bed_height, host_type,
                     print_host, printhost_apikey, printhost_user, printhost_password,
-                    created_at, technology, resin_settings
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, technology, resin_settings, device_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     printer_id,
                     user_id,
@@ -186,6 +189,7 @@ class PrinterStore:
                     now,
                     fields.get("technology") or "fdm",
                     json.dumps(fields.get("resin_settings") or {}),
+                    fields.get("device_id"),
                 ),
             )
         return self.get_printer(printer_id)  # type: ignore[return-value]
@@ -214,6 +218,7 @@ class PrinterStore:
             "printhost_user",
             "printhost_password",
             "resin_settings",
+            "device_id",
         }
     )
 
@@ -282,6 +287,7 @@ class PrinterStore:
             bed_height=row["bed_height"],
             host_type=row["host_type"],
             print_host=row["print_host"],
+            device_id=row["device_id"],
             has_credentials=bool(row["printhost_apikey"] or row["printhost_user"] or row["printhost_password"]),
             created_at=row["created_at"],
         )

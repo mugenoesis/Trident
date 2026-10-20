@@ -4,7 +4,7 @@ import io
 
 import pytest
 
-from app import printhost
+from app import bambu_link, printhost
 
 
 def _printer_body(**overrides):
@@ -595,3 +595,139 @@ def test_a_webcam_that_is_not_there_is_a_404(client, monkeypatch):
 
     monkeypatch.setattr(printhost, "webcam_snapshot", missing)
     assert client.get(f"/printers/{printer_id}/webcams/3/snapshot").status_code == 404
+
+
+# ---- Bambu printers (LAN / Developer mode) ----
+
+SERIAL = "00M00A000000000"
+
+
+def _bambu_printer(client, **overrides):
+    body = _printer_body(
+        name="X1C",
+        host_type="bambu",
+        print_host="192.168.1.50",
+        printhost_apikey="12345678",
+        device_id=SERIAL,
+        **overrides,
+    )
+    return client.post("/printers", json=body).json()
+
+
+def test_a_bambu_printer_is_saved_with_its_serial_number_and_the_access_code_never_comes_back(client):
+    created = client.post(
+        "/printers",
+        json=_printer_body(host_type="bambu", print_host="192.168.1.50", printhost_apikey="12345678", device_id=SERIAL),
+    )
+    body = created.json()
+    assert body["device_id"] == SERIAL and body["host_type"] == "bambu" and body["has_credentials"] is True
+    assert "12345678" not in created.text
+    assert client.get("/printers").json()[0]["device_id"] == SERIAL
+
+
+def test_the_serial_number_can_be_edited_with_the_connection(client):
+    printer = _bambu_printer(client)
+    updated = client.put(f"/printers/{printer['id']}", json={"device_id": "01P00A000000000"})
+    assert updated.status_code == 200 and updated.json()["device_id"] == "01P00A000000000"
+
+
+def test_status_of_a_bambu_printer_is_made_from_its_report(client, monkeypatch):
+    printer = _bambu_printer(client)
+    asked = {}
+
+    async def fake_report(row):
+        asked.update({k: row[k] for k in ("print_host", "device_id", "printhost_apikey")})
+        return {
+            "gcode_state": "RUNNING",
+            "subtask_name": "benchy",
+            "mc_percent": 42,
+            "mc_remaining_time": 98,
+            "chamber_temper": 30,
+            "nozzle_temper": 200,
+        }
+
+    monkeypatch.setattr(bambu_link, "read_report", fake_report)
+    response = client.get(f"/printers/{printer['id']}/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["state"], body["file"], body["progress"], body["remaining_s"]) == ("printing", "benchy", 0.42, 5880)
+    assert [t["name"] for t in body["temperatures"]] == ["Nozzle", "Chamber"]  # an X1's serial number: it has a chamber
+    assert asked == {"print_host": "192.168.1.50", "device_id": SERIAL, "printhost_apikey": "12345678"}
+    assert "12345678" not in response.text
+
+
+def test_a_bambu_printer_that_cannot_be_reached_is_a_502_in_the_links_words(client, monkeypatch):
+    printer = _bambu_printer(client)
+
+    async def failing(row):
+        raise bambu_link.BambuError("The printer refused the access code")
+
+    monkeypatch.setattr(bambu_link, "read_report", failing)
+    response = client.get(f"/printers/{printer['id']}/status")
+    assert response.status_code == 502 and "access code" in response.json()["detail"]
+
+
+def test_a_bambu_printer_with_no_serial_number_cannot_have_a_status(client):
+    body = _printer_body(host_type="bambu", print_host="192.168.1.50", printhost_apikey="12345678")
+    printer = client.post("/printers", json=body).json()
+    response = client.get(f"/printers/{printer['id']}/status")
+    assert response.status_code == 400 and "serial number" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
+def test_pause_resume_and_cancel_go_to_a_bambu_printer(client, monkeypatch, action):
+    printer = _bambu_printer(client)
+    done = []
+
+    async def fake_control(row, what):
+        done.append(what)
+
+    monkeypatch.setattr(bambu_link, "control", fake_control)
+    assert client.post(f"/printers/{printer['id']}/print/{action}").json() == {"ok": True}
+    assert done == [action]
+
+
+def test_a_bambu_printer_has_no_webcams_listed_yet(client):
+    printer = _bambu_printer(client)
+    assert client.get(f"/printers/{printer['id']}/webcams").json() == []
+
+
+def test_testing_a_bambu_connection_connects_to_the_printer(client, monkeypatch):
+    asked = {}
+
+    async def fake_check(host, serial, code):
+        asked.update(host=host, serial=serial, code=code)
+        return "Connected (printer state: standby)"
+
+    monkeypatch.setattr(bambu_link, "check_connection", fake_check)
+    response = client.post(
+        "/printers/test-connection",
+        json={"host_type": "bambu", "print_host": "192.168.1.50", "printhost_apikey": "12345678", "device_id": SERIAL},
+    )
+    assert response.status_code == 200 and "Connected" in response.json()["message"]
+    assert asked == {"host": "192.168.1.50", "serial": SERIAL, "code": "12345678"}
+
+
+def test_testing_a_saved_bambu_printers_connection_uses_what_is_saved(client, monkeypatch):
+    printer = _bambu_printer(client)
+    asked = {}
+
+    async def fake_check(host, serial, code):
+        asked.update(host=host, serial=serial, code=code)
+        return "Connected"
+
+    monkeypatch.setattr(bambu_link, "check_connection", fake_check)
+    assert client.post(f"/printers/{printer['id']}/test-connection").status_code == 200
+    assert asked == {"host": "192.168.1.50", "serial": SERIAL, "code": "12345678"}
+
+
+def test_a_failed_bambu_connection_test_is_a_502(client, monkeypatch):
+    async def failing(host, serial, code):
+        raise bambu_link.BambuError("Couldn't reach the printer: timed out")
+
+    monkeypatch.setattr(bambu_link, "check_connection", failing)
+    response = client.post(
+        "/printers/test-connection",
+        json={"host_type": "bambu", "print_host": "192.168.1.50", "printhost_apikey": "x", "device_id": SERIAL},
+    )
+    assert response.status_code == 502 and "reach" in response.json()["detail"]
