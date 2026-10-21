@@ -951,3 +951,44 @@ def test_monitor_only_can_be_turned_off_later(client, monkeypatch):
     printer = _bambu_printer(client, monitor_only=True)
     updated = client.put(f"/printers/{printer['id']}", json={"monitor_only": False}).json()
     assert updated["monitor_only"] is False
+
+
+def test_a_monitor_only_printer_is_started_by_the_plugin_when_the_experiment_has_one_that_can(client, monkeypatch):
+    from app import bambu_cloud
+    from app.config import settings
+
+    printer = _bambu_printer(client, monitor_only=True)
+    job_id = _bambu_job(client, monkeypatch)
+    started = {}
+
+    async def fake_start(folder, config_dir, cert_dir, helper, job):
+        started.update(job)
+
+    monkeypatch.setattr(settings, "experimental_bambu_cloud", True)
+    monkeypatch.setattr(bambu_cloud, "can_print", lambda folder: True)
+    monkeypatch.setattr(bambu_cloud, "start_print", fake_start)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": True})
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert (
+        started["dev_ip"] == "192.168.1.50"
+        and started["dev_id"]
+        and started["access_code"]
+        and started["plate_index"] >= 1
+    )
+
+
+def test_a_failed_start_by_the_plugin_is_reported_and_not_a_success(client, monkeypatch):
+    from app import bambu_cloud
+    from app.config import settings
+
+    printer = _bambu_printer(client, monitor_only=True)
+    job_id = _bambu_job(client, monkeypatch)
+
+    async def fake_start(*args, **kwargs):
+        raise bambu_cloud.BambuCloudError("Not signed in to Bambu")
+
+    monkeypatch.setattr(settings, "experimental_bambu_cloud", True)
+    monkeypatch.setattr(bambu_cloud, "can_print", lambda folder: True)
+    monkeypatch.setattr(bambu_cloud, "start_print", fake_start)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": True})
+    assert response.status_code == 502 and "Not signed in" in response.json()["detail"]

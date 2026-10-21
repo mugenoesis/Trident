@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getBambuCloud } from '../api';
 import type { PrinterRecord } from '../types';
 
 interface SendToPrinterControlProps {
@@ -18,14 +19,29 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 	const [busy, setBusy] = useState(false);
 	const [result, setResult] = useState<'idle' | 'sent' | 'error'>('idle');
 	const [error, setError] = useState<string | null>(null);
-	// A printer saved as monitor only can be sent the file but not told to start it: the print is started on the printer itself.
-	const uploadOnly = !!printer.monitor_only;
+	// A Bambu printer saved as monitor only (left in cloud mode) can always be sent the file; it can be told to start only through Bambu's
+	// plug-in (an experiment), which the server says it has.
+	const monitorOnly = !!printer.monitor_only;
+	const [viaPlugin, setViaPlugin] = useState(false);
+	useEffect(() => {
+		setViaPlugin(false);
+		if (!monitorOnly || printer.host_type !== 'bambu') return;
+		let current = true;
+		getBambuCloud()
+			.then((status) => current && setViaPlugin(!!status.can_print))
+			.catch(() => {});
+		return () => {
+			current = false;
+		};
+	}, [monitorOnly, printer.host_type]);
+	const canStart = !monitorOnly || viaPlugin;
+	const starting = canStart && startPrint;
 
 	const send = () => {
 		setBusy(true);
 		setResult('idle');
 		setError(null);
-		onSend(jobId, uploadOnly ? false : startPrint, useAms)
+		onSend(jobId, starting, useAms)
 			.then(() => setResult('sent'))
 			.catch((err: Error) => {
 				setResult('error');
@@ -36,25 +52,25 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 
 	return (
 		<div className="send-to-printer">
-			{!uploadOnly && (
+			{canStart && (
 				<label className="checkbox-label">
 					<input type="checkbox" checked={startPrint} onChange={(e) => setStartPrint(e.target.checked)} />
-					Start printing immediately
+					Start printing immediately{viaPlugin ? " (experimental: Bambu's plug-in starts it)" : ''}
 				</label>
 			)}
-			{!uploadOnly && printer.host_type === 'bambu' && (
+			{canStart && printer.host_type === 'bambu' && (
 				<label className="checkbox-label">
 					<input type="checkbox" checked={useAms} onChange={(e) => setUseAms(e.target.checked)} />
 					Print from the AMS (its first slot)
 				</label>
 			)}
 			<button type="button" className="preview-button" disabled={busy} onClick={send}>
-				{busy ? 'Sending…' : `Send to ${printer.name}`}
+				{busy ? (starting ? 'Sending and starting…' : 'Sending…') : `Send to ${printer.name}`}
 			</button>
-			{uploadOnly && result !== 'sent' && <div className="job-hint">This sends the file only: you start the print on {printer.name}.</div>}
+			{!canStart && result !== 'sent' && <div className="job-hint">This sends the file only: you start the print on {printer.name}.</div>}
 			{result === 'sent' && (
 				<div className="job-hint">
-					{uploadOnly ? `Sent to ${printer.name}. Start it from the printer's screen.` : `Sent to ${printer.name}.`}
+					{!canStart || !startPrint ? `Sent to ${printer.name}. Start it from the printer's screen.` : `Sent to ${printer.name}.`}
 				</div>
 			)}
 			{result === 'error' && <div className="job-error">{error}</div>}

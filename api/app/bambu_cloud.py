@@ -13,6 +13,8 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
 
-RESOURCE_URL = "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.00.00.00"
+RESOURCE_URL = "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.08.04.00"
 SIGN_IN_URL = "https://bambulab.com/sign-in"
 # Bambu's sign-in only hands the browser back to localhost (the address Orca's own login window listens on), so it is always this.
 LOOPBACK_BASE = "http://localhost:41999"
@@ -141,15 +143,20 @@ async def run_session(
             **{name: tokens.get(name, "") for name in TOKEN_FIELDS},
         }
     )
+    secrets = [value for name, value in tokens.items() if name.endswith("_token") and value]
+    return await _run_helper(helper, payload, secrets, HELPER_TIMEOUT_S)
+
+
+async def _run_helper(helper: Path, payload: str, secrets: list[str], seconds: float) -> list[dict[str, Any]]:
+    """Runs the helper with a JSON message on stdin, and returns the steps it printed, without any line that repeats one of `secrets`."""
     proc = await asyncio.create_subprocess_exec(
         str(helper), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
     )
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(payload.encode()), HELPER_TIMEOUT_S)
+        out, _ = await asyncio.wait_for(proc.communicate(payload.encode()), seconds)
     except TimeoutError as exc:
         proc.kill()
         raise BambuCloudError("The plug-in did not answer in time") from exc
-    secrets = [value for name, value in tokens.items() if name.endswith("_token") and value]
     steps: list[dict[str, Any]] = []
     for line in out.decode(errors="replace").splitlines():
         if any(secret in line for secret in secrets):
@@ -209,3 +216,99 @@ def summarize(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "printers": _printers(by_step.get("get_user_print_info")) if signed_in else [],
         "problem": None if signed_in else _problem(by_step),
     }
+
+
+# ---- starting a print through the plug-in ----
+
+PRINT_SERIES = "02.08.04"  # the series whose print call the helper's parameter layout is written for (see api/helper/bbl_session.cpp)
+PRINT_TIMEOUT_S = 1200
+_FINISHED, _FAILED = 6, 7  # the plug-in's stages for "the printer has the job" and "it did not work"
+_log = logging.getLogger(__name__)
+
+
+def can_print(folder: Path) -> bool:
+    """Whether the installed plug-in is of the series whose print call the helper knows."""
+    return str(plugin_status(folder).get("version", "")).startswith(PRINT_SERIES)
+
+
+def filament_count(three_mf: Path) -> int:
+    """How many filaments the sliced 3MF uses (one when it does not say)."""
+    try:
+        with zipfile.ZipFile(three_mf) as z:
+            info = z.read("Metadata/slice_info.config").decode(errors="replace")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return 1
+    return max(1, len(re.findall(r"<filament\s", info)))
+
+
+def ams_mapping(filaments: int, use_ams: bool) -> dict[str, str]:
+    """The three mapping strings of a print job: filament n on slot n of the AMS, or all on the external spool."""
+    if use_ams:
+        v0 = list(range(filaments))
+        v1 = [{"ams_id": 0, "slot_id": n} for n in range(filaments)]
+    else:
+        v0 = [-1] * filaments
+        v1 = [{"ams_id": 255, "slot_id": 255}] * filaments
+    info = [
+        {"ams": v0[n], "targetColor": "", "filamentId": "", "filamentType": "", "sourceColor": "", "nozzleId": 0}
+        for n in range(filaments)
+    ]
+    return {"ams_mapping": json.dumps(v0), "ams_mapping2": json.dumps(v1), "ams_mapping_info": json.dumps(info)}
+
+
+def _why_not_printed(steps: list[dict[str, Any]], hide: list[str]) -> str:
+    by_step = {str(s.get("step")): s.get("value") for s in steps}
+    if "error" in by_step:
+        return f"The plug-in program reported: {by_step['error']}"
+    if by_step.get("is_user_login") is not True:
+        return "Not signed in to Bambu: sign in again under Add from Bambu account"
+    detail = next(
+        (
+            s["value"].get("message")
+            for s in reversed(steps)
+            if s.get("step") == "progress" and isinstance(s.get("value"), dict) and s["value"].get("message")
+        ),
+        None,
+    )
+    code = by_step.get("print_result")
+    text = f"The plug-in could not start the print (code {code})" if code is not None else "The plug-in gave no answer"
+    if detail:
+        text = f"{text}: {detail}"
+    for secret in hide:
+        text = text.replace(secret, "…")
+    return text
+
+
+async def start_print(
+    folder: Path,
+    config_dir: Path,
+    cert_dir: Path,
+    helper: Path,
+    job: dict[str, Any],
+) -> None:
+    """Sends a sliced 3MF to a printer and starts it, through Bambu's plug-in, which signs the start command. `job` has the printer's
+    dev_id, dev_name, dev_ip and access_code and the file; the sign-in is the one an earlier call left in `config_dir`.
+    """
+    if not can_print(folder):
+        raise BambuCloudError(
+            "The installed plug-in cannot start prints; download it again under Add from Bambu account"
+        )
+    if not await asyncio.to_thread(helper.is_file):
+        raise BambuCloudError("The helper program for Bambu's plug-in is not in this image")
+    payload = json.dumps(
+        {"action": "print", "plugin_dir": str(folder), "config_dir": str(config_dir), "cert_dir": str(cert_dir), **job}
+    )
+    hide = [str(job[key]) for key in ("access_code", "dev_id") if job.get(key)]
+    steps = await _run_helper(helper, payload, [], PRINT_TIMEOUT_S)
+    for step in steps:
+        _log.warning("bambu print step: %s", _redact(json.dumps(step), hide))
+    progress = [s["value"] for s in steps if s.get("step") == "progress" and isinstance(s.get("value"), dict)]
+    rc = next((s.get("value") for s in steps if s.get("step") == "print_result"), None)
+    if rc != 0 or any(p.get("stage") == _FAILED for p in progress):
+        raise BambuCloudError(_why_not_printed(steps, hide))
+
+
+def _redact(text: str, hide: list[str]) -> str:
+    for secret in hide:
+        text = text.replace(secret, "…")
+    return text

@@ -74,3 +74,58 @@ def test_embed_preview_ignores_missing_output_dir(tmp_path: Path):
     # Never raises, even if the job's output dir vanished/was never created
     # -- best-effort, shouldn't affect the already-succeeded slice result.
     gcode_thumbnail.embed_preview(tmp_path / "does-not-exist", _fake_preview_base64())
+
+
+# ---- the sliced 3MF a Bambu printer is sent: its cover picture, as Bambu Studio's own export lays it out ----
+
+import zipfile  # noqa: E402
+
+
+def _sliced_3mf(path: Path, plates=(1,)) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", '<Types xmlns="x"><Default Extension="rels" ContentType="r"/></Types>')
+        z.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0"?>\n<Relationships xmlns="r">\n <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="m"/>\n</Relationships>',
+        )
+        for n in plates:
+            z.writestr(f"Metadata/plate_{n}.gcode", "G28\n")
+    return path
+
+
+def test_the_preview_becomes_the_sliced_3mfs_cover_picture(tmp_path: Path):
+    three_mf = _sliced_3mf(tmp_path / "sliced.gcode.3mf")
+    gcode_thumbnail.embed_preview(tmp_path, _fake_preview_base64())
+    with zipfile.ZipFile(three_mf) as z:
+        big = Image.open(io.BytesIO(z.read("Metadata/plate_1.png")))
+        small = Image.open(io.BytesIO(z.read("Metadata/plate_1_small.png")))
+        rels = z.read("_rels/.rels").decode()
+        types = z.read("[Content_Types].xml").decode()
+        assert z.read("Metadata/plate_1.gcode") == b"G28\n"
+    assert big.size == (512, 512) and small.size == (128, 128)
+    assert 'Target="/Metadata/plate_1.png" Id="rel-2"' in rels and "metadata/thumbnail" in rels
+    assert "cover-thumbnail-middle" in rels and 'Target="/Metadata/plate_1_small.png" Id="rel-5"' in rels
+    assert "/3D/3dmodel.model" in rels
+    assert 'Extension="png"' in types
+
+
+def test_every_plate_of_the_3mf_gets_its_own_picture(tmp_path: Path):
+    three_mf = _sliced_3mf(tmp_path / "sliced.gcode.3mf", plates=(1, 2))
+    gcode_thumbnail.embed_preview(tmp_path, _fake_preview_base64())
+    with zipfile.ZipFile(three_mf) as z:
+        names = set(z.namelist())
+    assert {"Metadata/plate_1.png", "Metadata/plate_2.png", "Metadata/plate_2_small.png"} <= names
+
+
+def test_a_3mf_that_already_has_a_cover_picture_is_left_alone(tmp_path: Path):
+    three_mf = _sliced_3mf(tmp_path / "sliced.gcode.3mf")
+    gcode_thumbnail.embed_preview(tmp_path, _fake_preview_base64())
+    first = three_mf.read_bytes()
+    gcode_thumbnail.embed_preview(tmp_path, _fake_preview_base64(color="#0000ff"))
+    assert three_mf.read_bytes() == first
+
+
+def test_a_broken_3mf_does_not_fail_the_slice(tmp_path: Path):
+    (tmp_path / "sliced.gcode.3mf").write_bytes(b"not a zip")
+    gcode_thumbnail.embed_preview(tmp_path, _fake_preview_base64())
+    assert (tmp_path / "sliced.gcode.3mf").read_bytes() == b"not a zip"

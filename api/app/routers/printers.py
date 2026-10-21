@@ -5,9 +5,19 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from .. import bambu_camera, bambu_link, bambu_status, klipper_import, klipper_status, printhost
+from .. import (
+    bambu_camera,
+    bambu_cloud,
+    bambu_link,
+    bambu_send,
+    bambu_status,
+    klipper_import,
+    klipper_status,
+    printhost,
+)
 from .. import resin as resin_module
 from ..auth import require_user
+from ..config import settings
 from ..jobstore import store as job_store
 from ..printerstore import store
 from ..schemas import (
@@ -362,6 +372,44 @@ async def _send_to_bambu(row, job, body: SendToPrinterRequest) -> dict[str, bool
     return {"ok": True}
 
 
+async def _start_through_plugin(row, job, body: SendToPrinterRequest) -> dict[str, bool]:
+    """EXPERIMENT: a monitor-only (cloud mode) Bambu printer is sent the job and started by Bambu's own plug-in, which signs the start command."""
+    folder = settings.orcaslicer_datadir / "bambu-plugin"
+    if not (settings.experimental_bambu_cloud and bambu_cloud.can_print(folder)):
+        raise HTTPException(
+            status_code=409,
+            detail="This printer is saved as monitor only, so a print cannot be started from here. Send it without starting and start it "
+            "on the printer, or turn on Developer Mode on it and untick monitor only",
+        )
+    try:
+        host, serial, code = bambu_link.connection_of(row)
+    except bambu_link.BambuError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    three_mf = resolve_job_3mf_path(job.id)
+    name = Path(resolve_model_original_name(job.model_id) or job.id).stem
+    try:
+        await bambu_cloud.start_print(
+            folder,
+            settings.orcaslicer_datadir / "bambu-session",
+            settings.profiles_dir.parent / "cert",
+            settings.bambu_helper_path,
+            {
+                "dev_id": serial,
+                "dev_name": row["name"],
+                "dev_ip": bambu_link.split_host(host)[0],
+                "access_code": code,
+                "file": str(three_mf),
+                "project_name": bambu_send.remote_name(name).removesuffix(".gcode.3mf"),
+                "plate_index": job.plate_index or 1,
+                "use_ams": body.use_ams,
+                **bambu_cloud.ams_mapping(bambu_cloud.filament_count(three_mf), body.use_ams),
+            },
+        )
+    except bambu_cloud.BambuCloudError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 @router.post("/{printer_id}/send/{job_id}")
 async def send_to_printer(
     printer_id: str,
@@ -378,11 +426,7 @@ async def send_to_printer(
     if row["host_type"] == "bambu":
         # A file can always be put on a Bambu printer; starting it is a command, which a printer without Developer Mode ignores.
         if row["monitor_only"] and body.start_print:
-            raise HTTPException(
-                status_code=409,
-                detail="This printer is saved as monitor only, so a print cannot be started from here. Send it without starting and start it "
-                "on the printer, or turn on Developer Mode on it and untick monitor only",
-            )
+            return await _start_through_plugin(row, job, body)
         return await _send_to_bambu(row, job, body)
     gcode_path = resolve_job_gcode_path(job_id)
     try:

@@ -7,6 +7,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
+#include <functional>
 #include <iostream>
 #include <string>
 
@@ -47,6 +49,116 @@ static json account_entry(const json& device) {
   return out;
 }
 
+// The print job as the 02.08.04 series of Bambu's plug-in expects it: the field order and types are those of `PrintParams` in OrcaSlicer's
+// bambu_networking.hpp (the plug-in takes it by value, so a field out of place misreads every one after it).
+struct PrintParams {
+  string dev_id, task_name, project_name, preset_name, filename, config_filename;
+  int plate_index = 0;
+  string ftp_folder, ftp_file, ftp_file_md5, nozzle_mapping, ams_mapping, ams_mapping2, ams_mapping_info, nozzles_info, connection_type, comments;
+  int origin_profile_id = 0;
+  int stl_design_id = 0;
+  string origin_model_id, print_type, dst_file, dev_name, dev_ip;
+  bool use_ssl_for_ftp = false, use_ssl_for_mqtt = false;
+  string username, password;
+  bool task_bed_leveling = false, task_flow_cali = false, task_vibration_cali = false, task_layer_inspect = false;
+  bool task_record_timelapse = false, task_timelapse_use_internal = false, task_use_ams = false;
+  string task_bed_type, extra_options;
+  int auto_bed_leveling = 0, auto_flow_cali = 0, auto_offset_cali = 0, extruder_cali_manual_mode = -1;
+  bool task_ext_change_assist = false, try_emmc_print = false;
+  string svc_context, slicer_uid, queue_plate_id;
+};
+
+using StatusFn = std::function<void(int, int, string)>;
+using CancelFn = std::function<bool()>;
+using WaitFn = std::function<bool(int, string)>;
+
+// Sends a sliced 3MF to a printer through the plug-in, as OrcaSlicer's print job does for a printer in cloud mode that has an address, an
+// access code and storage: the plug-in uploads the file to the printer and starts it with a command only it can sign. Needs the sign-in that
+// an earlier run left in the plug-in's settings folder.
+static int run_print(void* lib, void* agent, const json& in) {
+  auto logged = need<bool (*)(void*)>(lib, "bambu_network_is_user_login");
+  auto connect_server = need<int (*)(void*)>(lib, "bambu_network_connect_server");
+  auto select_machine = need<int (*)(void*, string)>(lib, "bambu_network_set_user_selected_machine");
+  auto print = need<int (*)(void*, PrintParams, StatusFn, CancelFn, WaitFn)>(lib, "bambu_network_start_local_print_with_record");
+  if (!logged || !print) return 4;
+  step("is_user_login", logged(agent));
+  auto connected = need<bool (*)(void*)>(lib, "bambu_network_is_server_connected");
+  auto subscribe = need<int (*)(void*, string)>(lib, "bambu_network_start_subscribe");
+  auto install_cert = need<void (*)(void*, string, bool)>(lib, "bambu_network_install_device_cert");
+  const string dev_id = in.value("dev_id", "");
+  auto set_on_message = need<int (*)(void*, std::function<void(string, string)>)>(lib, "bambu_network_set_on_message_fn");
+  auto set_on_connected = need<int (*)(void*, std::function<void(string)>)>(lib, "bambu_network_set_on_printer_connected_fn");
+  auto send_message = need<int (*)(void*, string, string, int, int)>(lib, "bambu_network_send_message");
+  // What Studio asks of a printer once it is connected: its full state and its version (the plug-in works out the printer's encryption flag
+  // from what comes back), and the printer's certificate.
+  const string push_all = R"({"pushing":{"sequence_id":"1","command":"pushall","version":1,"push_target":1}})";
+  const string get_version = R"({"info":{"sequence_id":"2","command":"get_version"}})";
+  static std::atomic<int> messages{0};
+  auto ask = [=](const string& id) {
+    if (send_message) { send_message(agent, id, push_all, 0, 0); send_message(agent, id, get_version, 0, 0); }
+  };
+  if (set_on_message) set_on_message(agent, [](string, string) { messages++; });
+  if (set_on_connected) set_on_connected(agent, [=](string) { ask(dev_id); });
+  if (connect_server) step("connect_server", connect_server(agent));
+  if (select_machine) step("select_machine", select_machine(agent, dev_id));
+  // As Studio does once it is signed in: the plug-in learns the printer's encryption flag (which it signs the start command with) over the
+  // cloud connection, so give it that connection, ask for the printer's messages and its certificate, and wait a little for it.
+  for (int i = 0; i < 80 && connected && !connected(agent); i++) usleep(500 * 1000);
+  if (connected) step("server_connected", connected(agent));
+  if (subscribe) step("subscribe", subscribe(agent, "app"));
+  // The connection may be slow: wait until the printer has answered (up to 60 s), then a little longer for the rest of what it sends.
+  for (int i = 0; i < 30 && (i < 4 || messages.load() == 0); i++) { if (install_cert) install_cert(agent, dev_id, false); ask(dev_id); sleep(2); }
+  sleep(3);
+  step("printer_messages", messages.load());
+
+  PrintParams p;
+  p.dev_id = in.value("dev_id", "");
+  p.dev_name = in.value("dev_name", "");
+  p.dev_ip = in.value("dev_ip", "");
+  p.username = "bblp";
+  p.password = in.value("access_code", "");
+  p.use_ssl_for_ftp = true;
+  p.use_ssl_for_mqtt = true;
+  p.filename = in.value("file", "");
+  p.config_filename = p.filename;
+  p.plate_index = in.value("plate_index", 1);
+  p.project_name = in.value("project_name", "print");
+  p.preset_name = p.project_name;
+  p.task_name = p.project_name;
+  p.connection_type = "cloud";
+  p.print_type = "from_normal";
+  p.ams_mapping = in.value("ams_mapping", "[]");
+  p.ams_mapping2 = in.value("ams_mapping2", "[]");
+  p.ams_mapping_info = in.value("ams_mapping_info", "[]");
+  p.task_bed_leveling = p.task_flow_cali = p.task_vibration_cali = p.task_layer_inspect = true;
+  p.task_use_ams = in.value("use_ams", false);
+  p.task_bed_type = "auto";
+
+  int rc = 0;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    rc = print(
+        agent, p,
+        [](int status, int code, string msg) { step("progress", {{"stage", status}, {"code", code}, {"message", msg}}); },
+        []() { return false; },
+        [](int status, string info) { step("waiting", {{"status", status}, {"info", info}}); return true; });
+    if (rc != -3140) break;  // the printer's flag was not ready yet (the plug-in's own "try again later"): wait and ask again
+    if (install_cert) install_cert(agent, dev_id, false);
+    sleep(5);
+  }
+  // As Bambu Studio does when the cloud route fails (PrintJob.cpp): send it over the LAN directly, as a "lan" connection, which the plug-in
+  // signs and sends to the printer itself.
+  auto print_lan = need<int (*)(void*, PrintParams, StatusFn, CancelFn)>(lib, "bambu_network_start_local_print");
+  if (rc < 0 && rc != -3140 && print_lan) {
+    step("lan_direct", true);
+    p.connection_type = "lan";
+    rc = print_lan(
+        agent, p, [](int status, int code, string msg) { step("progress", {{"stage", status}, {"code", code}, {"message", msg}}); },
+        []() { return false; });
+  }
+  step("print_result", rc);
+  return 0;
+}
+
 int main() {
   // As Orca does in CurlGlobalInit (Http.cpp): the plug-in has its own TLS built in and cannot find the distro CA bundle by itself.
   setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt", 0);
@@ -78,6 +190,7 @@ int main() {
   step("set_cert_file", set_cert(agent, cert_dir, "slicer_base64.cer"));
   step("set_country_code", set_cc(agent, "US"));
   step("start", start(agent));
+  if (in.value("action", "") == "print") { int done = run_print(lib, agent, in); sleep(1); _exit(done); }
 
   unsigned code = 0;
   string body;

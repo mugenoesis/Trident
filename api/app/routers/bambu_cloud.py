@@ -33,7 +33,11 @@ def status(current: User = Depends(require_user)) -> dict[str, Any]:
     """Whether the experiment is on, and whether Bambu's plug-in is installed (the page shows nothing when it is off)."""
     if not settings.experimental_bambu_cloud:
         return {"enabled": False}
-    return {"enabled": True, "plugin": bambu_cloud.plugin_status(_plugin_folder())}
+    return {
+        "enabled": True,
+        "plugin": bambu_cloud.plugin_status(_plugin_folder()),
+        "can_print": bambu_cloud.can_print(_plugin_folder()),
+    }
 
 
 @router.post("/plugin")

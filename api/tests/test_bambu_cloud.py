@@ -308,7 +308,7 @@ def test_the_experiment_is_off_unless_asked_for(client):
 
 
 def test_the_status_says_when_the_plugin_is_missing(client, experiment):
-    assert client.get("/bambu-cloud").json() == {"enabled": True, "plugin": {"installed": False}}
+    assert client.get("/bambu-cloud").json() == {"enabled": True, "plugin": {"installed": False}, "can_print": False}
 
 
 def test_the_sign_in_link_needs_no_address_of_ours(client, experiment):
@@ -363,3 +363,80 @@ def test_nothing_is_kept_between_connections(client, experiment, monkeypatch, tm
     client.post("/bambu-cloud/account", json={"url": PASTED})
     assert client.post("/bambu-cloud/account", json={"url": "http://localhost:41999/"}).status_code == 400
     assert "AAA" not in client.get("/bambu-cloud").text
+
+
+# ---- starting a print through the plug-in ----
+
+
+def _plugin(tmp_path: Path, version: str) -> Path:
+    folder = tmp_path / "plugin"
+    folder.mkdir()
+    (folder / bambu_cloud.NETWORK_LIBRARY).write_bytes(b"x")
+    (folder / "plugin.json").write_text(json.dumps({"version": version}))
+    return folder
+
+
+def test_only_a_plugin_of_the_series_the_helper_knows_is_asked_to_print(tmp_path: Path):
+    assert bambu_cloud.can_print(_plugin(tmp_path, "02.08.04.60"))
+    other = tmp_path / "other"
+    other.mkdir()
+    assert not bambu_cloud.can_print(_plugin(other, "02.00.00.37"))
+    assert not bambu_cloud.can_print(tmp_path / "nothing")
+
+
+def test_the_filament_mapping_follows_the_ams_or_the_external_spool():
+    ams = bambu_cloud.ams_mapping(2, True)
+    assert json.loads(ams["ams_mapping"]) == [0, 1]
+    assert json.loads(ams["ams_mapping2"]) == [{"ams_id": 0, "slot_id": 0}, {"ams_id": 0, "slot_id": 1}]
+    assert [i["ams"] for i in json.loads(ams["ams_mapping_info"])] == [0, 1]
+    spool = bambu_cloud.ams_mapping(1, False)
+    assert json.loads(spool["ams_mapping"]) == [-1] and json.loads(spool["ams_mapping2"]) == [
+        {"ams_id": 255, "slot_id": 255}
+    ]
+
+
+def test_the_filaments_are_counted_from_the_sliced_3mf(tmp_path: Path):
+    three_mf = tmp_path / "a.gcode.3mf"
+    with zipfile.ZipFile(three_mf, "w") as z:
+        z.writestr("Metadata/slice_info.config", '<plate><filament id="1"/><filament id="2"/></plate>')
+    assert bambu_cloud.filament_count(three_mf) == 2
+    assert bambu_cloud.filament_count(tmp_path / "missing.3mf") == 1
+
+
+JOB = {"dev_id": "SERIAL0001", "access_code": "ACCESS99", "file": "/x.gcode.3mf"}
+
+
+def test_a_print_the_plugin_accepts_is_a_success_and_the_job_reaches_the_helper_on_stdin(tmp_path: Path):
+    folder = _plugin(tmp_path, "02.08.04.60")
+    seen = tmp_path / "stdin.json"
+    script = tmp_path / "helper"
+    script.write_text(f'#!/bin/sh\ncat > {seen}\necho \'{{"step":"print_result","value":0}}\'\n')
+    script.chmod(0o755)
+    asyncio.run(bambu_cloud.start_print(folder, tmp_path, tmp_path, script, JOB))
+    sent = json.loads(seen.read_text())
+    assert sent["action"] == "print" and sent["access_code"] == "ACCESS99" and sent["file"] == "/x.gcode.3mf"
+
+
+def test_a_print_the_plugin_refuses_says_why_without_the_access_code(tmp_path: Path):
+    folder = _plugin(tmp_path, "02.08.04.60")
+    steps = [
+        {"step": "is_user_login", "value": True},
+        {"step": "progress", "value": {"stage": 7, "code": -3010, "message": "upload to ACCESS99 failed"}},
+        {"step": "print_result", "value": -3010},
+    ]
+    with pytest.raises(BambuCloudError) as caught:
+        asyncio.run(bambu_cloud.start_print(folder, tmp_path, tmp_path, _helper_printing(tmp_path, steps), JOB))
+    assert "-3010" in str(caught.value) and "upload to" in str(caught.value) and "ACCESS99" not in str(caught.value)
+
+
+def test_a_print_without_a_sign_in_asks_for_one(tmp_path: Path):
+    folder = _plugin(tmp_path, "02.08.04.60")
+    steps = [{"step": "is_user_login", "value": False}, {"step": "print_result", "value": -1}]
+    with pytest.raises(BambuCloudError, match="sign in again"):
+        asyncio.run(bambu_cloud.start_print(folder, tmp_path, tmp_path, _helper_printing(tmp_path, steps), JOB))
+
+
+def test_an_old_plugin_is_never_asked_to_print(tmp_path: Path):
+    folder = _plugin(tmp_path, "02.00.00.37")
+    with pytest.raises(BambuCloudError, match="cannot start prints"):
+        asyncio.run(bambu_cloud.start_print(folder, tmp_path, tmp_path, _helper_printing(tmp_path, []), JOB))

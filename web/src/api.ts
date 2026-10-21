@@ -523,6 +523,8 @@ export interface BambuPlugin {
 export interface BambuCloudStatus {
 	enabled: boolean;
 	plugin?: BambuPlugin;
+	/** The installed plug-in can start a print (a printer left in cloud mode). */
+	can_print?: boolean;
 }
 
 /** One printer of a Bambu account: what the page shows. Its serial number and access code stay on the server. */
