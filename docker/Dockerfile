@@ -24,6 +24,18 @@ COPY web/ ./
 RUN npm run build
 
 # ---------------------------------------------------------------------------
+# Helper stage (experiment: ORCA_API_EXPERIMENTAL_BAMBU_CLOUD) -- a small program that loads Bambu's network plug-in, which the user
+# downloads at run time and which is never in the image. Independent of the stages around it.
+# ---------------------------------------------------------------------------
+FROM ubuntu:${UBUNTU_VERSION} AS helper
+
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends g++ nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY api/helper/bbl_session.cpp /src/bbl_session.cpp
+RUN g++ -std=c++17 -O1 -Wall -o /bbl_session /src/bbl_session.cpp -ldl
+
+# ---------------------------------------------------------------------------
 # Builder stage
 # ---------------------------------------------------------------------------
 FROM ubuntu:${UBUNTU_VERSION} AS builder
@@ -134,6 +146,7 @@ RUN python3 -m venv /opt/api/.venv \
 # a StaticFiles catch-all after all API routes) -- one container, one port,
 # same-origin so the Android "Add to Home Screen" PWA flow needs no CORS.
 COPY --from=frontend /web/dist /opt/api/static
+COPY --from=helper /bbl_session /opt/bbl/bbl_session
 ENV ORCA_API_STATIC_DIR=/opt/api/static
 
 VOLUME ["/data/models", "/data/output", "/data/orcaslicer-datadir"]

@@ -22,3 +22,11 @@ Verified in `src/libslic3r/PrintConfig.cpp` on `OrcaSlicer/OrcaSlicer` `main` (2
 `compatible_printers`, `upward_compatible_machine`, `compatible_printers_condition`, `compatible_prints`, `compatible_prints_condition`, `compatible_machine_expression_group`, `compatible_process_expression_group`, `different_settings_to_system`, `print_compatible_printers`, `default_filament_profile`, `default_print_profile`, `filament_ids`, `filament_vendor`, `inherits`, `inherits_group`, `printer_model`, `printer_variant`, `extruder_variant_list`, `printer_extruder_id`, `printer_extruder_variant`, `print_extruder_id`, `print_extruder_variant`, `filament_extruder_id`, `filament_extruder_variant`, `filament_self_index`, `material_vendor`, `default_sla_material_profile`, `sla_material_settings_id`, `default_sla_print_profile`, `sla_print_settings_id`
 
 **Conclusion**: none of these are needed for automation-driven slicing. No unblocking patch is planned.
+
+## Bambu's network plug-in (experiment, not part of the image)
+
+With `ORCA_API_EXPERIMENTAL_BAMBU_CLOUD=1`, Trident can load Bambu's own network plug-in (`libbambu_networking.so`, the one Bambu Studio and OrcaSlicer download on first use). It is closed software under Bambu's terms, so:
+
+- **It is never in the image or in this repository.** It is downloaded from Bambu's own servers, to the user's data folder, only when the user asks for it under **Add from Bambu account**. The plug-in's checksum is kept next to it.
+- **What runs it is ours and public:** `api/helper/bbl_session.cpp`, a small program built from source in the Docker image's first stage (g++ and nlohmann-json), which loads the plug-in with `dlopen` and calls it in the order OrcaSlicer and Bambu Studio do. The parameter layout it passes is copied from OrcaSlicer's `bambu_networking.hpp`.
+- **It talks to Bambu's servers and the user's printer as the plug-in itself does.** Trident sets no client name or other identity for Bambu's server, and the sign-in is done by the user in their own browser: Trident never sees a password.
