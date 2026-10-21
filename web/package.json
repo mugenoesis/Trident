@@ -13,6 +13,7 @@
 		"typecheck": "tsc -b",
 		"audit": "npm audit --omit=dev --audit-level=low",
 		"preview": "vite preview",
+		"test:parser": "node gcode-parser-test.mjs",
 		"smoke": "node smoke-test.mjs",
 		"smoke:keys": "node keys-test.mjs",
 		"smoke:bambu": "node bambu-test.mjs",

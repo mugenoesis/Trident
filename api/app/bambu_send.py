@@ -114,18 +114,43 @@ def _new_ftps() -> ftplib.FTP_TLS:
     return ImplicitFtps(context=context)
 
 
+def _arrived(make: Callable[[], Any], host: str, code: str, name: str, size: int) -> bool:
+    """Whether a file of this size is in the printer's storage, asked on a fresh connection (the first is left in an odd state when the reply is missing)."""
+    ftp = make()
+    try:
+        ftp.connect(split_host(host)[0], FTPS_PORT, timeout=15)
+        ftp.login("bblp", code)
+        ftp.prot_p()
+        ftp.voidcmd("TYPE I")
+        return ftp.size(name) == size
+    except (OSError, ftplib.Error):
+        return False
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            ftp.close()
+
+
 def upload(host: str, code: str, path: Path, name: str, *, ftp_factory: Callable[[], Any] | None = None) -> None:
     """Stores a file in the root of the printer's storage over FTPS. `host` may carry the MQTT port: the upload goes to the printer itself."""
     if not _SAFE_NAME.match(name):
         raise BambuError("That file name cannot be sent to the printer")
-    ftp = (ftp_factory or _new_ftps)()
+    make = ftp_factory or _new_ftps
+    ftp = make()
     try:
         try:
             ftp.connect(split_host(host)[0], FTPS_PORT, timeout=15)
             ftp.login("bblp", code)
             ftp.prot_p()
             with path.open("rb") as f:
-                ftp.storbinary(f"STOR {name}", f)
+                try:
+                    ftp.storbinary(f"STOR {name}", f)
+                except TimeoutError:
+                    # A P1 or an A1 takes the whole file and then never sends the "transfer complete" reply (seen on both): it is a success if
+                    # the file is all there, which is asked on a fresh connection.
+                    if not _arrived(make, host, code, name, path.stat().st_size):
+                        raise BambuError("The printer did not confirm the upload") from None
         except ftplib.error_perm as exc:
             if str(exc).startswith("530"):
                 raise BambuError("The printer refused the access code (check it on the printer's screen)") from exc

@@ -47,6 +47,11 @@ function parseArgs(parts: string[]): Map<string, number> {
 
 type Point = { x: number; y: number; z: number };
 
+// A layer's height: ";HEIGHT:0.2" (OrcaSlicer), "; HEIGHT: 0.28" (Bambu Studio) or "; LAYER_HEIGHT: 0.2" (OrcaSlicer for a Bambu printer).
+const HEIGHT_COMMENT = /^;\s?(?:LAYER_)?HEIGHT:\s*(\S+)/;
+// A feature section: ";TYPE:Outer wall" (OrcaSlicer) or "; FEATURE: Outer wall" (a Bambu printer).
+const FEATURE_COMMENT = /^;\s?(?:TYPE|FEATURE):\s*(.*)$/;
+
 /**
  * Walks G-code line by line, tracking where the head is, and collects the extruding moves by layer.
  * See parseGcode for what it reads and why.
@@ -97,7 +102,8 @@ class GcodeReader {
 		// against a real IdeaFormer IR3 V2 slice) -- an exact-string match here
 		// would silently never fire for belt gcode, collapsing the whole file
 		// into one giant "layer".
-		const isLayerChange = trimmed.startsWith(';LAYER_CHANGE');
+		// OrcaSlicer writes ";LAYER_CHANGE"; for a Bambu printer it writes Bambu's own "; CHANGE_LAYER" (with a space), and there is no other marker.
+		const isLayerChange = trimmed.startsWith(';LAYER_CHANGE') || trimmed.startsWith('; CHANGE_LAYER');
 		if (isLayerChange || !this.currentLayer) {
 			this.currentLayer = { segments: [] };
 			this.layers.push(this.currentLayer);
@@ -112,12 +118,14 @@ class GcodeReader {
 	}
 
 	private comment(trimmed: string, layer: GcodeLayer): void {
-		if (trimmed.startsWith(';HEIGHT:') && layer.height === undefined) {
-			const parsed = Number.parseFloat(trimmed.slice(';HEIGHT:'.length));
+		const height = HEIGHT_COMMENT.exec(trimmed);
+		if (height && layer.height === undefined) {
+			const parsed = Number.parseFloat(height[1]);
 			if (Number.isFinite(parsed)) layer.height = parsed;
-		} else if (trimmed.startsWith(';TYPE:')) {
-			this.isSupportType = /support/i.test(trimmed.slice(';TYPE:'.length));
+			return;
 		}
+		const feature = FEATURE_COMMENT.exec(trimmed);
+		if (feature) this.isSupportType = /support/i.test(feature[1]);
 	}
 
 	private command(parts: string[], layer: GcodeLayer): void {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { testConnectionDetails, testPrinterConnection } from '../api';
 import type { PrinterRecord, PrinterUpdateRequest, PrintHostType } from '../types';
+import BambuAccountImport from './BambuAccountImport';
 
 interface ConnectionFields {
 	host_type: PrintHostType | null;
@@ -20,6 +21,8 @@ interface SavedPrintersProps {
 	onSavePrinter: (name: string, connection: ConnectionFields) => Promise<unknown>;
 	onUpdatePrinter: (id: string, body: PrinterUpdateRequest) => Promise<unknown>;
 	onDeletePrinter: (id: string) => void;
+	// Called after printers were added from a Bambu account, so the list is loaded again.
+	onPrintersAdded: () => void;
 	// The mode the screen is in: a resin printer has no G-code connection to ask about.
 	technology: 'fdm' | 'resin';
 }
@@ -250,6 +253,7 @@ export default function SavedPrinters({
 	onSavePrinter,
 	onUpdatePrinter,
 	onDeletePrinter,
+	onPrintersAdded,
 	technology,
 }: SavedPrintersProps) {
 	const [savingPrinter, setSavingPrinter] = useState(false);
@@ -395,6 +399,8 @@ export default function SavedPrinters({
 					{printerError && <div className="job-error">{printerError}</div>}
 				</form>
 			)}
+
+			{technology === 'fdm' && !savingPrinter && <BambuAccountImport onAdded={onPrintersAdded} />}
 
 			{printers.length > 0 && (
 				<details className="job-history">

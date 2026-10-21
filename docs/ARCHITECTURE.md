@@ -68,6 +68,8 @@ headless-orca/
 - Build on the 64GB build server — comfortably clears OrcaSlicer's ~16GB recommendation, full-parallel build should be safe.
 - **Layer caching**: `deps/` build (multi-hour, ~15-30GB) as its own layer before the rest of `src/`. BuildKit cache mount for ccache/sccache (auto-detected by `build_linux.sh`).
 
+**Helper stage** (experiment, `ubuntu:24.04`): compiles `api/helper/bbl_session.cpp` with `g++ -std=c++17` and `nlohmann-json3-dev` into `/opt/bbl/bbl_session`. The program loads Bambu's network plug-in (downloaded by the user at run time, never in the image) and is called only by `app/bambu_cloud.py`, which gives it one JSON message on stdin (sign-in tokens, or a print job) and reads JSON step lines back; it is used only when `ORCA_API_EXPERIMENTAL_BAMBU_CLOUD=1`. See `docs/AGPL-COMPLIANCE.md`.
+
 **Runtime stage** (slim):
 - `COPY --from=builder` the built `OrcaSlicer` binary, its `resources/` dir (`resources_dir()`), and required shared libs (`ldd` the binary to get the definitive list; expect GTK3/X11/GL libs plus `dlopen`-loaded GStreamer libs invisible to `ldd`).
 - Keep GTK3/X11 runtime libs even though no window is shown — the binary links them regardless of `SLIC3R_GUI` at compile time.

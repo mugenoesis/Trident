@@ -27,6 +27,8 @@ import base64
 import binascii
 import io
 import logging
+import re
+import zipfile
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -100,3 +102,63 @@ def embed_preview(output_dir: Path, preview_image_base64: str) -> None:
             gcode_path.write_text(block + original)
         except OSError:
             logger.warning("Failed to embed thumbnail into %s", gcode_path, exc_info=True)
+    for three_mf in output_dir.glob("*.gcode.3mf"):
+        try:
+            _add_cover_pictures(three_mf, image)
+        except (OSError, zipfile.BadZipFile):
+            logger.warning("Failed to add the cover picture to %s", three_mf, exc_info=True)
+
+
+# ---- the sliced 3MF a Bambu printer is sent ----
+# A printer and Bambu's app show a job's picture from the 3MF itself, laid out as Bambu Studio's own export writes a plate (bbs_3mf.cpp,
+# _add_relationships_file_to_archive): Metadata/plate_N.png and plate_N_small.png (128 px), found through three entries in _rels/.rels.
+
+_PLATE_GCODE = re.compile(r"^Metadata/plate_(\d+)\.gcode$")
+_COVER_SIZE = 512
+_SMALL_COVER_SIZE = 128
+_PICTURE_RELATIONS = (
+    ("rel-2", "plate_{n}.png", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"),
+    ("rel-4", "plate_{n}.png", "http://schemas.bambulab.com/package/2021/cover-thumbnail-middle"),
+    ("rel-5", "plate_{n}_small.png", "http://schemas.bambulab.com/package/2021/cover-thumbnail-small"),
+)
+
+
+def _png(image: Image.Image, size: int) -> bytes:
+    buf = io.BytesIO()
+    _square_thumbnail(image, (size, size)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _relations_for(plate: int) -> str:
+    return "".join(
+        f' <Relationship Target="/Metadata/{target.format(n=plate)}" Id="{rel_id}" Type="{kind}"/>\n'
+        for rel_id, target, kind in _PICTURE_RELATIONS
+    )
+
+
+def _add_cover_pictures(three_mf: Path, image: Image.Image) -> None:
+    with zipfile.ZipFile(three_mf) as source:
+        names = set(source.namelist())
+        plates = sorted(int(m.group(1)) for name in names if (m := _PLATE_GCODE.match(name)))
+        plates = [n for n in plates if f"Metadata/plate_{n}.png" not in names]
+        if not plates:
+            return
+        # Bambu's own export points its three entries at one plate: the first one (a job holds one plate here).
+        relations = _relations_for(plates[0])
+        tmp = three_mf.with_name(three_mf.name + ".new")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
+            for item in source.infolist():
+                data = source.read(item.filename)
+                if item.filename == "_rels/.rels":
+                    data = data.decode().replace("</Relationships>", relations + "</Relationships>").encode()
+                elif item.filename == "[Content_Types].xml" and b'Extension="png"' not in data:
+                    data = (
+                        data.decode()
+                        .replace("<Default ", '<Default Extension="png" ContentType="image/png"/><Default ', 1)
+                        .encode()
+                    )
+                out.writestr(item, data)
+            for n in plates:
+                out.writestr(f"Metadata/plate_{n}.png", _png(image, _COVER_SIZE))
+                out.writestr(f"Metadata/plate_{n}_small.png", _png(image, _SMALL_COVER_SIZE))
+    tmp.replace(three_mf)

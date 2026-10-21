@@ -512,3 +512,72 @@ export function sendToPrinter(printerId: string, jobId: string, startPrint: bool
 export function createUser(username: string, password: string): Promise<AuthStatus> {
 	return postJson('/auth/users', { username, password });
 }
+
+// EXPERIMENT: Bambu Cloud sign-in through Bambu's own plug-in (the panel only shows when the server has it switched on).
+export interface BambuPlugin {
+	installed: boolean;
+	version?: string;
+	sha256?: string;
+}
+
+export interface BambuCloudStatus {
+	enabled: boolean;
+	plugin?: BambuPlugin;
+	/** The installed plug-in can start a print (a printer left in cloud mode). */
+	can_print?: boolean;
+}
+
+/** One printer of a Bambu account: what the page shows. Its serial number and access code stay on the server. */
+export interface BambuAccountPrinter {
+	index: number;
+	model: string;
+	name: string | null;
+	online: boolean | null;
+	/** Where it was found on the network, if it was. */
+	ip: string | null;
+	/** Whether Trident has a profile for this model, so it can be added. */
+	supported: boolean;
+}
+
+/** What the plug-in said once it was given a sign-in: who it signed in, the printers on that account, or why it did not. */
+export interface BambuAccount {
+	signed_in: boolean;
+	user: string | null;
+	problem: string | null;
+	network: string | null;
+	import_id: string | null;
+	printers: BambuAccountPrinter[];
+}
+
+export interface BambuImportResult {
+	added: { index: number; id: string; name: string }[];
+	skipped: { index: number; reason: string }[];
+}
+
+export function getBambuCloud(): Promise<BambuCloudStatus> {
+	return request('/bambu-cloud');
+}
+
+export function installBambuPlugin(): Promise<BambuPlugin> {
+	return request('/bambu-cloud/plugin', { method: 'POST' });
+}
+
+export function getBambuSignInUrl(): Promise<{ url: string }> {
+	return request('/bambu-cloud/sign-in-url');
+}
+
+export function connectBambuAccount(url: string): Promise<BambuAccount> {
+	return postJson('/bambu-cloud/account', { url });
+}
+
+/** Where the account's printers were found when the server looked on another network (null for one that was not found). */
+export function findBambuPrinters(
+	importId: string,
+	network: string,
+): Promise<{ network: string; printers: { index: number; ip: string | null }[] }> {
+	return postJson('/bambu-cloud/find', { import_id: importId, network });
+}
+
+export function importBambuPrinters(importId: string, items: { index: number; ip: string }[]): Promise<BambuImportResult> {
+	return postJson('/bambu-cloud/import', { import_id: importId, items });
+}
