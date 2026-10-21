@@ -1,4 +1,4 @@
-import { deleteImportedProfile } from '../api';
+import { deleteImportedProfile, listPrinters } from '../api';
 import { COLOR_PRESETS, FALLBACK_NOZZLE_TYPES, MAX_FILAMENT_SLOTS, nozzleTypeLabel } from '../appHelpers';
 import type { AppCtx } from '../hooks/useAppController';
 import AdvancedSettings from './AdvancedSettings';
@@ -27,6 +27,11 @@ export default function MainSettingsPanel({ c }: { c: AppCtx }) {
 				onSavePrinter={c.handleSavePrinter}
 				onUpdatePrinter={c.handleUpdatePrinter}
 				onDeletePrinter={c.handleDeletePrinter}
+				onPrintersAdded={() => {
+					listPrinters()
+						.then(c.setPrinters)
+						.catch(() => undefined);
+				}}
 				technology={resin.technology}
 			/>
 			{resin.technology === 'resin' ? <ResinPanel r={resin} fileName={c.file?.name ?? ''} /> : <FdmSettings c={c} />}

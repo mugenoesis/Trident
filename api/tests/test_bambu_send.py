@@ -167,5 +167,78 @@ def test_a_name_that_could_climb_out_of_the_root_is_refused(tmp_path):
             upload("192.168.1.50", "12345678", path, bad, ftp_factory=FakeFtp)
 
 
+class SilentAfterUpload(FakeFtp):
+    """A P1 or an A1: it takes the whole file and then never sends the 'transfer complete' reply."""
+
+    def storbinary(self, command, fp):
+        super().storbinary(command, fp)
+        raise TimeoutError("The read operation timed out")
+
+
+class SizeCheck(FakeFtp):
+    """A second connection that is only asked how big the file on the printer is."""
+
+    def __init__(self, size: int | None = None, fail: Exception | None = None):
+        super().__init__(fail=fail)
+        self._size = size
+
+    def voidcmd(self, cmd):
+        self.calls.append(("voidcmd", cmd))
+
+    def size(self, name):
+        self.calls.append(("size", name))
+        return self._size
+
+
+def _factory(*connections):
+    queue = iter(connections)
+    return lambda: next(queue)
+
+
+def test_a_printer_that_never_sends_the_final_reply_but_has_the_whole_file_is_a_success(tmp_path):
+    path = tmp_path / "s.3mf"
+    path.write_bytes(b"3mf bytes")
+    check = SizeCheck(size=9)
+    upload("192.168.1.45", "12345678", path, "a.gcode.3mf", ftp_factory=_factory(SilentAfterUpload(), check))
+    assert ("login", "bblp", "12345678") in check.calls and ("size", "a.gcode.3mf") in check.calls
+    assert ("voidcmd", "TYPE I") in check.calls
+
+
+def test_a_file_that_is_not_all_there_after_the_silence_is_a_failure(tmp_path):
+    path = tmp_path / "s.3mf"
+    path.write_bytes(b"3mf bytes")
+    for size in (3, 0, None):
+        with pytest.raises(BambuError, match="did not confirm"):
+            upload(
+                "192.168.1.45",
+                "12345678",
+                path,
+                "a.gcode.3mf",
+                ftp_factory=_factory(SilentAfterUpload(), SizeCheck(size=size)),
+            )
+
+
+def test_a_check_that_cannot_be_made_after_the_silence_is_a_failure(tmp_path):
+    path = tmp_path / "s.3mf"
+    path.write_bytes(b"3mf bytes")
+    with pytest.raises(BambuError, match="did not confirm"):
+        upload(
+            "192.168.1.45",
+            "12345678",
+            path,
+            "a.gcode.3mf",
+            ftp_factory=_factory(SilentAfterUpload(), SizeCheck(fail=OSError("no route"))),
+        )
+
+
+def test_a_timeout_before_anything_was_sent_is_still_a_printer_that_cannot_be_reached(tmp_path):
+    path = tmp_path / "s.3mf"
+    path.write_bytes(b"x")
+    with pytest.raises(BambuError, match="reach"):
+        upload(
+            "192.168.1.45", "12345678", path, "a.gcode.3mf", ftp_factory=lambda: FakeFtp(fail=TimeoutError("timed out"))
+        )
+
+
 def _unused(_: io.BytesIO) -> None:  # keeps the io import honest for the zip helper above
     return None

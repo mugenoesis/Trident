@@ -1,9 +1,10 @@
 """EXPERIMENT: signing in to Bambu Cloud through Bambu's own network plug-in, so a printer can stay in cloud mode.
 
-Bambu's plug-in is a closed binary that Orca and Bambu Studio download from Bambu on first use; it is never shipped here. This
-module downloads it only when the user asks, and builds the link to Bambu's own sign-in page, which the *user's* browser opens: this
-server never sees a password. Bambu's page then redirects the browser back to Trident's callback, and the callback records what
-arrived by field name and length only (the values stay out of every response and log) until the plug-in's token exchange is wired in.
+Bambu's plug-in is a closed binary that Orca and Bambu Studio download from Bambu on first use; it is never shipped here. This module
+downloads it only when the user asks, builds the link to Bambu's own sign-in page (which the *user's* browser opens: this server never sees
+a password), reads the address that browser ends up on, and hands the sign-in to the plug-in through a small helper program
+(api/helper/bbl_session.cpp) that calls it the way Orca does. Nothing is kept after a call: the tokens exist only for the length of one
+connect.
 """
 
 from __future__ import annotations
@@ -12,8 +13,6 @@ import asyncio
 import hashlib
 import io
 import json
-import re
-import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -23,77 +22,48 @@ import httpx
 
 RESOURCE_URL = "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.00.00.00"
 SIGN_IN_URL = "https://bambulab.com/sign-in"
-CALLBACK_PATH = "/bambu-cloud/callback"
+# Bambu's sign-in only hands the browser back to localhost (the address Orca's own login window listens on), so it is always this.
+LOOPBACK_BASE = "http://localhost:41999"
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
+TOKEN_FIELDS = ("access_token", "refresh_token", "expires_in", "refresh_expires_in")
 NETWORK_LIBRARY = "libbambu_networking.so"
 PLUGIN_LIBRARIES = (NETWORK_LIBRARY, "libBambuSource.so", "liblive555.so")
 MAX_PLUGIN_BYTES = 64 * 1024 * 1024
+HELPER_TIMEOUT_S = 90
 _META = "plugin.json"
-_ORIGIN = re.compile(r"^https?://[A-Za-z0-9.-]+(:\d{1,5})?$")
+# The helper masks values it does not show as the name of their type; those are not data.
+_MASKED = ("string", "boolean", "number", "object", "array", "null")
 
 
 class BambuCloudError(Exception):
     """Something that went wrong with the plug-in or the sign-in, in words the user can read."""
 
 
-LOOPBACK_BASE = "http://localhost:41999"
-_LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
+# ---- the sign-in ----
 
 
-def sign_in_url(origin: str, *, loopback: bool = False) -> str:
-    """The Bambu sign-in link that sends the browser back to `origin` (Trident's own address) once the user is signed in.
-
-    With `loopback` it is the link Orca itself builds, which sends the browser to localhost instead (nothing need listen there).
-    """
-    if not _ORIGIN.match(origin):
-        raise BambuCloudError("That is not a plain web address (http://host:port) for Trident")
-    back = LOOPBACK_BASE if loopback else origin + CALLBACK_PATH
+def sign_in_url() -> str:
+    """The link to Bambu's own sign-in page, built as Orca builds it; the browser ends on a localhost address that carries the sign-in."""
     callback = (
         "https://bambulab.com/sign-in/callback?openBy=studio&from=studio&source=portal&locale=en"
-        f"&redirect_url={quote(back, safe='')}"
+        f"&redirect_url={quote(LOOPBACK_BASE, safe='')}"
     )
     return f"{SIGN_IN_URL}?from=studio&source=portal&to={quote(callback, safe='')}"
 
 
-# ---- what Bambu's redirect carries ----
-
-
-class _Callback:
-    """The last redirect from Bambu: what may be shown, and (kept here for the token exchange) the raw values."""
-
-    shown: dict[str, Any] | None = None
-    raw: dict[str, str] = {}  # noqa: RUF012 -- replaced whole, never mutated
-
-
-_callback = _Callback()
-
-
-def record_callback(path: str, query: dict[str, str]) -> None:
-    """Remember a redirect from Bambu: only its field names and lengths can ever be read back (`last_callback`)."""
-    extra = [len(part) for part in path.removeprefix(CALLBACK_PATH).split("/") if part]
-    _callback.shown = {
-        "received_at": time.time(),
-        "fields": [{"name": name, "length": len(value)} for name, value in query.items()],
-        "extra_path_lengths": extra,
-    }
-    _callback.raw = dict(query)
-
-
-def record_pasted(address: str) -> dict[str, Any]:
-    """Record an address the browser ended up on (copied from its address bar): only a localhost one, by query and fragment field names."""
-    parts = urlsplit(address.strip())
+def parse_sign_in(address: str) -> dict[str, str]:
+    """The tokens in the address the browser ended up on (it starts with http://localhost). Nothing pasted is ever repeated in an error."""
+    hint = "Paste the address the browser ended up on after signing in (it starts with http://localhost and carries the sign-in)"
+    try:
+        parts = urlsplit(address.strip())
+    except ValueError as exc:
+        raise BambuCloudError(hint) from exc
     if parts.scheme not in ("http", "https") or parts.hostname not in _LOOPBACK_HOSTS:
-        raise BambuCloudError("Paste the address the browser ended up on: it starts with http://localhost")
-    fields = dict(parse_qsl(parts.query)) | dict(parse_qsl(parts.fragment))
-    record_callback(parts.path or "/", fields)
-    return _callback.shown or {}
-
-
-def last_callback() -> dict[str, Any] | None:
-    return _callback.shown
-
-
-def forget_callback() -> None:
-    _callback.shown, _callback.raw = None, {}
+        raise BambuCloudError(hint)
+    fields = dict(parse_qsl(parts.fragment)) | dict(parse_qsl(parts.query))
+    if not (fields.get("access_token") and fields.get("refresh_token")):
+        raise BambuCloudError(hint)
+    return {name: fields.get(name, "") for name in TOKEN_FIELDS}
 
 
 # ---- the plug-in ----
@@ -153,21 +123,23 @@ async def install_plugin(folder: Path, *, client: httpx.AsyncClient | None = Non
 
 # ---- handing the sign-in to the plug-in ----
 
-HELPER_TIMEOUT_S = 90
 
+async def run_session(
+    plugin_dir: Path, config_dir: Path, cert_dir: Path, helper: Path, tokens: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Give the sign-in to Bambu's plug-in through the helper program, and return the steps it reports.
 
-async def run_session(plugin_dir: Path, config_dir: Path, cert_dir: Path, helper: Path) -> list[dict[str, Any]]:
-    """Give the last pasted sign-in to Bambu's plug-in through the helper program, and return the steps it reports.
-
-    The tokens go to the helper on stdin only, and a step that would repeat one is dropped: no token leaves this function."""
-    raw = _callback.raw
-    if not (raw.get("access_token") and raw.get("refresh_token")):
-        raise BambuCloudError("Paste the address the browser ended up on after signing in first")
-    if not helper.is_file():
+    The tokens go to the helper on stdin only, and a step that would repeat one is dropped: no token leaves this function. A helper that
+    crashes still leaves the steps it printed before."""
+    if not await asyncio.to_thread(helper.is_file):
         raise BambuCloudError("The helper program for Bambu's plug-in is not in this image")
-    keys = ("access_token", "refresh_token", "expires_in", "refresh_expires_in")
     payload = json.dumps(
-        {"plugin_dir": str(plugin_dir), "config_dir": str(config_dir), "cert_dir": str(cert_dir), **{k: raw.get(k, "") for k in keys}}
+        {
+            "plugin_dir": str(plugin_dir),
+            "config_dir": str(config_dir),
+            "cert_dir": str(cert_dir),
+            **{name: tokens.get(name, "") for name in TOKEN_FIELDS},
+        }
     )
     proc = await asyncio.create_subprocess_exec(
         str(helper), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
@@ -177,7 +149,7 @@ async def run_session(plugin_dir: Path, config_dir: Path, cert_dir: Path, helper
     except TimeoutError as exc:
         proc.kill()
         raise BambuCloudError("The plug-in did not answer in time") from exc
-    secrets = [v for k, v in raw.items() if k.endswith("_token") and v]
+    secrets = [value for name, value in tokens.items() if name.endswith("_token") and value]
     steps: list[dict[str, Any]] = []
     for line in out.decode(errors="replace").splitlines():
         if any(secret in line for secret in secrets):
@@ -189,3 +161,51 @@ async def run_session(plugin_dir: Path, config_dir: Path, cert_dir: Path, helper
     if proc.returncode:
         steps.append({"step": "helper_exit", "value": proc.returncode})
     return steps
+
+
+def _printers(info: Any) -> list[dict[str, Any]]:
+    devices = info.get("devices") if isinstance(info, dict) else None
+    found = []
+    for device in devices if isinstance(devices, list) else []:
+        if not isinstance(device, dict):
+            continue
+        model = device.get("dev_product_name") or device.get("dev_model_name")
+        name = device.get("dev_name")
+        online = device.get("dev_online")
+        found.append(
+            {
+                "model": model if isinstance(model, str) and model not in _MASKED else "Unknown",
+                "name": name if isinstance(name, str) and name not in _MASKED else None,
+                "online": online if isinstance(online, bool) else None,
+            }
+        )
+    return found
+
+
+def _problem(by_step: dict[str, Any]) -> str:
+    """Why the plug-in did not end up signed in, in words, from the steps it reported."""
+    if "error" in by_step:
+        return f"The plug-in program reported: {by_step['error']}"
+    if "helper_exit" in by_step:
+        return f"The plug-in program stopped unexpectedly (exit code {by_step['helper_exit']})"
+    profile = by_step.get("get_my_profile")
+    if isinstance(profile, dict) and profile.get("http_code") != 200:
+        return f"Bambu's plug-in could not reach Bambu's servers (code {profile.get('http_code')})"
+    if "is_user_login" in by_step:
+        return "The plug-in did not accept the sign-in; sign in again and paste the new address"
+    return "The plug-in gave no answer"
+
+
+def summarize(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the page shows: whether the plug-in is signed in, as whom, which printers it lists, or why not."""
+    by_step: dict[str, Any] = {
+        str(step["step"]): step.get("value") for step in steps if isinstance(step, dict) and "step" in step
+    }
+    signed_in = by_step.get("is_user_login") is True
+    user = by_step.get("user_name")
+    return {
+        "signed_in": signed_in,
+        "user": user if signed_in and isinstance(user, str) and user else None,
+        "printers": _printers(by_step.get("get_user_print_info")) if signed_in else [],
+        "problem": None if signed_in else _problem(by_step),
+    }

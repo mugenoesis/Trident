@@ -913,6 +913,40 @@ def test_a_monitor_only_printer_is_not_sent_a_print(client, monkeypatch):
     assert response.status_code == 409
 
 
+def test_a_monitor_only_printer_can_be_sent_a_file_to_start_on_the_printer(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    job_id = _bambu_job(client, monkeypatch)
+    sent = {}
+
+    async def fake_send(row, three_mf, *, name, start, use_ams, plate_index):
+        sent.update(host=row["print_host"], start=start)
+
+    monkeypatch.setattr(bambu_link, "send_print", fake_send)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": False})
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert sent == {"host": "192.168.1.50", "start": False}
+
+
+def test_a_monitor_only_printer_is_still_never_told_to_start_and_the_refusal_says_what_to_do(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    job_id = _bambu_job(client, monkeypatch)
+
+    async def fake_send(*args, **kwargs):
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(bambu_link, "send_print", fake_send)
+    response = client.post(f"/printers/{printer['id']}/send/{job_id}", json={"start_print": True})
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "monitor only" in detail and "without starting" in detail and "Developer Mode" in detail
+
+
+def test_pausing_and_cancelling_stay_refused_for_a_monitor_only_printer(client, monkeypatch):
+    printer = _bambu_printer(client, monitor_only=True)
+    for action in ("pause", "resume", "cancel"):
+        assert client.post(f"/printers/{printer['id']}/print/{action}").status_code == 409
+
+
 def test_monitor_only_can_be_turned_off_later(client, monkeypatch):
     printer = _bambu_printer(client, monitor_only=True)
     updated = client.put(f"/printers/{printer['id']}", json={"monitor_only": False}).json()

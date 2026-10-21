@@ -2664,3 +2664,39 @@
 	color: var(--text);
 	font-size: 11px;
 }
+.bambu-account-step {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	margin-top: 8px;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
+.bambu-account-step label,
+.bambu-account-step input:not([type="checkbox"]) {
+	width: 100%;
+	box-sizing: border-box;
+}
+.bambu-account-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	width: 100%;
+}
+.bambu-account-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+	padding: 6px 0;
+	border-top: 1px solid var(--panel-border);
+}
+.bambu-account-row .checkbox-label {
+	flex: 1 1 160px;
+	min-width: 0;
+}
+.bambu-account-row input:not([type="checkbox"]) {
+	flex: 0 1 150px;
+	min-width: 0;
+}

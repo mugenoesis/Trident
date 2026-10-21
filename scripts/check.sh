@@ -24,6 +24,7 @@ check_web() {
   step "web: biome (format, lint, complexity)"; npm run --silent lint
   step "web: unused code and dependencies (knip)"; npm run --silent knip
   step "web: typecheck and build"; npm run --silent build
+  step "web: G-code parser (layers, heights, support, per slicer)"; npm run --silent test:parser
   cd "$ROOT"
 }
 

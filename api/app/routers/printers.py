@@ -376,7 +376,13 @@ async def send_to_printer(
     row = store.get_printer_row(printer_id)
     assert row is not None  # just confirmed ownership above
     if row["host_type"] == "bambu":
-        _refuse_if_monitor_only(row)
+        # A file can always be put on a Bambu printer; starting it is a command, which a printer without Developer Mode ignores.
+        if row["monitor_only"] and body.start_print:
+            raise HTTPException(
+                status_code=409,
+                detail="This printer is saved as monitor only, so a print cannot be started from here. Send it without starting and start it "
+                "on the printer, or turn on Developer Mode on it and untick monitor only",
+            )
         return await _send_to_bambu(row, job, body)
     gcode_path = resolve_job_gcode_path(job_id)
     try:

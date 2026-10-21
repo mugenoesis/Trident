@@ -18,12 +18,14 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 	const [busy, setBusy] = useState(false);
 	const [result, setResult] = useState<'idle' | 'sent' | 'error'>('idle');
 	const [error, setError] = useState<string | null>(null);
+	// A printer saved as monitor only can be sent the file but not told to start it: the print is started on the printer itself.
+	const uploadOnly = !!printer.monitor_only;
 
 	const send = () => {
 		setBusy(true);
 		setResult('idle');
 		setError(null);
-		onSend(jobId, startPrint, useAms)
+		onSend(jobId, uploadOnly ? false : startPrint, useAms)
 			.then(() => setResult('sent'))
 			.catch((err: Error) => {
 				setResult('error');
@@ -32,18 +34,15 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 			.finally(() => setBusy(false));
 	};
 
-	if (printer.monitor_only)
-		return (
-			<div className="job-hint">{printer.name} is saved as monitor only: turn on Developer Mode on it and untick that to send prints.</div>
-		);
-
 	return (
 		<div className="send-to-printer">
-			<label className="checkbox-label">
-				<input type="checkbox" checked={startPrint} onChange={(e) => setStartPrint(e.target.checked)} />
-				Start printing immediately
-			</label>
-			{printer.host_type === 'bambu' && (
+			{!uploadOnly && (
+				<label className="checkbox-label">
+					<input type="checkbox" checked={startPrint} onChange={(e) => setStartPrint(e.target.checked)} />
+					Start printing immediately
+				</label>
+			)}
+			{!uploadOnly && printer.host_type === 'bambu' && (
 				<label className="checkbox-label">
 					<input type="checkbox" checked={useAms} onChange={(e) => setUseAms(e.target.checked)} />
 					Print from the AMS (its first slot)
@@ -52,7 +51,12 @@ export default function SendToPrinterControl({ printer, jobId, onSend }: SendToP
 			<button type="button" className="preview-button" disabled={busy} onClick={send}>
 				{busy ? 'Sending…' : `Send to ${printer.name}`}
 			</button>
-			{result === 'sent' && <div className="job-hint">Sent to {printer.name}.</div>}
+			{uploadOnly && result !== 'sent' && <div className="job-hint">This sends the file only: you start the print on {printer.name}.</div>}
+			{result === 'sent' && (
+				<div className="job-hint">
+					{uploadOnly ? `Sent to ${printer.name}. Start it from the printer's screen.` : `Sent to ${printer.name}.`}
+				</div>
+			)}
 			{result === 'error' && <div className="job-error">{error}</div>}
 		</div>
 	);

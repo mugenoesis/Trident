@@ -29,13 +29,21 @@ static F need(void* lib, const char* name) {
 
 // What a device entry looks like, without anything that identifies it or unlocks it: values only for a few harmless keys.
 static json describe(const json& device) {
-  static const char* shown[] = {"name", "dev_product_name", "online", "print_status", "dev_model_name"};
+  static const char* shown[] = {"dev_name", "dev_product_name", "dev_online", "dev_model_name"};
   json out = json::object();
   for (auto it = device.begin(); it != device.end(); ++it) {
     bool show = false;
     for (const char* key : shown) show = show || it.key() == key;
     out[it.key()] = show ? it.value() : json(it.value().type_name());
   }
+  return out;
+}
+
+// The few fields of an account printer the server needs to add it (including the serial number and access code, which `describe` masks).
+static json account_entry(const json& device) {
+  json out = json::object();
+  for (const char* key : {"dev_id", "dev_access_code", "dev_name", "dev_online", "dev_product_name", "dev_model_name"})
+    if (device.contains(key)) out[key] = device[key];
   return out;
 }
 
@@ -93,9 +101,14 @@ int main() {
   body.clear();
   rc = print_info(agent, &code, &body);
   json devices = json::parse(body, nullptr, false);
-  json summary = json::array();
+  json summary = json::array(), account = json::array();
   if (devices.is_object() && devices.contains("devices") && devices["devices"].is_array())
-    for (const auto& d : devices["devices"]) summary.push_back(describe(d));
+    for (const auto& d : devices["devices"]) {
+      summary.push_back(describe(d));
+      account.push_back(account_entry(d));
+    }
   step("get_user_print_info", {{"result", rc}, {"http_code", code}, {"devices", summary}});
+  // The same printers with what the server needs to add them; the server never passes these on to a browser.
+  step("account_devices", account);
   _exit(0);  // the plug-in's own threads may still be running; this is a one-shot check
 }

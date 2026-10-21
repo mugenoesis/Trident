@@ -1,9 +1,12 @@
-"""The experimental Bambu cloud sign-in: the plugin download, the sign-in link, and what Bambu's redirect carries (names, never values)."""
+"""The experimental Bambu Cloud sign-in: the plug-in download, the sign-in link, reading the address the browser ends up on, and handing it
+to Bambu's plug-in through the helper program. The helper is replaced by small shell scripts: what is tested is how the tokens reach it
+(stdin only), that none comes back out, and that what it reports becomes a plain result the page can show."""
 
 from __future__ import annotations
 
 import asyncio
 import io
+import json
 import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -14,7 +17,38 @@ import pytest
 from app import bambu_cloud
 from app.bambu_cloud import BambuCloudError
 
-ORIGIN = "http://192.168.1.3:8002"
+PASTED = "http://localhost:41999/?access_token=AAA&refresh_token=RRR&expires_in=7776000&refresh_expires_in=7776000&redirect_url=x"
+
+GOOD_STEPS = [
+    {"step": "agent", "value": True},
+    {"step": "get_my_profile", "value": {"http_code": 200, "result": 0}},
+    {"step": "is_user_login", "value": True},
+    {"step": "user_name", "value": "maker"},
+    {
+        "step": "get_user_print_info",
+        "value": {
+            "http_code": 200,
+            "result": 0,
+            "devices": [
+                {"dev_product_name": "X1 Carbon", "dev_model_name": "BL-P001", "dev_name": "Shed", "dev_online": True},
+                {"dev_product_name": "P1S", "dev_model_name": "C12", "dev_name": "Desk", "dev_online": False},
+                {"dev_model_name": "N1", "dev_name": "string", "dev_online": "boolean"},
+            ],
+        },
+    },
+    {
+        "step": "account_devices",
+        "value": [
+            {
+                "dev_id": "00M00A000000000",
+                "dev_access_code": "12345678",
+                "dev_name": "Shed",
+                "dev_online": True,
+                "dev_product_name": "X1 Carbon",
+            }
+        ],
+    },
+]
 
 
 def _zip(files: dict[str, bytes]) -> bytes:
@@ -25,16 +59,14 @@ def _zip(files: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
-def _bambu(
-    plugin_zip: bytes, *, version: str = "02.00.00.37", seen: list[httpx.Request] | None = None
-) -> httpx.AsyncClient:
+def _bambu(plugin_zip: bytes, *, seen: list[httpx.Request] | None = None) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
         if request.url.host == "api.bambulab.com":
             body = {
                 "resources": [
-                    {"type": "slicer/plugins/cloud", "version": version, "url": "https://cdn.example/linux.zip"}
+                    {"type": "slicer/plugins/cloud", "version": "02.00.00.37", "url": "https://cdn.example/linux.zip"}
                 ]
             }
             return httpx.Response(200, json=body)
@@ -43,51 +75,116 @@ def _bambu(
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+def _helper(tmp_path: Path, body: str) -> Path:
+    script = tmp_path / "helper"
+    script.write_text("#!/bin/sh\ncat > /dev/null\n" + body)
+    script.chmod(0o755)
+    return script
+
+
+def _helper_printing(tmp_path: Path, steps: list[dict]) -> Path:
+    lines = "".join(f"echo '{json.dumps(s)}'\n" for s in steps)
+    return _helper(tmp_path, lines)
+
+
 # ---- the sign-in link ----
 
 
-def test_the_sign_in_link_sends_bambu_back_to_trident():
-    url = urlparse(bambu_cloud.sign_in_url(ORIGIN))
+def test_the_sign_in_link_is_the_one_orca_builds_and_sends_the_browser_to_localhost():
+    url = urlparse(bambu_cloud.sign_in_url())
     assert (url.scheme, url.netloc, url.path) == ("https", "bambulab.com", "/sign-in")
     outer = parse_qs(url.query)
     assert outer["from"] == ["studio"] and outer["source"] == ["portal"]
-    callback = urlparse(unquote(outer["to"][0]))
-    assert (callback.netloc, callback.path) == ("bambulab.com", "/sign-in/callback")
-    assert parse_qs(callback.query)["redirect_url"] == [f"{ORIGIN}/bambu-cloud/callback"]
+    back = urlparse(unquote(outer["to"][0]))
+    assert (back.netloc, back.path) == ("bambulab.com", "/sign-in/callback")
+    assert parse_qs(back.query)["redirect_url"] == ["http://localhost:41999"]
+
+
+# ---- reading the address the browser ends up on ----
+
+
+def test_the_tokens_are_read_from_the_pasted_address():
+    tokens = bambu_cloud.parse_sign_in(PASTED)
+    assert tokens == {
+        "access_token": "AAA",
+        "refresh_token": "RRR",
+        "expires_in": "7776000",
+        "refresh_expires_in": "7776000",
+    }
+
+
+def test_tokens_in_the_fragment_count_too():
+    tokens = bambu_cloud.parse_sign_in("http://127.0.0.1:41999/#access_token=AAA&refresh_token=RRR")
+    assert tokens["access_token"] == "AAA" and tokens["refresh_token"] == "RRR"
 
 
 @pytest.mark.parametrize(
-    "origin", ["ftp://x", "http://a b", "http://x/path", "javascript:alert(1)", "", "http://x@evil.test"]
+    "pasted",
+    [
+        "",
+        "not a url",
+        "ftp://localhost/?access_token=A&refresh_token=R",
+        "https://evil.test/?access_token=A&refresh_token=R",
+        "http://localhost:41999/?access_token=A",
+        "http://localhost:41999/",
+    ],
 )
-def test_only_a_plain_web_address_is_taken_as_trident_s_own(origin):
-    with pytest.raises(BambuCloudError):
-        bambu_cloud.sign_in_url(origin)
+def test_only_a_localhost_address_that_carries_both_tokens_is_accepted(pasted):
+    with pytest.raises(BambuCloudError, match="Paste"):
+        bambu_cloud.parse_sign_in(pasted)
 
 
-# ---- what Bambu's redirect carries ----
+def test_an_error_about_a_bad_address_never_repeats_what_was_pasted():
+    with pytest.raises(BambuCloudError) as caught:
+        bambu_cloud.parse_sign_in("https://evil.test/?access_token=SECRET&refresh_token=SECRET2")
+    assert "SECRET" not in str(caught.value)
 
 
-def test_a_callback_is_remembered_by_field_name_and_length_only():
-    bambu_cloud.record_callback("/bambu-cloud/callback", {"ticket": "s3cret-ticket-value", "state": "abc"})
-    seen = bambu_cloud.last_callback()
-    assert seen is not None
-    assert seen["fields"] == [{"name": "ticket", "length": 19}, {"name": "state", "length": 3}]
-    assert "s3cret" not in repr(seen)
+# ---- what the plug-in reports, as a result ----
 
 
-def test_the_path_after_the_callback_is_described_by_length_not_content():
-    bambu_cloud.record_callback("/bambu-cloud/callback/abcdef", {})
-    seen = bambu_cloud.last_callback()
-    assert seen is not None and seen["extra_path_lengths"] == [6]
-    assert "abcdef" not in repr(seen)
+def test_a_good_session_becomes_the_user_and_their_printers():
+    result = bambu_cloud.summarize(GOOD_STEPS)
+    assert result["signed_in"] is True and result["user"] == "maker" and result["problem"] is None
+    assert result["printers"] == [
+        {"model": "X1 Carbon", "name": "Shed", "online": True},
+        {"model": "P1S", "name": "Desk", "online": False},
+        {"model": "N1", "name": None, "online": None},
+    ]
 
 
-def test_nothing_is_remembered_before_a_callback():
-    bambu_cloud.forget_callback()
-    assert bambu_cloud.last_callback() is None
+def test_a_certificate_style_failure_is_explained_in_words():
+    steps = [
+        {"step": "get_my_profile", "value": {"http_code": 60, "result": -1}},
+        {"step": "is_user_login", "value": False},
+    ]
+    result = bambu_cloud.summarize(steps)
+    assert result["signed_in"] is False and result["printers"] == []
+    assert "60" in result["problem"] and "reach" in result["problem"].lower()
 
 
-# ---- the plugin ----
+def test_a_plug_in_that_does_not_accept_the_sign_in_says_so():
+    steps = [
+        {"step": "get_my_profile", "value": {"http_code": 200, "result": 0}},
+        {"step": "is_user_login", "value": False},
+    ]
+    assert "sign-in" in bambu_cloud.summarize(steps)["problem"]
+
+
+def test_a_helper_that_stopped_is_reported_with_its_exit_code():
+    result = bambu_cloud.summarize([{"step": "agent", "value": True}, {"step": "helper_exit", "value": 139}])
+    assert result["signed_in"] is False and "139" in result["problem"]
+
+
+def test_a_helper_error_step_is_passed_on_in_words():
+    assert "dlopen" in bambu_cloud.summarize([{"step": "error", "value": "dlopen: no such file"}])["problem"]
+
+
+def test_no_steps_at_all_is_a_problem():
+    assert bambu_cloud.summarize([])["problem"]
+
+
+# ---- the plug-in ----
 
 
 def test_a_missing_plugin_is_reported_as_not_installed(tmp_path: Path):
@@ -151,6 +248,47 @@ def test_a_failed_download_is_reported_in_words(tmp_path: Path):
     asyncio.run(scenario())
 
 
+# ---- handing the sign-in to the plug-in (through the helper program) ----
+
+TOKENS = {
+    "access_token": "TOKEN-A",
+    "refresh_token": "TOKEN-R",
+    "expires_in": "7776000",
+    "refresh_expires_in": "7776000",
+}
+
+
+def test_the_tokens_reach_the_helper_on_stdin_only_and_its_steps_come_back(tmp_path: Path):
+    seen = tmp_path / "stdin.json"
+    script = tmp_path / "helper"
+    script.write_text(f'#!/bin/sh\ncat > {seen}\necho \'{{"step":"is_user_login","value":true}}\'\n')
+    script.chmod(0o755)
+    steps = asyncio.run(bambu_cloud.run_session(tmp_path, tmp_path, tmp_path, script, TOKENS))
+    assert steps == [{"step": "is_user_login", "value": True}]
+    sent = json.loads(seen.read_text())
+    assert (
+        sent["access_token"] == "TOKEN-A" and sent["refresh_token"] == "TOKEN-R" and sent["plugin_dir"] == str(tmp_path)
+    )
+
+
+def test_a_token_in_the_helper_output_is_never_passed_on(tmp_path: Path):
+    script = _helper(tmp_path, 'echo \'{"step":"oops","value":"TOKEN-A"}\'\necho \'{"step":"fine","value":1}\'\n')
+    steps = asyncio.run(bambu_cloud.run_session(tmp_path, tmp_path, tmp_path, script, TOKENS))
+    assert "TOKEN" not in repr(steps) and steps[-1] == {"step": "fine", "value": 1}
+
+
+def test_a_helper_that_crashes_leaves_the_steps_before_the_crash(tmp_path: Path):
+    script = _helper(tmp_path, 'echo \'{"step":"start","value":0}\'\nkill -SEGV $$\n')
+    steps = asyncio.run(bambu_cloud.run_session(tmp_path, tmp_path, tmp_path, script, TOKENS))
+    assert steps[0] == {"step": "start", "value": 0}
+    assert steps[-1]["step"] == "helper_exit" and steps[-1]["value"] != 0
+
+
+def test_a_missing_helper_is_said_in_words(tmp_path: Path):
+    with pytest.raises(BambuCloudError, match="helper"):
+        asyncio.run(bambu_cloud.run_session(tmp_path, tmp_path, tmp_path, tmp_path / "absent", TOKENS))
+
+
 # ---- the routes ----
 
 
@@ -160,43 +298,21 @@ def experiment(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "experimental_bambu_cloud", True)
     monkeypatch.setattr(settings, "orcaslicer_datadir", tmp_path)
-    bambu_cloud.forget_callback()
 
 
 def test_the_experiment_is_off_unless_asked_for(client):
     assert client.get("/bambu-cloud").json() == {"enabled": False}
     assert client.post("/bambu-cloud/plugin").status_code == 404
-    assert client.get("/bambu-cloud/sign-in-url", params={"origin": ORIGIN}).status_code == 404
-    assert client.get("/bambu-cloud/callback", params={"ticket": "x"}).status_code == 404
+    assert client.get("/bambu-cloud/sign-in-url").status_code == 404
+    assert client.post("/bambu-cloud/account", json={"url": PASTED}).status_code == 404
 
 
 def test_the_status_says_when_the_plugin_is_missing(client, experiment):
-    assert client.get("/bambu-cloud").json() == {"enabled": True, "plugin": {"installed": False}, "callback": None}
+    assert client.get("/bambu-cloud").json() == {"enabled": True, "plugin": {"installed": False}}
 
 
-def test_the_sign_in_link_is_made_for_the_address_the_browser_uses(client, experiment):
-    body = client.get("/bambu-cloud/sign-in-url", params={"origin": ORIGIN}).json()
-    assert body["url"].startswith("https://bambulab.com/sign-in?")
-    assert client.get("/bambu-cloud/sign-in-url", params={"origin": "javascript:alert(1)"}).status_code == 400
-
-
-def test_the_callback_shows_and_remembers_only_what_arrived_not_its_value(client, experiment):
-    page = client.get("/bambu-cloud/callback", params={"ticket": "s3cret-ticket-value"})
-    assert page.status_code == 200 and "ticket (19 characters)" in page.text
-    assert "s3cret" not in page.text
-    status = client.get("/bambu-cloud").json()
-    assert status["callback"]["fields"] == [{"name": "ticket", "length": 19}]
-    assert "s3cret" not in str(status)
-
-
-def test_a_callback_with_a_path_after_it_is_taken_too(client, experiment):
-    assert client.get("/bambu-cloud/callback/abc/def", params={"x": "1"}).status_code == 200
-    assert client.get("/bambu-cloud").json()["callback"]["extra_path_lengths"] == [3, 3]
-
-
-def test_a_field_name_cannot_inject_markup_into_the_callback_page(client, experiment):
-    page = client.get("/bambu-cloud/callback", params={"<script>alert(1)</script>": "1"})
-    assert "<script>" not in page.text
+def test_the_sign_in_link_needs_no_address_of_ours(client, experiment):
+    assert client.get("/bambu-cloud/sign-in-url").json()["url"].startswith("https://bambulab.com/sign-in?")
 
 
 def test_installing_the_plugin_reports_a_failure_in_words(client, experiment, monkeypatch):
@@ -208,28 +324,42 @@ def test_installing_the_plugin_reports_a_failure_in_words(client, experiment, mo
     assert response.status_code == 502 and "Bambu" in response.json()["detail"]
 
 
-# ---- the loopback link and the pasted address ----
+def test_connecting_hands_the_sign_in_to_the_plugin_and_returns_the_user_and_printers(
+    client, experiment, monkeypatch, tmp_path
+):
+    from app.config import settings
 
-
-def test_the_loopback_link_sends_bambu_to_localhost_as_orca_does():
-    url = bambu_cloud.sign_in_url(ORIGIN, loopback=True)
-    callback = urlparse(unquote(parse_qs(urlparse(url).query)["to"][0]))
-    assert parse_qs(callback.query)["redirect_url"] == ["http://localhost:41999"]
-
-
-def test_a_pasted_address_is_recorded_by_field_name_and_length_only(client, experiment):
-    pasted = "http://localhost:41999/?ticket=s3cret-ticket-value&state=abc"
-    response = client.post("/bambu-cloud/paste", json={"url": pasted})
+    monkeypatch.setattr(settings, "bambu_helper_path", _helper_printing(tmp_path, GOOD_STEPS))
+    response = client.post("/bambu-cloud/account", json={"url": PASTED})
     assert response.status_code == 200
-    assert response.json()["fields"] == [{"name": "ticket", "length": 19}, {"name": "state", "length": 3}]
-    assert "s3cret" not in response.text and "s3cret" not in str(client.get("/bambu-cloud").json())
+    body = response.json()
+    assert body["signed_in"] is True and body["user"] == "maker" and body["printers"][0]["model"] == "X1 Carbon"
+    assert "AAA" not in response.text and "RRR" not in response.text
 
 
-def test_a_pasted_fragment_counts_too(client, experiment):
-    response = client.post("/bambu-cloud/paste", json={"url": "http://localhost:41999/#token=abcdef"})
-    assert response.json()["fields"] == [{"name": "token", "length": 6}]
+def test_a_failed_connection_is_a_result_with_a_reason_not_an_error_page(client, experiment, monkeypatch, tmp_path):
+    from app.config import settings
+
+    steps = [
+        {"step": "get_my_profile", "value": {"http_code": 60, "result": -1}},
+        {"step": "is_user_login", "value": False},
+    ]
+    monkeypatch.setattr(settings, "bambu_helper_path", _helper_printing(tmp_path, steps))
+    response = client.post("/bambu-cloud/account", json={"url": PASTED})
+    assert response.status_code == 200 and response.json()["signed_in"] is False and "60" in response.json()["problem"]
 
 
-@pytest.mark.parametrize("pasted", ["not a url", "ftp://localhost/x", "https://evil.test/?ticket=1", ""])
-def test_only_a_localhost_address_can_be_pasted(client, experiment, pasted):
-    assert client.post("/bambu-cloud/paste", json={"url": pasted}).status_code == 400
+def test_connecting_with_a_bad_address_is_a_400_in_words(client, experiment):
+    response = client.post(
+        "/bambu-cloud/account", json={"url": "https://evil.test/?access_token=SECRET&refresh_token=S2"}
+    )
+    assert response.status_code == 400 and "Paste" in response.json()["detail"] and "SECRET" not in response.text
+
+
+def test_nothing_is_kept_between_connections(client, experiment, monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "bambu_helper_path", _helper_printing(tmp_path, GOOD_STEPS))
+    client.post("/bambu-cloud/account", json={"url": PASTED})
+    assert client.post("/bambu-cloud/account", json={"url": "http://localhost:41999/"}).status_code == 400
+    assert "AAA" not in client.get("/bambu-cloud").text
