@@ -41,6 +41,17 @@ FastAPI API (`api/`) and a React web UI (`web/`), shipped as one container. Lice
 9. Release notes and PR text describe the behaviour, never the specific test model used to find it.
 10. Don't import data whose licence or terms are unknown (the user asks the owner first). Resin material rows carry a source and date.
 
+## Delegation (delegate-mcp)
+
+The `delegate` MCP tools are available in this project. Use them; doing bulk work yourself costs Claude quota for nothing.
+
+- **New files and whole-file rewrites go through `delegate_write`**, not `Write`. Pass `backend: "local"` (qwen3.6:35b, free) for short files; `deepseek-flash` for long or boilerplate-heavy ones. Small edits to existing files stay with `Edit`.
+- **Bulk reading, summaries, mechanical refactors and test boilerplate go through `delegate_ask`** (`deepseek-flash`). Use `deepseek-pro` only for a hard problem or a second opinion.
+- Name the backend every time; never leave a consequential call on `auto`. Write self-contained prompts (the worker has no history) and leave `max_tokens` unset.
+- **Check what comes back** (read the file, run the tests) before calling it done. Design decisions, review and anything ambiguous stay with you.
+- A `.delegate-private` marker makes the project local-only; a refused cloud call is correct, so switch to `local`.
+- Full policy: `/mnt/user/Media/workspace/delegate-mcp/ORCHESTRATION.md`.
+
 ## Commands
 
 ```bash
