@@ -11,6 +11,9 @@ const NONE: LayerPreviewStatus = {
 	peak_area_cm2: null,
 	peel_warning: false,
 	peel_warning_cm2: null,
+	cup_warning: false,
+	cup_layer: null,
+	cup_area_cm2: null,
 };
 
 // The server starts the layer images of a resin job itself, a moment after the job succeeds; "none" that long after is an old job.

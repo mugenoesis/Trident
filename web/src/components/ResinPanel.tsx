@@ -300,6 +300,7 @@ function ResinResult({ job, archiveName, layers }: { job: JobRecord; archiveName
 				{cost !== null && <Stat label="Cost" value={formatCost(cost)} />}
 			</div>
 			<PeelWarning layers={layers} />
+			<CupWarning layers={layers} />
 			<LayerControls job={job} layers={layers} />
 			<a className="download-button" href={archiveDownloadUrl(job.id)} download>
 				Download {archiveName}
@@ -356,6 +357,29 @@ function PeelWarning({ layers }: { layers: ResinLayers }) {
 				className="link-button"
 				onClick={() => {
 					setIndex(peak);
+					setOpen(true);
+				}}
+			>
+				Show it
+			</button>
+		</div>
+	);
+}
+
+// The warning for a closed cavity, which seals against the film and sucks on it as the layer peels; it jumps to the worst layer.
+function CupWarning({ layers }: { layers: ResinLayers }) {
+	const { preview, setIndex, setOpen } = layers;
+	if (!preview.cup_warning || preview.cup_layer === null || preview.cup_area_cm2 === null) return null;
+	const worst = preview.cup_layer;
+	return (
+		<div className="resin-warning">
+			Layer {(worst + 1).toLocaleString()} has a closed cavity of {preview.cup_area_cm2.toFixed(1)} cm² that no resin can flow into
+			(cupping): it can suck on the film and fail the print. Turn the model so the cavity opens sideways, or add a vent hole.{' '}
+			<button
+				type="button"
+				className="link-button"
+				onClick={() => {
+					setIndex(worst);
 					setOpen(true);
 				}}
 			>

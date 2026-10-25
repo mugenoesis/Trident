@@ -776,6 +776,10 @@ class LayerPreviewStatus(BaseModel):
     peak_area_cm2: float | None = None
     peel_warning: bool = False
     peel_warning_cm2: float | None = None
+    # Once ready: the layer (from 0) with the largest closed cavity, which can suck on the film, and its area; none when no cavity is closed.
+    cup_warning: bool = False
+    cup_layer: int | None = None
+    cup_area_cm2: float | None = None
 
 
 class ResinFormat(BaseModel):

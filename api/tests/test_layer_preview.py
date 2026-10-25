@@ -126,3 +126,18 @@ def test_only_a_finished_resin_job_has_a_preview(client):
     assert client.post(f"/jobs/{failed}/layer-preview").status_code == 409
     assert client.post("/jobs/nope/layer-preview").status_code == 404
     assert client.get("/jobs/nope/layers/0.png").status_code == 404
+
+
+def test_a_part_with_no_closed_cavity_has_no_cup_warning(client):
+    ready = _settled(client, _resin_job(client))
+    assert ready["cup_warning"] is False
+    assert ready["cup_layer"] is None
+    assert ready["cup_area_cm2"] is None
+
+
+def test_a_closed_cavity_raises_the_cup_warning(client, monkeypatch):
+    monkeypatch.setattr(layer_preview, "find_cup", lambda *_a, **_k: layer_preview.cupping.Cup(layer=1, area_mm2=250.0))
+    ready = _settled(client, _resin_job(client))
+    assert ready["cup_warning"] is True
+    assert ready["cup_layer"] == 1
+    assert ready["cup_area_cm2"] == pytest.approx(2.5)

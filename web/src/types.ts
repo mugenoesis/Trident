@@ -551,6 +551,10 @@ export interface LayerPreviewStatus {
 	peak_area_cm2: number | null;
 	peel_warning: boolean;
 	peel_warning_cm2: number | null;
+	// Once ready: the layer (from 0) with the largest closed cavity, which can suck on the film, and its area.
+	cup_warning: boolean;
+	cup_layer: number | null;
+	cup_area_cm2: number | null;
 }
 
 // A printer file format the slicer can write.
