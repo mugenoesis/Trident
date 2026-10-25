@@ -23,6 +23,9 @@ dependencies = [
     "paho-mqtt>=2.1",
     # bambu_camera.py: one frame of an X1 / H2 printer's RTSPS stream (the library brings its own FFmpeg).
     "av>=14",
+    # cupping.py: finds the closed cavities in a resin job's layer images.
+    "numpy>=1.26",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]

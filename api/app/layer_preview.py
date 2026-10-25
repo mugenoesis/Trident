@@ -17,10 +17,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
+from . import cupping, resin_runner
 from . import resin as resin_module
-from . import resin_runner
 
 PREVIEW_DIR = "preview"
 ARCHIVE_FORMAT = "SL1"
@@ -107,6 +108,39 @@ def measure(archive_path: Path, display_mm: tuple[float, float], workers: int | 
     return len(areas_mm2), peak, areas_mm2[peak] / 100
 
 
+# Cavities are looked for on images shrunk until a pixel is about this many mm across: a quarter of a millimetre is plenty to see a
+# cavity of the size that matters, and a full-resolution layer of a modern printer is tens of millions of pixels.
+_CUP_PIXEL_MM = 0.25
+
+
+def _cured_mask(png: bytes, factor: int) -> np.ndarray:
+    """The cured pixels of one layer image as a boolean image, shrunk by `factor` for the cup search."""
+    with Image.open(io.BytesIO(png)) as image:
+        gray = image.convert("L")
+        small = gray.reduce(factor) if factor > 1 else gray
+        return np.asarray(small) >= 128
+
+
+def find_cup(archive_path: Path, display_mm: tuple[float, float], workers: int | None = None) -> cupping.Cup | None:
+    """The layer with the largest closed cavity of an SL1 archive on a screen of this size in mm, or None when there is none."""
+    workers = max(1, workers or min(8, os.cpu_count() or 1))
+    with zipfile.ZipFile(archive_path) as archive, ThreadPoolExecutor(max_workers=workers) as pool:
+        names = _png_names(archive)
+        if not names:
+            return None
+        with Image.open(io.BytesIO(archive.read(names[0]))) as first:
+            width, height = first.size
+        factor = max(1, round(_CUP_PIXEL_MM / max(display_mm[0] / width, display_mm[1] / height)))
+        pixel_mm2 = (display_mm[0] / (-(-width // factor))) * (display_mm[1] / (-(-height // factor)))
+
+        def masks():
+            for start in range(0, len(names), _BATCH):
+                batch = [archive.read(name) for name in names[start : start + _BATCH]]
+                yield from pool.map(lambda png: _cured_mask(png, factor), batch)
+
+        return cupping.find_worst_cup(masks(), pixel_mm2)
+
+
 def generate(
     *,
     out: Path,
@@ -134,9 +168,10 @@ def generate(
             error = (result.result_json or {}).get("error_string") or result.stderr
             _finish_failed(out, error or f"exit code {result.return_code}")
             return
-        count, peak_layer, peak_cm2 = measure(
-            out / PREVIEW_DIR / ARCHIVE_NAME, resin_module.catalog.screen_mm(printer_name, user_id)
-        )
+        archive_path = out / PREVIEW_DIR / ARCHIVE_NAME
+        screen_mm = resin_module.catalog.screen_mm(printer_name, user_id)
+        count, peak_layer, peak_cm2 = measure(archive_path, screen_mm)
+        cup = find_cup(archive_path, screen_mm)
         _write(
             out,
             status="ready",
@@ -145,6 +180,9 @@ def generate(
             peak_area_cm2=round(peak_cm2, 2),
             peel_warning=peak_cm2 > PEEL_WARNING_CM2,
             peel_warning_cm2=PEEL_WARNING_CM2,
+            cup_warning=cup is not None,
+            cup_layer=cup.layer if cup else None,
+            cup_area_cm2=round(cup.area_mm2 / 100, 2) if cup else None,
         )
         _running.discard(str(out))
     except Exception as exc:
