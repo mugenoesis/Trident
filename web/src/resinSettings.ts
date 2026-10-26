@@ -50,6 +50,7 @@ export interface ResinProcess {
 	touchpoint: string;
 	pad: PadMode;
 	hollow: boolean;
+	fillCavities: boolean;
 	wallThickness: string;
 }
 
@@ -59,6 +60,7 @@ export const DEFAULT_RESIN_PROCESS: ResinProcess = {
 	touchpoint: '0.4',
 	pad: 'off',
 	hollow: true,
+	fillCavities: false,
 	wallThickness: '2',
 };
 
@@ -105,6 +107,7 @@ export function resinOverrides(process: ResinProcess, values: ResinValues): Reco
 		supports_enable: process.supports !== 'none',
 		pad_enable: process.pad !== 'off',
 		hollowing_enable: process.hollow,
+		fill_closed_cavities: process.fillCavities && !process.hollow,
 	};
 	if (process.supports !== 'none') {
 		overrides.support_points_density_relative = SUPPORT_DENSITY[process.supports];

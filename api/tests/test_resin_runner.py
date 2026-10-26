@@ -72,6 +72,11 @@ def test_the_printer_preset_and_the_overrides_reach_the_slicer(tmp_path, resin_d
     assert args["material"] is None
 
 
+def test_filling_closed_cavities_is_a_setting_a_resin_job_may_send(tmp_path, resin_dir):
+    _slice(tmp_path, setting_overrides={"hollowing_enable": False, "fill_closed_cavities": True})
+    assert _args(tmp_path)["process"]["fill_closed_cavities"] == "1"
+
+
 def test_a_resin_is_handed_over_as_its_own_file(tmp_path, resin_dir):
     _slice(tmp_path, resin_name="Test resin")
     assert _args(tmp_path)["material"]["name"] == "Test resin"
