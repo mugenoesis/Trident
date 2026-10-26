@@ -55,6 +55,7 @@ RESIN_OVERRIDE_KEYS = frozenset(
         "hollowing_min_thickness",
         "hollowing_quality",
         "hollowing_closing_distance",
+        "fill_closed_cavities",
         "gamma_correction",
         "slice_closing_radius",
         "elefant_foot_compensation",

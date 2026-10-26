@@ -72,7 +72,18 @@ await panel.getByLabel('Exposure', { exact: true }).fill('2.5');
 console.log('[5/20] Slicing ...');
 await panel.getByLabel('Supports', { exact: true }).selectOption({ label: 'None' });
 await panel.getByLabel('Pad', { exact: true }).selectOption({ label: 'Off: model sits on supports' });
+// filling closed cavities is for a model that is not hollowed: it waits for hollowing to be switched off
+const fill = panel.getByLabel('Fill closed cavities');
+check(await fill.isDisabled(), 'filling closed cavities is off limits while the model is hollowed');
+await panel.getByLabel(/^Hollow the model/).uncheck();
+check(await fill.isEnabled(), 'filling closed cavities can be chosen once hollowing is off');
+await fill.check();
+const jobRequest = page.waitForRequest((r) => r.url().endsWith('/jobs') && r.method() === 'POST');
 await panel.getByRole('button', { name: 'Slice' }).click();
+check(
+	((await jobRequest).postData() ?? '').includes('"fill_closed_cavities":true'),
+	'the slice request carries the choice to fill closed cavities',
+);
 await panel.getByText('Sliced', { exact: true }).waitFor({ timeout: 120000 });
 check(await panel.getByText('Layers', { exact: true }).isVisible(), 'the layer count is shown');
 check(await panel.getByText('Print time', { exact: true }).isVisible(), 'the print time is shown');

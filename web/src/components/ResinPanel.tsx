@@ -262,6 +262,19 @@ function SettingsSection({ r }: { r: ResinState }) {
 				/>
 				mm
 			</label>
+			<label className="resin-check">
+				<input
+					type="checkbox"
+					checked={process.fillCavities && !process.hollow}
+					disabled={process.hollow}
+					onChange={(e) => setProcess({ ...process, fillCavities: e.target.checked })}
+				/>
+				Fill closed cavities
+			</label>
+			<p className="job-hint">
+				Fills cavities no resin can flow into, which suck on the film as a layer peels (cupping). Cavities under 25 mm² stay. Not used while
+				hollowing.
+			</p>
 			<p className="job-hint">Exposure and lift come from the resin; change them above for this slice only.</p>
 		</details>
 	);
@@ -374,7 +387,8 @@ function CupWarning({ layers }: { layers: ResinLayers }) {
 	return (
 		<div className="resin-warning">
 			Layer {(worst + 1).toLocaleString()} has a closed cavity of {preview.cup_area_cm2.toFixed(1)} cm² that no resin can flow into
-			(cupping): it can suck on the film and fail the print. Turn the model so the cavity opens sideways, or add a vent hole.{' '}
+			(cupping): it can suck on the film and fail the print. Turn the model so the cavity opens sideways, add a vent hole, or turn off
+			hollowing and turn on "Fill closed cavities".{' '}
 			<button
 				type="button"
 				className="link-button"
