@@ -24,3 +24,6 @@ To test code that is not in the image yet, mount it over the installed app:
 
 A new case is a row in `test_multicolour_matrix.py`. When a real file crashes or fails, reduce it to the colour
 count, printer and assignment that reproduce it and add that row.
+
+`test_mixed_filament.py` checks mixed (virtual) colour slots the same way: a model printed on a mix of two or three nozzles must
+use only those nozzles, in the ratio asked for (see `docs/MIXED_COLOUR.md`).
