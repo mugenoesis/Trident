@@ -6,6 +6,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, computed_field, model_validator
 
+from .mixed_filaments import MixedFilament
+
 
 class JobStatus(StrEnum):
     QUEUED = "queued"
@@ -205,6 +207,11 @@ class JobCreateRequest(BaseModel):
     process_profile: str = ""
     filament_profiles: list[str] = Field(default_factory=list)
     setting_overrides: dict[str, Any] = Field(default_factory=dict)
+    # FDM only: mixes of the physical filament_profiles (see mixed_filaments.py). Each becomes one more filament slot after
+    # them, and the options the slicer reads are added to setting_overrides, so the job record shows what was sliced.
+    mixed_filaments: list[MixedFilament] = Field(default_factory=list)
+    # With mixes: split every layer into one sub-layer per component, instead of alternating whole layers by ratio.
+    mixed_sublayers: bool = False
     # 1-based, mirrors OrcaSlicer's own --slice N syntax. None means "not a
     # multi-plate .3mf" -- slice as today (--slice 0, all plates). Distinct
     # from JobProgress.plate_index/plate_count below, which are populated

@@ -80,7 +80,7 @@ def project_on_slot(source: Path, slot: int, dest: Path) -> Path:
 def slice_on_mix(client, projects, tmp_path):
     """slice_on_mix(slots, overrides) -> per-layer tool sets of a model printed on the last of `slots` slots."""
 
-    def run(slots: int, overrides: dict[str, str]) -> list[set[int]]:
+    def run(slots: int, overrides: dict[str, str], **job_fields) -> list[set[int]]:
         model = project_on_slot(projects(slots, style="objects"), slots, tmp_path / "on_mix.3mf")
         model_id = client.post("/models", files={"file": (model.name, model.read_bytes(), "model/3mf")}).json()[
             "model_id"
@@ -91,8 +91,9 @@ def slice_on_mix(client, projects, tmp_path):
                 "model_id": model_id,
                 "printer_profile": U1,
                 "process_profile": U1_PROCESS,
-                "filament_profiles": [U1_MATERIAL] * slots,
+                "filament_profiles": [U1_MATERIAL] * (slots - len(job_fields.get("mixed_filaments", []))),
                 "setting_overrides": overrides,
+                **job_fields,
             },
         ).json()
         deadline = time.time() + 300
@@ -147,3 +148,24 @@ def test_mix_options_without_a_mixed_slot_are_refused(slice_on_mix):
     overrides["filament_is_mixed"] = "0,0,0"
     with pytest.raises(AssertionError, match="filament_is_mixed: must be set"):
         slice_on_mix(3, overrides)
+
+
+def test_a_mix_defined_through_the_job_prints_its_components_in_ratio(slice_on_mix):
+    """The same as the options set by hand, asked for the way the app does it: three filaments and one mix of two."""
+    layers = slice_on_mix(
+        4,
+        {"enable_prime_tower": "1"},
+        mixed_filaments=[{"components": [1, 2], "weights": [3, 1]}],
+    )
+    assert set().union(*layers) == {0, 1}
+    assert share(layers, 0) == pytest.approx(0.75, abs=0.04)
+
+
+def test_a_mix_after_four_physical_filaments_on_a_four_nozzle_printer(slice_on_mix):
+    """The fifth slot is not a nozzle: the mix prints on the nozzles that exist."""
+    layers = slice_on_mix(
+        5,
+        {"enable_prime_tower": "1"},
+        mixed_filaments=[{"components": [3, 4], "weights": [1, 1]}],
+    )
+    assert set().union(*layers) == {2, 3}
