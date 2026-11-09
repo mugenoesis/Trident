@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
+import { slotColour } from '../mixedColours';
 import type { ColorNode } from '../types';
 import type { AppState, MainAppProps } from './useAppState';
+import type { useMixedColours } from './useMixedColours';
 
-export function useColorTree(c: AppState & Pick<MainAppProps, never>) {
-	const { roleNozzleAssignments, filamentSlots, plateInfo } = c;
+export function useColorTree(c: AppState & Pick<MainAppProps, never> & ReturnType<typeof useMixedColours>) {
+	const { roleNozzleAssignments, filamentSlots, plateInfo, mixes, mixColours } = c;
 
 	// The 3D preview should show what will actually print -- once a role has
 	// a nozzle assigned, substitute that slot's own color for the file's
@@ -14,7 +16,7 @@ export function useColorTree(c: AppState & Pick<MainAppProps, never>) {
 		const assignedColorFor = (extruder: number | null): string | undefined => {
 			if (extruder === null) return undefined;
 			const slotIdx = roleNozzleAssignments[extruder - 1];
-			return slotIdx !== null ? filamentSlots[slotIdx]?.color : undefined;
+			return slotIdx !== null ? slotColour(slotIdx, filamentSlots, mixes, mixColours) : undefined;
 		};
 		const substitute = (nodes: ColorNode[]): ColorNode[] =>
 			nodes.map((node) => {
@@ -27,6 +29,6 @@ export function useColorTree(c: AppState & Pick<MainAppProps, never>) {
 				return { ...node, color: assignedColor ?? node.color, triangle_colors: triangleColors ?? null };
 			});
 		return substitute(plateInfo?.color_tree ?? []);
-	}, [plateInfo, roleNozzleAssignments, filamentSlots]);
+	}, [plateInfo, roleNozzleAssignments, filamentSlots, mixes, mixColours]);
 	return { renderColorTree };
 }

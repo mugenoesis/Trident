@@ -46,6 +46,8 @@ export function useSlice(
 		beltGapMm,
 		beltRowMode,
 		setCurrentJob,
+		mixes,
+		mixSublayers,
 	} = c;
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the state setters and refs come in through the hook's context object, so Biome cannot see they are stable; the refs are read when it runs, on purpose
@@ -85,13 +87,16 @@ export function useSlice(
 				// file's own role count" (that narrower rule is what the no-remap
 				// path below still uses, and remains correct for it: today's files
 				// always use sequential extruders from 1).
-				filamentProfiles: needsRemap ? filamentSlots.map((s) => s.profile) : effectiveFilamentProfiles,
+				// A mix names its filaments by physical slot number, so with one the array is dense too.
+				filamentProfiles: needsRemap || mixes.length > 0 ? filamentSlots.map((s) => s.profile) : effectiveFilamentProfiles,
 				overrides,
 				plateIndex,
 				placement: showPositionPanel ? placement : null,
 				copies,
 				excludedObjects: hasObjectChoice ? [...excludedObjects].sort((x, y) => x - y) : undefined,
 				beltLayout: beltRowActive ? { order, gap_mm: beltGapMm, mode: beltRowMode } : undefined,
+				mixes,
+				mixSublayers,
 			}),
 		)
 			.then(setCurrentJob)
@@ -125,6 +130,8 @@ export function useSlice(
 		globalNozzleDiameter,
 		globalNozzleType,
 		currentSignature,
+		mixes,
+		mixSublayers,
 	]);
 	return { handleSlice };
 }

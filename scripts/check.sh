@@ -25,6 +25,7 @@ check_web() {
   step "web: unused code and dependencies (knip)"; npm run --silent knip
   step "web: typecheck and build"; npm run --silent build
   step "web: G-code parser (layers, heights, support, per slicer)"; npm run --silent test:parser
+  step "web: mixed colours (recipes, layers, slot numbers)"; npm run --silent test:mixing
   cd "$ROOT"
 }
 

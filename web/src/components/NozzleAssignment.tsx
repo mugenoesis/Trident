@@ -1,9 +1,11 @@
 import { colorLabel } from '../appHelpers';
 import type { AppCtx } from '../hooks/useAppController';
+import { mixSlotIndex, recipeText } from '../mixedColours';
 
 // Which nozzle prints each colour of the file.
 export default function NozzleAssignment({ c }: { c: AppCtx }) {
-	const { modelId, showNozzleAssignment, fileRoles, roleNozzleAssignments, setRoleNozzleAssignments, filamentSlots } = c;
+	const { modelId, showNozzleAssignment, fileRoles, roleNozzleAssignments, setRoleNozzleAssignments, filamentSlots, mixes } = c;
+	const names = filamentSlots.map((s) => colorLabel(s.color));
 	return (
 		<>
 			{modelId && showNozzleAssignment && (
@@ -41,6 +43,12 @@ export default function NozzleAssignment({ c }: { c: AppCtx }) {
 									// biome-ignore lint/suspicious/noArrayIndexKey: a fixed, position-ordered list that is never reordered
 									<option key={slotIdx} value={slotIdx}>
 										{`Slot ${slotIdx + 1} (${colorLabel(slot.color)})${slot.profile ? ` — ${slot.profile}` : ''}`}
+									</option>
+								))}
+								{mixes.map((mix, mixIdx) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: a mix is identified by its position, which is its slot number
+									<option key={`mix${mixIdx}`} value={mixSlotIndex(mixIdx, filamentSlots.length)}>
+										{`Slot ${mixSlotIndex(mixIdx, filamentSlots.length) + 1} (mix: ${recipeText(mix, names)})`}
 									</option>
 								))}
 							</select>

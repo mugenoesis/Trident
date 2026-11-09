@@ -7,6 +7,7 @@ import { useColorTree } from './useColorTree';
 import { useJobActions } from './useJobActions';
 import { useLineUp } from './useLineUp';
 import { useMaterialCrud } from './useMaterialCrud';
+import { useMixedColours } from './useMixedColours';
 import { useModelOps } from './useModelOps';
 import { useModelUpload } from './useModelUpload';
 import { useNozzleRefs } from './useNozzleRefs';
@@ -41,6 +42,7 @@ import { useViewedJob } from './useViewedJob';
 export function useAppController(props: MainAppProps) {
 	const state = useAppState(props);
 	const resin = useResin(state.modelId);
+	const mixed = useMixedColours({ ...props, ...state });
 	useResetOnNewFile({ ...props, ...state });
 	const primeTower = usePrimeTower({ ...props, ...state });
 	const viewedJob = useViewedJob({ ...props, ...state });
@@ -72,7 +74,7 @@ export function useAppController(props: MainAppProps) {
 	const settingsCrud = useSettingsCrud({ ...props, ...state });
 	usePolling({ ...props, ...state, ...viewedJob });
 	const roles = useRoles({ ...props, ...state });
-	const colorTree = useColorTree({ ...props, ...state });
+	const colorTree = useColorTree({ ...props, ...state, ...mixed });
 	const plateShown = usePlateShown({ ...props, ...state, ...objectsView });
 	const signature = useSignature({ ...props, ...state, ...selection, ...roles, ...objectsView, ...plateShown });
 	const slice = useSlice({ ...props, ...state, ...roles, ...signature, ...selection, ...objectsView });
@@ -81,6 +83,7 @@ export function useAppController(props: MainAppProps) {
 		...props,
 		...state,
 		resin,
+		...mixed,
 		...primeTower,
 		...viewedJob,
 		...selection,

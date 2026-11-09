@@ -1,9 +1,10 @@
 import { useEffect, useMemo } from 'react';
 import { fileRolesFromInspection } from '../appHelpers';
+import { slotProfile } from '../mixedColours';
 import type { AppState, MainAppProps } from './useAppState';
 
 export function useRoles(c: AppState & Pick<MainAppProps, never>) {
-	const { plateInfo, setRoleNozzleAssignments, roleNozzleAssignments, filamentSlots } = c;
+	const { plateInfo, setRoleNozzleAssignments, roleNozzleAssignments, filamentSlots, mixes } = c;
 
 	const fileRoles = useMemo(() => fileRolesFromInspection(plateInfo), [plateInfo]);
 
@@ -20,7 +21,7 @@ export function useRoles(c: AppState & Pick<MainAppProps, never>) {
 		setRoleNozzleAssignments(fileRoles.length === 1 ? [0] : fileRoles.map(() => null));
 	}, [fileRoles, setRoleNozzleAssignments]);
 
-	const allRolesAssigned = roleNozzleAssignments.every((slotIdx) => slotIdx !== null && filamentSlots[slotIdx]?.profile);
+	const allRolesAssigned = roleNozzleAssignments.every((slotIdx) => slotIdx !== null && slotProfile(slotIdx, filamentSlots, mixes));
 	// Exactly one filament per file role, chosen from the printer's real,
 	// catalog-backed configured slots -- never more or fewer than the file
 	// actually needs (confirmed via direct testing against a real downloaded
@@ -28,8 +29,8 @@ export function useRoles(c: AppState & Pick<MainAppProps, never>) {
 	// slots for a file that only needs 2, crashes the OrcaSlicer CLI outright
 	// rather than failing gracefully).
 	const effectiveFilamentProfiles = useMemo(
-		() => roleNozzleAssignments.map((slotIdx) => (slotIdx !== null ? (filamentSlots[slotIdx]?.profile ?? '') : '')),
-		[roleNozzleAssignments, filamentSlots],
+		() => roleNozzleAssignments.map((slotIdx) => (slotIdx !== null ? slotProfile(slotIdx, filamentSlots, mixes) : '')),
+		[roleNozzleAssignments, filamentSlots, mixes],
 	);
 
 	// Only worth showing when there's an actual choice to make: either the

@@ -29,6 +29,12 @@ Seen with a model on a mixed slot of the Snapmaker U1 (0.20 mm layers):
 - with the sub-layer option every layer selects every component;
 - the mixed slot itself is never selected: a mixed slot prints on its components only.
 
+### Also checked for the web UI
+
+- A prime tower is not required with a mix (it slices with the tower off).
+- A mix that no part uses leaves the print's instructions unchanged (checked with a plain STL).
+- One project 3MF fixture moved 28 mm on the plate in x and y when a mix slot was added; a plain STL did not. Look at this again in step 3 together with the painted-model question below.
+
 ### Open: painted models
 
 A cube painted in three colours, where the third is a mixed slot, printed with a single tool per layer, as if the painted
@@ -79,7 +85,7 @@ Anything Trident ports or ships must be open and credited (AGENTS.md rule 10).
 Each step is its own branch and PR.
 
 0. **Verify the engine** (done): the real-slicer tests above, and this note.
-1. **API** (this change): `mixed_filaments` on jobs with the checks above, the Python colour mixer (checked against the engine's numbers), and the preview and suggest routes.
-2. **Web UI**: a Mixed colours panel next to the colour assignment. A hosted HTML/React mockup is approved first.
+1. **API** (done): `mixed_filaments` on jobs with the checks above, the Python colour mixer (checked against the engine's numbers), and the preview and suggest routes.
+2. **Web UI** (done): a Mixed colours section under Material, and the mix offered as a slot in the colour assignment (the mockup was approved first). Mixes are held in the page only: they are not saved with saved printers, and changing the number of filament slots clears them (a mix's slot number depends on the count).
 3. **Holecraft**: a palette slot can be a mix, and the OrcaSlicer 3MF export and Send to Trident carry it.
 4. **Later**: gradients with a curve editor, image-to-mixed-colours, dithering.

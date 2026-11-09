@@ -96,6 +96,7 @@ def slice_on_mix(client, projects, tmp_path):
                 **job_fields,
             },
         ).json()
+        assert "id" in job, job
         deadline = time.time() + 300
         state: dict = {}
         while time.time() < deadline:
@@ -169,3 +170,67 @@ def test_a_mix_after_four_physical_filaments_on_a_four_nozzle_printer(slice_on_m
         mixed_filaments=[{"components": [3, 4], "weights": [1, 1]}],
     )
     assert set().union(*layers) == {2, 3}
+
+
+def test_a_mix_prints_without_a_prime_tower(slice_on_mix):
+    """The web app leaves the prime tower to the user's own setting, so a mix has to slice with it off."""
+    layers = slice_on_mix(5, {"enable_prime_tower": "0"}, mixed_filaments=[{"components": [3, 4], "weights": [1, 1]}])
+    assert set().union(*layers) == {2, 3}
+
+
+CUBE_STL = (
+    "solid cube\n"
+    + "".join(
+        "facet normal 0 0 0\nouter loop\n" + "".join(f"vertex {x} {y} {z}\n" for x, y, z in tri) + "endloop\nendfacet\n"
+        for tri in [
+            ((0, 0, 0), (0, 20, 0), (20, 20, 0)),
+            ((0, 0, 0), (20, 20, 0), (20, 0, 0)),
+            ((0, 0, 20), (20, 0, 20), (20, 20, 20)),
+            ((0, 0, 20), (20, 20, 20), (0, 20, 20)),
+            ((0, 0, 0), (20, 0, 0), (20, 0, 20)),
+            ((0, 0, 0), (20, 0, 20), (0, 0, 20)),
+            ((20, 0, 0), (20, 20, 0), (20, 20, 20)),
+            ((20, 0, 0), (20, 20, 20), (20, 0, 20)),
+            ((20, 20, 0), (0, 20, 0), (0, 20, 20)),
+            ((20, 20, 0), (0, 20, 20), (20, 20, 20)),
+            ((0, 20, 0), (0, 0, 0), (0, 0, 20)),
+            ((0, 20, 0), (0, 0, 20), (0, 20, 20)),
+        ]
+    )
+    + "endsolid cube\n"
+)
+
+
+def test_a_mix_nobody_prints_with_changes_nothing_in_the_print(client):
+    """The web app sends every mix it has; one that no part uses must leave the instructions to the printer as they were."""
+    model_id = client.post("/models", files={"file": ("cube.stl", CUBE_STL.encode(), "model/stl")}).json()["model_id"]
+
+    def run(**job_fields) -> str:
+        job = client.post(
+            "/jobs",
+            json={
+                "model_id": model_id,
+                "printer_profile": U1,
+                "process_profile": U1_PROCESS,
+                "filament_profiles": [U1_MATERIAL] * 4,
+                "setting_overrides": {"enable_prime_tower": "0"},
+                **job_fields,
+            },
+        ).json()
+        assert "id" in job, job
+        deadline = time.time() + 300
+        state: dict = {}
+        while time.time() < deadline:
+            state = client.get(f"/jobs/{job['id']}").json()
+            if state["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.5)
+        assert state["status"] == "succeeded", state.get("error")
+        return client.get(f"/jobs/{job['id']}/gcode").text
+
+    def instructions(text: str) -> list[str]:
+        return [line for line in text.splitlines() if not line.startswith(";")]
+
+    plain = run()
+    with_mix = run(mixed_filaments=[{"components": [3, 4], "weights": [1, 1]}])
+    assert instructions(with_mix) == instructions(plain)

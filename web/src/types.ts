@@ -118,6 +118,22 @@ export interface JobCreateRequest {
 	preview_image_base64?: string;
 	// A resin job: print with the support points stored with the model (when it has some). False has the slicer place its own.
 	hand_placed_supports?: boolean;
+	// A filament job: mixed colours, slots after the physical filaments that print as 2-3 of them (api/app/mixed_filaments.py).
+	mixed_filaments?: MixedFilament[];
+	// With mixed colours: split every layer into one pass per filament instead of alternating whole layers.
+	mixed_sublayers?: boolean;
+}
+
+// 1-based physical filaments (2 or 3 different ones) and one positive weight for each.
+export interface MixedFilament {
+	components: number[];
+	weights: number[];
+}
+
+// A mix the server found for a wanted colour, with the colour it gives and its CIE76 difference from the wanted one.
+export interface MixSuggestion extends MixedFilament {
+	colour: string;
+	distance: number;
 }
 
 export interface PlateInfo {
