@@ -36,6 +36,7 @@ machine that has no slicer installed.
   temperature per plate, flow, fan); everything else is inherited, and any other material setting is a search away on the Advanced tab, and you choose whether it is for the current printer only or for every printer.
 - **Multi-material and tool changers.** Assign a file's colours to nozzles and slice multi-colour models, including
   4-head printers like the Snapmaker U1. The build plate list only offers plates your chosen filament supports.
+- **Mixed colours.** A slot of a multi-colour print can be a mix of two or three of the loaded filaments, printed in thin alternating layers so they read as one colour (the idea behind the Full Spectrum fork of OrcaSlicer; the engine already does it, Trident defines and checks the mix). A job lists its mixes in `mixed_filaments` (the physical filaments to use and a weight for each; `mixed_sublayers` splits every layer instead of alternating whole layers), and Trident adds the slots and options the slicer needs. `POST /mixes/preview` gives the colour a mix will look like, and `POST /mixes/suggest` finds the mixes of your filaments closest to a colour. The preview is an estimate (see [`docs/MIXED_COLOUR.md`](docs/MIXED_COLOUR.md)). There is no screen for it in the web app yet.
 - **Multi-plate 3MF files.** Preview each plate, slice any plate, and choose which objects in a file to print, with
   thumbnails so you can tell them apart.
 - **Rotate and move.** A preview of your plate with sliders to place the model and to turn it on each axis, plus
@@ -179,6 +180,8 @@ AI coding sessions: read [`AGENTS.md`](AGENTS.md) first.
 
 The real-slicer API tests run in an engine image with `scripts/slicer-tests.sh <image>`.
 
+`scripts/mixer-reference.sh` rebuilds the colour mixer's numbers and test reference from the engine's own header; run it again when the engine moves.
+
 One gate runs everything CI runs: `scripts/check.sh` (or `scripts/check.sh web` / `api`). A host with no Python can run the
 Python tools through `scripts/py.sh`, a throwaway container, for example `scripts/py.sh ruff check app`.
 
@@ -217,6 +220,8 @@ you are entitled to the corresponding source:
 
 - Pseudorca, the patched OrcaSlicer fork: <https://github.com/mugenoesis/Pseudorca/tree/headless-orca>
 - This repository: <https://github.com/mugenoesis/Trident>
+
+The mixed-colour preview (`api/app/colour_mixer.py`) is a port of the FilamentMixer polynomial model by Justin Hayes (MIT licence, kept in that file), as taken into the Full Spectrum fork of OrcaSlicer and from there into OrcaSlicer.
 
 The exact commit the running container was built from is shown by the app's `/source` and `/version` endpoints.
 See [`docs/AGPL-COMPLIANCE.md`](docs/AGPL-COMPLIANCE.md).

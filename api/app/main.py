@@ -11,7 +11,19 @@ from . import profiles as profiles_module
 from . import resin as resin_module
 from .cleanup import run_cleanup_loop
 from .config import settings
-from .routers import auth, bambu_cloud, jobs, layer_preview, models, printers, profiles, resin, sample_models, source
+from .routers import (
+    auth,
+    bambu_cloud,
+    jobs,
+    layer_preview,
+    mixes,
+    models,
+    printers,
+    profiles,
+    resin,
+    sample_models,
+    source,
+)
 
 
 @asynccontextmanager
@@ -53,6 +65,7 @@ app.include_router(sample_models.router)
 app.include_router(profiles.router)
 app.include_router(resin.router)
 app.include_router(jobs.router)
+app.include_router(mixes.router)
 app.include_router(layer_preview.router)
 app.include_router(printers.router)
 app.include_router(bambu_cloud.router)

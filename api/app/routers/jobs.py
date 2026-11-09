@@ -8,7 +8,16 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import belt_align, cli_runner, gcode_stats, gcode_thumbnail, layer_preview, resin_runner, threemf_objects
+from .. import (
+    belt_align,
+    cli_runner,
+    gcode_stats,
+    gcode_thumbnail,
+    layer_preview,
+    mixed_filaments,
+    resin_runner,
+    threemf_objects,
+)
 from .. import resin as resin_module
 from ..auth import require_user
 from ..blocked_settings import blocked_keys
@@ -447,10 +456,35 @@ def _check_resin_request(request: JobCreateRequest, user_id: str) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _with_mixes(request: JobCreateRequest) -> JobCreateRequest:
+    """The request with its mixed filaments written out as filament slots and slicer options (see mixed_filaments)."""
+    if not request.mixed_filaments:
+        return request
+    if request.technology != "fdm":
+        raise HTTPException(status_code=400, detail="Mixed filaments are for FDM jobs")
+    by_hand = mixed_filaments.hand_set_keys(request.setting_overrides)
+    if by_hand:
+        raise HTTPException(status_code=400, detail=f"Not together with mixed_filaments: {sorted(by_hand)}")
+    try:
+        profiles, options = mixed_filaments.expand(
+            request.filament_profiles, request.mixed_filaments, request.mixed_sublayers
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return request.model_copy(
+        update={
+            "filament_profiles": profiles,
+            "setting_overrides": {**request.setting_overrides, **options},
+            "mixed_filaments": [],
+        }
+    )
+
+
 @router.post("", response_model=JobRecord)
 def create_job(
     request: JobCreateRequest, background_tasks: BackgroundTasks, current: User = Depends(require_user)
 ) -> JobRecord:
+    request = _with_mixes(request)
     if request.technology == "resin":
         _check_resin_request(request, current.id)
     rejected = blocked_keys(request.setting_overrides) if request.technology == "fdm" else set()
