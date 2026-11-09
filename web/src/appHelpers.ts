@@ -45,6 +45,8 @@ export function computeSliceSignature(
 	// all) -- include the raw per-role slot assignment directly so changing
 	// it always counts as "you changed something," even then.
 	roleNozzleAssignments: (number | null)[],
+	// The mixed colours and how they are layered (see mixSignatureOf).
+	mixSignature: string,
 ): string {
 	return JSON.stringify({
 		modelId,
@@ -57,6 +59,7 @@ export function computeSliceSignature(
 		nozzleSettingsSignature,
 		objectSelectionSignature,
 		roleNozzleAssignments,
+		mixSignature,
 	});
 }
 

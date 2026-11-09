@@ -14,6 +14,8 @@ import type {
 	MaterialProfileCreateRequest,
 	MaterialProfileRecord,
 	MaterialProfileUpdateRequest,
+	MixedFilament,
+	MixSuggestion,
 	ModelUploadResponse,
 	MyResinPrinterRequest,
 	MyResinRequest,
@@ -295,6 +297,26 @@ export function createJob(req: JobCreateRequest): Promise<JobRecord> {
 
 export function getJob(id: string): Promise<JobRecord> {
 	return request(`/jobs/${id}`);
+}
+
+// The colour each mix of the physical filaments `colours` gives (what the server's mixer works out).
+export async function previewMixes(colours: string[], mixes: MixedFilament[]): Promise<string[]> {
+	const res: { colours: string[] } = await request('/mixes/preview', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ colours, mixes }),
+	});
+	return res.colours;
+}
+
+// The mixes of the physical filaments `colours` that come closest to the colour `target`.
+export async function suggestMixes(colours: string[], target: string, count: number): Promise<MixSuggestion[]> {
+	const res: { suggestions: MixSuggestion[] } = await request('/mixes/suggest', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ colours, target, count }),
+	});
+	return res.suggestions;
 }
 
 export function listJobs(): Promise<JobRecord[]> {

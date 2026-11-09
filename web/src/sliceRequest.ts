@@ -1,7 +1,7 @@
 import type { FilamentSlot } from './appHelpers';
 import type { RowMode } from './beltLayout';
 import type { QuickSettingsValues } from './components/QuickSettings';
-import type { Placement } from './types';
+import type { MixedFilament, Placement } from './types';
 
 // What the quick settings and the advanced list say to the slicer, as setting overrides.
 export function quickOverrides(quickSettings: QuickSettingsValues, advancedOverrides: Record<string, string>): Record<string, string> {
@@ -140,6 +140,8 @@ interface JobInputs {
 	copies: number;
 	excludedObjects: number[] | undefined;
 	beltLayout: { order: number[]; gap_mm: number; mode: RowMode } | undefined;
+	mixes: MixedFilament[];
+	mixSublayers: boolean;
 }
 
 // The request that starts a slicing job.
@@ -156,5 +158,7 @@ export function jobRequestOf(i: JobInputs) {
 		copies: i.copies > 1 ? i.copies : undefined,
 		excluded_objects: i.excludedObjects,
 		belt_layout: i.beltLayout,
+		// Only with a mix: the sub-layer choice means nothing without one, and nothing is sent for a job that has none.
+		...(i.mixes.length > 0 ? { mixed_filaments: i.mixes, mixed_sublayers: i.mixSublayers } : {}),
 	};
 }

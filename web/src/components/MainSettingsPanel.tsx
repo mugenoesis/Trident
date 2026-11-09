@@ -5,6 +5,7 @@ import AdvancedSettings from './AdvancedSettings';
 import CopiesControl from './CopiesControl';
 import FilamentSelect from './FilamentSelect';
 import JobPanel from './JobPanel';
+import MixedColours from './MixedColours';
 import PrinterSelect from './PrinterSelect';
 import QuickSettings, { QUICK_SETTING_KEYS } from './QuickSettings';
 import ResinPanel from './ResinPanel';
@@ -274,6 +275,8 @@ function FdmSettings({ c }: { c: AppCtx }) {
 					/>
 				)}
 			</details>
+
+			<MixedColours c={c} />
 
 			<details className="settings-collapsible" open={settingsSectionOpen} onToggle={(e) => setSettingsSectionOpen(e.currentTarget.open)}>
 				<summary>Settings{selectedSettingsProfile ? ` (${selectedSettingsProfile.name})` : ''}</summary>

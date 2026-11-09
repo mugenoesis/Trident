@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { computeSliceSignature } from '../appHelpers';
+import { mixSignatureOf } from '../mixedColours';
 import type { AppState, MainAppProps } from './useAppState';
 import type { useObjectsView } from './useObjectsView';
 import type { usePlateShown } from './usePlateShown';
@@ -34,6 +35,8 @@ export function useSignature(
 		hasObjectChoice,
 		keptObjects,
 		allRolesAssigned,
+		mixes,
+		mixSublayers,
 	} = c;
 
 	// Part of the slice signature (below) so a nozzle diameter/type edit
@@ -42,6 +45,8 @@ export function useSignature(
 	const nozzleSettingsSignature = isMultiHeadPrinter
 		? JSON.stringify(filamentSlots.map((s) => [s.nozzleDiameter, s.nozzleType]))
 		: JSON.stringify({ globalNozzleDiameter, globalNozzleType });
+
+	const mixSignature = mixSignatureOf(mixes, mixSublayers);
 
 	const currentSignature = useMemo(
 		() =>
@@ -56,6 +61,7 @@ export function useSignature(
 				nozzleSettingsSignature,
 				objectSelectionSignature,
 				roleNozzleAssignments,
+				mixSignature,
 			),
 		[
 			modelId,
@@ -68,6 +74,7 @@ export function useSignature(
 			nozzleSettingsSignature,
 			objectSelectionSignature,
 			roleNozzleAssignments,
+			mixSignature,
 		],
 	);
 	// Only a *successful* prior slice blocks re-slicing -- a failed job with

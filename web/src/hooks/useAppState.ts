@@ -9,6 +9,7 @@ import type {
 	JobRecord,
 	MaterialProfileRecord,
 	MeshReport,
+	MixedFilament,
 	Placement,
 	PrinterRecord,
 	ProfileSummary,
@@ -112,6 +113,10 @@ export function useAppState({ authStatus }: Pick<MainAppProps, 'authStatus'>) {
 	// -- this explicit per-role mapping is what keeps the sent count exactly
 	// matching what the file needs, chosen from real catalog-backed slots.
 	const [roleNozzleAssignments, setRoleNozzleAssignments] = useState<(number | null)[]>([0]);
+	// Mixed colours (mixedColours.ts): slots after the physical ones, each printed as 2-3 of the filaments. By default whole layers alternate;
+	// with mixSublayers every layer is split into one pass per filament.
+	const [mixes, setMixes] = useState<MixedFilament[]>([]);
+	const [mixSublayers, setMixSublayers] = useState(false);
 
 	const [scaleToastDismissed, setScaleToastDismissed] = useState(false);
 	const [scaling, setScaling] = useState(false);
@@ -297,6 +302,10 @@ export function useAppState({ authStatus }: Pick<MainAppProps, 'authStatus'>) {
 		setMeshToastDismissed,
 		roleNozzleAssignments,
 		setRoleNozzleAssignments,
+		mixes,
+		setMixes,
+		mixSublayers,
+		setMixSublayers,
 		scaleToastDismissed,
 		setScaleToastDismissed,
 		scaling,
