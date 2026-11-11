@@ -26,10 +26,10 @@
 		"smoke:viewer": "node viewer-test.mjs"
 	},
 	"dependencies": {
-		"@types/three": "^0.186.0",
+		"@types/three": "^0.187.0",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1",
-		"three": "^0.186.1"
+		"three": "^0.187.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.15",
